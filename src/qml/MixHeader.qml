@@ -14,12 +14,24 @@ ColumnLayout {
 
     Connections { target: Mixer; function onMixChanged(slug) { if (slug === header.mix) header.outputDevice = Mixer.mixOutputDevice(slug) } }
 
-    Kirigami.Heading {
+    RowLayout {
         Layout.fillWidth: true
-        level: 4
-        horizontalAlignment: Text.AlignHCenter
-        text: Mixer.mixName(header.mix)
-        elide: Text.ElideRight
+        spacing: Kirigami.Units.smallSpacing
+        Kirigami.Heading {
+            Layout.fillWidth: true
+            level: 4
+            horizontalAlignment: Text.AlignHCenter
+            text: Mixer.mixName(header.mix)
+            elide: Text.ElideRight
+        }
+        // horizontal mix meter next to the name
+        LevelMeter {
+            id: mixMeter
+            Layout.preferredWidth: Kirigami.Units.smallSpacing * 1.5
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 1.2
+            Layout.alignment: Qt.AlignVCenter
+            Connections { target: Mixer; function onPeaksChanged() { mixMeter.peak = Mixer.peak("mix/" + header.mix) } }
+        }
     }
     QQC2.ToolButton {
         id: outButton

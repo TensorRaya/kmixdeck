@@ -119,6 +119,17 @@ public Q_SLOTS:
         else { out << path.mid(QString(ROOT).size() + 1) << ":"; const auto pl = plain(changed); for (auto it = pl.cbegin(); it != pl.cend(); ++it) out << " " << it.key() << "=" << it.value().toString(); out << "\n"; }
         out.flush();
     }
+    void peaks(const QVariantMap &p) {
+        if (g_json) { out << QJsonDocument(QJsonObject::fromVariantMap(p)).toJson(QJsonDocument::Compact) << "\n"; out.flush(); return; }
+        QStringList keys = p.keys(); keys.sort();
+        QString line;
+        for (const auto &k : keys) {
+            const double v = p.value(k).toDouble(); const double db = v > 0 ? 20 * std::log10(v) : -90;
+            const int bar = std::clamp(static_cast<int>((db + 60) / 60 * 20), 0, 20);   // −60…0 dB → 0…20 chars
+            line += QStringLiteral("%1 [%2%3] %4  ").arg(k, -16).arg(QString(bar, QLatin1Char('#'))).arg(QString(20 - bar, QLatin1Char(' '))).arg(v > 0 ? QStringLiteral("%1 dB").arg(db, 6, 'f', 1) : QStringLiteral("   -inf"));
+        }
+        out << "\r" << line; out.flush();
+    }
     void interfacesAdded(const QDBusObjectPath &path, const InterfaceMap &ifaces) {
         if (g_json) out << QJsonDocument(QJsonObject{{"event", "added"}, {"path", path.path()}, {"interfaces", QJsonArray::fromStringList(ifaces.keys())}}).toJson(QJsonDocument::Compact) << "\n";
         else out << "+ " << path.path() << "\n";
@@ -142,6 +153,7 @@ int main(int argc, char *argv[]) {
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|trim <slug> <level>|mute <slug> [on|off]\n"
         "  mix     list|add <name>|remove <slug>|rename <slug> <name>|output <slug> <node.name|none>\n"
         "  devices                                    hardware outputs a mix can play to\n"
+        "  levels                                     live peak meters (Ctrl-C to stop)\n"
         "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
         "  app     list|move <id|name> <channel>          running application streams\n"
         "  watch                                      print property changes as they happen\n\n"
@@ -228,6 +240,15 @@ int main(int argc, char *argv[]) {
             return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
         }
         return fail(Usage, "app list | app move <id|name> <channel>");
+    }
+    if (cmd == "levels") {   // live peaks, 25 Hz; Ctrl-C to stop. --json: one object per tick.
+        QDBusInterface lv(BUS, ROOT, "org.kmixdeck1.Levels", QDBusConnection::sessionBus());
+        QDBusReply<void> sub = lv.call("Subscribe");
+        if (!sub.isValid()) return fail(NoService, sub.error().message());
+        auto *w = new Watcher; w->setParent(&app);
+        QDBusConnection::sessionBus().connect(BUS, ROOT, "org.kmixdeck1.Levels", "Peaks", w, SLOT(peaks(QVariantMap)));
+        QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&lv] { lv.call("Unsubscribe"); });
+        return app.exec();
     }
     if (cmd == "watch") {
         Watcher w; auto bus = QDBusConnection::sessionBus();

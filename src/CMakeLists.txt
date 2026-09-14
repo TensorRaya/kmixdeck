@@ -3,6 +3,7 @@ add_library(kmixdeck_core STATIC
     mixer.cpp mixer.h
     layout.cpp layout.h
     pipewire/graph.cpp pipewire/graph.h
+    pipewire/meters.cpp pipewire/meters.h
 )
 target_include_directories(kmixdeck_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kmixdeck_core PUBLIC Qt6::Core PkgConfig::PipeWire)
@@ -43,6 +44,7 @@ ecm_add_qml_module(kmixdeck-kde
         qml/AddDialog.qml
         qml/AppsPage.qml
         qml/MixHeader.qml
+        qml/LevelMeter.qml
 )
 target_include_directories(kmixdeck-kde PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/.. frontend)
 target_link_libraries(kmixdeck-kde PRIVATE

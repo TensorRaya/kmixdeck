@@ -10,6 +10,7 @@
 #include <QString>
 #include <optional>
 #include "pipewire/graph.h"
+#include "pipewire/meters.h"
 #include "layout.h"
 
 namespace kmixdeck {
@@ -70,6 +71,9 @@ public:
     Q_INVOKABLE void    setMixOutputDevice(const QString &slug, const QString &nodeName);
     Q_INVOKABLE QString mixCaptureSource(const QString &slug) const;
 
+    /// Peak meters (ADR 0006); owned here so they share the graph's loop.
+    pw::Meters *meters() { return &m_meters; }
+
     /// Hardware (non-kmixdeck) sinks a mix can be routed to: node.name → description (DV-2).
     QList<QPair<QString, QString>> outputDevices() const;
 
@@ -108,6 +112,7 @@ private:
     void rebuildLayoutFromGraph();
 
     pw::Graph m_graph;
+    pw::Meters m_meters{&m_graph};
     bool m_connected = false;
     QVector<Channel> m_channels;
     QVector<Mix> m_mixes;

@@ -92,6 +92,9 @@ Q_SIGNALS:
 
 public:
     struct Impl;   // public for the C callback trampolines
+    /// For sibling PipeWire users in this process (Meters): the loop and core. Only valid while connected().
+    pw_thread_loop *threadLoop() const;
+    pw_core *core() const;
 private:
     std::unique_ptr<Impl> d;
     bool m_connected = false;

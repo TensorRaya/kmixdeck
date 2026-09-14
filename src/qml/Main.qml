@@ -54,6 +54,10 @@ Kirigami.ApplicationWindow {
     AppsPage  { id: appsPage;  visible: false }
     pageStack.initialPage: mixerPage
 
+    // Meters cost CPU in the daemon (ADR 0006): only while the window is actually shown.
+    onVisibleChanged: Mixer.metersEnabled = visible
+    Component.onCompleted: Mixer.metersEnabled = visible
+
     AddDialog { id: addDialog }
     function addDialogOpen(kind) { addDialog.open(kind) }
 

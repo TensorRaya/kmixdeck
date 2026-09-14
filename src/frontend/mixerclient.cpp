@@ -98,7 +98,12 @@ void MixerClient::onInterfacesRemoved(const QDBusObjectPath &path, const QString
 }
 void MixerClient::onNameOwnerChanged(const QString &name, const QString &, const QString &newOwner) {
     if (name != QLatin1String(BUS)) return;
-    if (newOwner.isEmpty()) { m_available = false; Q_EMIT serviceAvailableChanged(); } else refresh();
+    if (newOwner.isEmpty()) { m_available = false; Q_EMIT serviceAvailableChanged(); }
+    else {
+        refresh();
+        // a restarted daemon has no subscribers — re-subscribe if the UI wants meters
+        if (m_metersEnabled) QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("Subscribe"));
+    }
 }
 
 void MixerClient::setProperty(const QString &path, const QString &iface, const QString &name, const QVariant &v) {
@@ -140,6 +145,24 @@ QVariantList MixerClient::outputDevices() const {
     for (auto it = m_devices.cbegin(); it != m_devices.cend(); ++it) out.push_back(QVariantMap{{QStringLiteral("nodeName"), it.key()}, {QStringLiteral("description"), it.value()}});
     std::sort(out.begin(), out.end(), [](const QVariant &a, const QVariant &b) { return a.toMap().value(QStringLiteral("description")).toString().localeAwareCompare(b.toMap().value(QStringLiteral("description")).toString()) < 0; });
     return out;
+}
+void MixerClient::setMetersEnabled(bool on) {
+    if (on == m_metersEnabled) return;
+    m_metersEnabled = on; Q_EMIT metersEnabledChanged();
+    auto bus = QDBusConnection::sessionBus();
+    QDBusInterface lv(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), bus);
+    if (on) {
+        bus.connect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Peaks"), this, SLOT(onPeaks(QVariantMap)));
+        lv.asyncCall(QStringLiteral("Subscribe"));
+    } else {
+        bus.disconnect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Peaks"), this, SLOT(onPeaks(QVariantMap)));
+        lv.asyncCall(QStringLiteral("Unsubscribe"));
+        m_peaks.clear(); Q_EMIT peaksChanged();
+    }
+}
+void MixerClient::onPeaks(const QVariantMap &peaks) {
+    for (auto it = peaks.cbegin(); it != peaks.cend(); ++it) m_peaks[it.key()] = it.value().toDouble();
+    Q_EMIT peaksChanged();
 }
 void MixerClient::setMixOutputDevice(const QString &slug, const QString &nodeName) {
     m_mixes[slug][QStringLiteral("OutputDevice")] = nodeName;

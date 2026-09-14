@@ -90,6 +90,54 @@ QVariantMap AppObject::properties() const {
 }
 void AppObject::notifyChanged() { emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("Channel"), QVariant::fromValue(channel())}}); }
 
+// ---- Levels (ADR 0006)
+LevelsAdaptor::LevelsAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor(parent), m_mixer(mixer) {
+    m_teardown.setSingleShot(true); m_teardown.setInterval(3000);
+    connect(&m_teardown, &QTimer::timeout, this, &LevelsAdaptor::syncTargets);
+    connect(m_mixer->meters(), &pw::Meters::peaks, this, [this](const QHash<QString, float> &p) {
+        if (m_subscribers.isEmpty()) return;
+        QVariantMap out;
+        for (auto it = p.cbegin(); it != p.cend(); ++it) {
+            const QString n = it.key();   // kmixdeck.channel.<slug> / kmixdeck.mix.<slug> → channel/<slug> / mix/<slug>
+            QString key = n.startsWith(QLatin1String("kmixdeck.channel.")) ? QStringLiteral("channel/") + n.mid(17)
+                        : n.startsWith(QLatin1String("kmixdeck.mix."))     ? QStringLiteral("mix/") + n.mid(13) : n;
+            out.insert(key, static_cast<double>(it.value()));
+        }
+        Q_EMIT Peaks(out);
+    });
+    // layout changes while subscribed → meter the new set
+    connect(m_mixer, &Mixer::layoutChanged, this, [this] { if (!m_subscribers.isEmpty()) syncTargets(); });
+    // subscribers that leave the bus without Unsubscribe()
+    QDBusConnection::sessionBus().connect(QStringLiteral("org.freedesktop.DBus"), QStringLiteral("/org/freedesktop/DBus"),
+        QStringLiteral("org.freedesktop.DBus"), QStringLiteral("NameOwnerChanged"), this, SLOT(onNameOwnerChangedSlot(QString,QString,QString)));
+}
+uint LevelsAdaptor::rate() const { return pw::Meters::kRateHz; }
+void LevelsAdaptor::Subscribe(const QDBusMessage &msg) {
+    m_teardown.stop();
+    if (m_subscribers.contains(msg.service())) return;
+    m_subscribers.insert(msg.service());
+    syncTargets();
+    emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Levels"), {{QStringLiteral("Subscribers"), subscribers()}});
+}
+void LevelsAdaptor::Unsubscribe(const QDBusMessage &msg) {
+    if (!m_subscribers.remove(msg.service())) return;
+    if (m_subscribers.isEmpty()) m_teardown.start(); else syncTargets();
+    emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Levels"), {{QStringLiteral("Subscribers"), subscribers()}});
+}
+void LevelsAdaptor::onNameOwnerChanged(const QString &name, const QString &, const QString &newOwner) {
+    if (!newOwner.isEmpty() || !m_subscribers.remove(name)) return;
+    if (m_subscribers.isEmpty()) m_teardown.start();
+    emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Levels"), {{QStringLiteral("Subscribers"), subscribers()}});
+}
+void LevelsAdaptor::syncTargets() {
+    QStringList t;
+    if (!m_subscribers.isEmpty()) {
+        for (const auto &c : m_mixer->channelSlugs()) t << Names::channelNode(c);
+        for (const auto &m : m_mixer->mixSlugs()) t << Names::mixNode(m);
+    }
+    m_mixer->meters()->setTargets(t);
+}
+
 // ---- Mixer root
 MixerAdaptor::MixerAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor(parent), m_mixer(mixer) {}
 QString MixerAdaptor::version() const { return QStringLiteral(KMIXDECK_VERSION_STRING); }
@@ -139,6 +187,7 @@ bool Service::start() {
     auto bus = QDBusConnection::sessionBus();
     if (!bus.isConnected()) { qCritical() << "no session bus"; return false; }
     m_mixerAdaptor = new MixerAdaptor(&m_mixer, &m_root);
+    m_levelsAdaptor = new LevelsAdaptor(&m_mixer, &m_root);
     m_om = new ObjectManagerAdaptor(&m_root, [this] { return managedObjects(); });
     if (!bus.registerObject(QLatin1String(kRootPath), &m_root, QDBusConnection::ExportAdaptors)) { qCritical() << "registerObject failed" << bus.lastError().message(); return false; }
     if (!bus.registerService(QLatin1String(kBusName))) { qCritical() << "bus name taken:" << kBusName; return false; }

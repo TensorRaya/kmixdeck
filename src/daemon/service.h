@@ -5,6 +5,9 @@
 #include <QDBusAbstractAdaptor>
 #include <QDBusConnection>
 #include <QDBusObjectPath>
+#include <QDBusMessage>
+#include <QSet>
+#include <QTimer>
 #include <QDBusContext>
 #include <QHash>
 #include <memory>
@@ -128,6 +131,31 @@ private:
     Mixer *m_mixer; uint32_t m_id;
 };
 
+// ---- org.kmixdeck1.Levels (root object, ADR 0006) ----------------------------------------------
+class LevelsAdaptor : public QDBusAbstractAdaptor {
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.kmixdeck1.Levels")
+    Q_PROPERTY(uint Rate READ rate)
+    Q_PROPERTY(uint Subscribers READ subscribers)
+public:
+    LevelsAdaptor(Mixer *mixer, QObject *parent);
+    uint rate() const;
+    uint subscribers() const { return static_cast<uint>(m_subscribers.size()); }
+public Q_SLOTS:
+    void Subscribe(const QDBusMessage &msg);
+    void Unsubscribe(const QDBusMessage &msg);
+Q_SIGNALS:
+    void Peaks(const QVariantMap &peaks);
+private Q_SLOTS:
+    void onNameOwnerChangedSlot(const QString &name, const QString &oldOwner, const QString &newOwner) { onNameOwnerChanged(name, oldOwner, newOwner); }
+private:
+    void syncTargets();
+    void onNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
+    Mixer *m_mixer;
+    QSet<QString> m_subscribers;      // unique bus names
+    QTimer m_teardown;                // grace period after the last unsubscribe
+};
+
 // ---- org.kmixdeck1.Mixer (root) --------------------------------------------------------
 class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_OBJECT
@@ -171,6 +199,7 @@ private:
     Mixer m_mixer;
     QObject m_root;
     MixerAdaptor *m_mixerAdaptor = nullptr;
+    LevelsAdaptor *m_levelsAdaptor = nullptr;
     ObjectManagerAdaptor *m_om = nullptr;
     QHash<QString, ExportedObject *> m_objects;   // path → object
 };

@@ -32,11 +32,14 @@ Kirigami.AbstractCard {
     contentItem: ColumnLayout {
         spacing: Kirigami.Units.smallSpacing
 
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 8
+            spacing: Kirigami.Units.smallSpacing
+
         QQC2.Slider {
             id: slider
-            Layout.alignment: Qt.AlignHCenter        // a vertical fader is as wide as its handle; center it
-            Layout.fillWidth: false
-            Layout.preferredHeight: Kirigami.Units.gridUnit * 8
+            Layout.fillHeight: true
             orientation: Qt.Vertical
             from: 0; to: 1; stepSize: 0.01
             value: cell.value
@@ -44,6 +47,15 @@ Kirigami.AbstractCard {
             onMoved: Mixer.setCellVolume(cell.channel, cell.mix, value)
             QQC2.ToolTip.visible: pressed
             QQC2.ToolTip.text: isFinite(cell.toDb(value)) ? i18n("%1 dB", cell.toDb(value).toFixed(1)) : i18n("−∞ dB")
+        }
+        // What this cell contributes to the mix: channel peak × cell gain (ADR 0006 — meters are per node).
+        LevelMeter {
+            id: cellMeter
+            Layout.fillHeight: true
+            property double channelPeak: 0
+            peak: cell.muted ? 0 : channelPeak * Math.pow(cell.value, 3)
+            Connections { target: Mixer; function onPeaksChanged() { cellMeter.channelPeak = Mixer.peak("channel/" + cell.channel) } }
+        }
         }
 
         QQC2.Label {

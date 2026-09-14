@@ -330,6 +330,9 @@ void Graph::createLoopback(const QString &name, const QString &description, cons
     pw_thread_loop_unlock(d->loop);
 }
 
+pw_thread_loop *Graph::threadLoop() const { return d->loop; }
+pw_core *Graph::core() const { return d->core; }
+
 void Graph::createParkingSink() {
     pw_thread_loop_lock(d->loop);
     pw_properties *props = pw_properties_new(

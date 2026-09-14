@@ -61,7 +61,7 @@ Key members (full XML in `interfaces/`):
 - `App`: props `Name`, `Binary`, `NodeId (u)`, `Channel (o)`; method `MoveTo(o channel)`.
 
 Volumes are **linear** on the bus (what PipeWire uses); cubic/dB mapping is presentation.
-Level meters (Q-6) are *not* properties — if adopted, a dedicated `Meters` interface with a
+Level meters (Q-6) are *not* properties — if adopted, a dedicated `Meters` interface with a → **resolved by ADR 0006** (daemon meters, one `Peaks` signal per tick, measured 2–4 % of a core for 24 nodes)
 `Levels(a{od})` signal at a fixed rate, opt-in via `Subscribe()`, so idle frontends cost nothing.
 
 ### 4. Lifecycle (pattern: `pipewire-pulse.service`)

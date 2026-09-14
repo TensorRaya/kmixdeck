@@ -99,7 +99,7 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 | UX-3 | First-run wizard SHOULD create default channels and mixes, detect the microphone and the default output, and assign running apps. | wavelink | 📝 |
 | UX-4 | Full keyboard operability and screen-reader labels per KDE HIG. | platform | 📝 |
 | UX-5 | Languages: English first; German second; translatable via KDE's i18n. | owner | 📝 |
-| UX-6 | Level meters (VU) on every channel and every mix (top Linux wish: Sonusmix #20; Pulsemeeter has them). | users | 📝 |
+| UX-6 | Level meters (VU) on every channel and every mix (top Linux wish: Sonusmix #20; Pulsemeeter has them). | users; ADR 0006: daemon peak streams (25 Hz, `resample.peaks`), `org.kmixdeck1.Levels` Subscribe/Peaks, on demand only; CLI `kmixdeck levels`; UI meters per cell (channel peak × gain) and per mix; tests `test_ux6_levels_signal_carries_peaks_of_the_tone`, `test_ux6_subscriber_that_dies_is_forgotten` | ✅ |
 | UX-7 | Volume sliders MUST use a logarithmic curve and show dB and percent. | wavelink #19, #20 | 📝 |
 
 ## 7. Verification (binding)

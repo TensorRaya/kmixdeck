@@ -5,7 +5,8 @@ Two sandboxes: a private PipeWire (pw_sandbox) AND a private session bus (dbus-d
 kmixdeckd is started on that bus; the CLI is the test client — so every assertion here also proves AR-3.
 The acoustic checks reuse the same measurement helpers as test_audio_graph.py.
 """
-import json, math, os, subprocess, time, pytest
+import json
+import math, math, os, subprocess, time, pytest
 from pathlib import Path
 from pw_sandbox import start_private_pipewire, REPO
 
@@ -408,3 +409,65 @@ def test_vf7_capture_side_volume_is_healed_on_start(stack):
     assert stack.pw.props("kmixdeck.link.game.stream.in")["volume"] > 0.99
     # and the fader itself was not touched
     assert stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"] == 1.0
+
+
+# ---------------------------------------------------------------- level meters (ADR 0006, UX-6)
+METER_LISTENER = r"""
+import sys, json, time, math
+from gi.repository import GLib, Gio
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+peaks = {}
+def on(conn, sender, path, iface, sig, params):
+    for k, v in params.unpack()[0].items(): peaks[k] = max(peaks.get(k, 0.0), v)
+bus.signal_subscribe("org.kmixdeck1", "org.kmixdeck1.Levels", "Peaks", "/org/kmixdeck1", None, Gio.DBusSignalFlags.NONE, on)
+bus.call_sync("org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Subscribe", None, None, Gio.DBusCallFlags.NONE, 5000, None)
+loop = GLib.MainLoop(); GLib.timeout_add(int(float(sys.argv[1]) * 1000), loop.quit); loop.run()
+if len(sys.argv) > 2 and sys.argv[2] == "unsubscribe":
+    bus.call_sync("org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Unsubscribe", None, None, Gio.DBusCallFlags.NONE, 5000, None)
+print(json.dumps(peaks))
+"""
+
+
+def meter_nodes(stack):
+    out = subprocess.run(["pw-cli", "ls", "Node"], env=stack.pw.env, capture_output=True, text=True).stdout
+    return out.count('node.name = "kmixdeck.meter"')
+
+
+def test_ux6_levels_signal_carries_peaks_of_the_tone(stack):
+    """Subscribe → tone into game at −20 dBFS → Peaks carries ≈ −20 dB on channel/game and on both mixes
+    (cells at 0 dB), silence elsewhere. Meter streams exist only while subscribed."""
+    assert meter_nodes(stack) == 0
+    stack.cli("cell", "set", "game", "stream", "1.0"); stack.cli("cell", "set", "game", "monitor", "1.0")
+    play = stack.pw.play_into("kmixdeck.channel.game")
+    try:
+        r = subprocess.run(["/usr/bin/python3", "-c", METER_LISTENER, "2.5", "unsubscribe"], env=stack.env, capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, r.stderr
+        peaks = json.loads(r.stdout.strip().splitlines()[-1])
+    finally:
+        play.kill(); play.wait()
+    def db(v): return 20 * math.log10(v) if v > 0 else float("-inf")
+    assert {"channel/game", "channel/system", "channel/voice", "mix/monitor", "mix/stream"} <= set(peaks), peaks
+    assert -23 < db(peaks["channel/game"]) < -17, peaks
+    assert -23 < db(peaks["mix/stream"]) < -17 and -23 < db(peaks["mix/monitor"]) < -17, peaks
+    assert peaks["channel/system"] == 0 and peaks["channel/voice"] == 0, peaks
+    # after Unsubscribe the daemon keeps meters for a grace period, then tears them down
+    for _ in range(80):
+        if meter_nodes(stack) == 0: break
+        time.sleep(0.1)
+    assert meter_nodes(stack) == 0
+    assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Subscribers").stdout.strip() == "u 0"
+
+
+def test_ux6_subscriber_that_dies_is_forgotten(stack):
+    """A client that exits without Unsubscribe must not leave meters running (NameOwnerChanged)."""
+    p = subprocess.Popen(["/usr/bin/python3", "-c", METER_LISTENER, "30"], env=stack.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(50):
+        if meter_nodes(stack) >= 5: break
+        time.sleep(0.1)
+    assert meter_nodes(stack) == 5, "one meter stream per channel and per mix"
+    assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Subscribers").stdout.strip() == "u 1"
+    p.kill(); p.wait()
+    for _ in range(80):
+        if meter_nodes(stack) == 0: break
+        time.sleep(0.1)
+    assert meter_nodes(stack) == 0

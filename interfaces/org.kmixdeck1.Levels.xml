@@ -1,0 +1,25 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  kmixdeck D-Bus API, major version 1 (ADR 0005). Level meters (ADR 0006).
+  Object: /org/kmixdeck1 (same object as org.kmixdeck1.Mixer)
+  Meters cost CPU, so they run only while at least one client is subscribed. Subscriptions are tied to the
+  caller's unique bus name and dropped automatically when that name leaves the bus.
+-->
+<node>
+  <interface name="org.kmixdeck1.Levels">
+    <!-- fixed tick rate of the Peaks signal, Hz -->
+    <property name="Rate" type="u" access="read"/>
+    <!-- number of currently subscribed clients (0 = no meter streams exist) -->
+    <property name="Subscribers" type="u" access="read"/>
+    <!-- start meters for this caller; idempotent -->
+    <method name="Subscribe"/>
+    <!-- stop meters for this caller; the last unsubscribe tears the meter streams down -->
+    <method name="Unsubscribe"/>
+    <!-- once per tick while Subscribers > 0: key "channel/<slug>" or "mix/<slug>" → peak, linear 0..1
+         (dB = 20*log10(v); 0 means silence / -inf). One dictionary per tick regardless of layout size. -->
+    <signal name="Peaks">
+      <arg name="peaks" type="a{sd}"/>
+    </signal>
+  </interface>
+</node>
