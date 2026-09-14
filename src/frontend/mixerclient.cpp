@@ -5,7 +5,7 @@
 #include <QDBusReply>
 #include <QDBusMetaType>
 #include <QDBusVariant>
-#include <QDBusConnectionInterface>
+#include <QDBusServiceWatcher>
 #include <QDebug>
 
 namespace kmixdeck::frontend {
@@ -26,7 +26,8 @@ MixerClient::MixerClient(QObject *parent) : QObject(parent) {
     bus.connect(BUS, QString(), QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"), this, SLOT(onPropertiesChanged(QDBusMessage)));
     bus.connect(BUS, ROOT, QStringLiteral("org.freedesktop.DBus.ObjectManager"), QStringLiteral("InterfacesAdded"), this, SLOT(onInterfacesAdded(QDBusObjectPath,InterfaceMap)));
     bus.connect(BUS, ROOT, QStringLiteral("org.freedesktop.DBus.ObjectManager"), QStringLiteral("InterfacesRemoved"), this, SLOT(onInterfacesRemoved(QDBusObjectPath,QStringList)));
-    connect(bus.interface(), &QDBusConnectionInterface::serviceOwnerChanged, this, &MixerClient::onNameOwnerChanged);
+    auto *watcher = new QDBusServiceWatcher(QLatin1String(BUS), bus, QDBusServiceWatcher::WatchForOwnerChange, this);
+    connect(watcher, &QDBusServiceWatcher::serviceOwnerChanged, this, &MixerClient::onNameOwnerChanged);
     refresh();   // triggers D-Bus activation of kmixdeckd if it is not running (AR-5)
 }
 
