@@ -51,6 +51,27 @@ void Mixer::setCellMuted(const QString &ch, const QString &mix, bool muted) {
     Q_EMIT cellChanged(ch, mix);
 }
 
+double Mixer::channelTrim(const QString &slug) const { auto it = m_sinks.constFind(Names::channelNode(slug)); return it == m_sinks.constEnd() ? 1.0 : it->volume; }
+bool   Mixer::channelMuted(const QString &slug) const { auto it = m_sinks.constFind(Names::channelNode(slug)); return it == m_sinks.constEnd() ? false : it->mute; }
+void Mixer::setChannelTrim(const QString &slug, double linear) {
+    auto it = m_sinks.find(Names::channelNode(slug)); if (it == m_sinks.end()) return;
+    it->volume = static_cast<float>(std::clamp(linear, 0.0, 1.0)); m_graph.setVolume(it->id, it->volume, it->mute); Q_EMIT channelChanged(slug);
+}
+void Mixer::setChannelMuted(const QString &slug, bool muted) {
+    auto it = m_sinks.find(Names::channelNode(slug)); if (it == m_sinks.end()) return;
+    it->mute = muted; m_graph.setVolume(it->id, it->volume, muted); Q_EMIT channelChanged(slug);
+}
+void Mixer::renameChannel(const QString &slug, const QString &name) { for (auto &c : m_channels) if (c.slug == slug) { c.name = name; Q_EMIT channelChanged(slug); } }
+void Mixer::renameMix(const QString &slug, const QString &name)     { for (auto &m : m_mixes) if (m.slug == slug) { m.name = name; Q_EMIT mixChanged(slug); } }
+QString Mixer::mixOutputDevice(const QString &slug) const { for (const auto &m : m_mixes) if (m.slug == slug) return m.outputDevice; return {}; }
+void Mixer::setMixOutputDevice(const QString &slug, const QString &nodeName) {
+    for (auto &m : m_mixes) if (m.slug == slug) { m.outputDevice = nodeName; Q_EMIT mixChanged(slug); }
+    // TODO(MX-3a): create/retarget the "kmixdeck.out.<slug>" loopback to nodeName
+}
+QString Mixer::mixCaptureSource(const QString &slug) const {
+    return m_graph.node(QStringLiteral("kmixdeck.source.") + slug) ? QStringLiteral("kmixdeck.source.") + slug : QString();
+}
+
 void Mixer::addChannel(const QString &displayName) {
     const QString slug = Names::slugify(displayName);
     if (channelSlugs().contains(slug)) return;
@@ -83,13 +104,17 @@ void Mixer::onNode(const pw::NodeInfo &n) {
     bool layout = false;
     if (n.name.startsWith(chP)) {
         const QString slug = n.name.mid(chP.size());
-        bool found = false; for (auto &c : m_channels) if (c.slug == slug) { found = true; c.name = n.description; }
+        m_sinks[n.name] = n;
+        bool found = false; for (auto &c : m_channels) if (c.slug == slug) { found = true; if (c.name.isEmpty()) c.name = n.description; }
         if (!found) { m_channels.push_back({slug, n.description, {}, true}); layout = true; }
+        Q_EMIT channelChanged(slug);
     } else if (n.name.startsWith(mxP)) {
         const QString slug = n.name.mid(mxP.size());
+        m_sinks[n.name] = n;
         QString disp = n.description; if (disp.startsWith(QLatin1String("Mix: "))) disp.remove(0, 5);
-        bool found = false; for (auto &m : m_mixes) if (m.slug == slug) { found = true; m.name = disp; }
+        bool found = false; for (auto &m : m_mixes) if (m.slug == slug) { found = true; if (m.name.isEmpty()) m.name = disp; }
         if (!found) { m_mixes.push_back({slug, disp, {}, true, {}}); layout = true; }
+        Q_EMIT mixChanged(slug);
     } else if (n.name.startsWith(lkP) && !n.name.endsWith(QLatin1String(".in")) && n.mediaClass.startsWith(QLatin1String("Stream/Output"))) {
         const bool isNew = !m_cells.contains(n.name);
         m_cells[n.name] = n;
@@ -105,6 +130,7 @@ void Mixer::onNodeRemoved(uint32_t id) {
     if (name.isEmpty()) return;
     bool layout = false;
     if (m_cells.remove(name)) layout = true;
+    m_sinks.remove(name);
     for (int i = 0; i < m_channels.size(); ++i) if (Names::channelNode(m_channels[i].slug) == name) { m_channels.remove(i); layout = true; break; }
     for (int i = 0; i < m_mixes.size(); ++i) if (Names::mixNode(m_mixes[i].slug) == name) { m_mixes.remove(i); layout = true; break; }
     if (layout) Q_EMIT layoutChanged();

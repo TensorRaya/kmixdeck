@@ -1,0 +1,145 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 kmixdeck contributors
+#include "service.h"
+#include "kmixdeck_version.h"
+#include <QDBusMessage>
+#include <QDBusMetaType>
+#include <QDBusError>
+#include <QDebug>
+#include <cmath>
+
+namespace kmixdeck::daemon {
+
+void emitPropertiesChanged(const QString &path, const QString &iface, const QVariantMap &changed) {
+    QDBusMessage m = QDBusMessage::createSignal(path, QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"));
+    m << iface << changed << QStringList{};
+    QDBusConnection::sessionBus().send(m);
+}
+
+// ---- ObjectManager
+ObjectManagerAdaptor::ObjectManagerAdaptor(QObject *parent, Provider provider) : QDBusAbstractAdaptor(parent), m_provider(std::move(provider)) {}
+ManagedObjects ObjectManagerAdaptor::GetManagedObjects() { return m_provider(); }
+
+// ---- Cell
+CellObject::CellObject(Mixer *mixer, const QString &ch, const QString &mix, QObject *parent)
+    : ExportedObject(Service::cellPath(ch, mix), parent), m_mixer(mixer), m_ch(ch), m_mix(mix) {}
+QDBusObjectPath CellObject::channel() const { return QDBusObjectPath(Service::channelPath(m_ch)); }
+QDBusObjectPath CellObject::mix() const { return QDBusObjectPath(Service::mixPath(m_mix)); }
+double CellObject::volume() const { return Mixer::cubicToLinear(m_mixer->cellVolume(m_ch, m_mix)); }
+bool CellObject::muted() const { return m_mixer->cellMuted(m_ch, m_mix); }
+void CellObject::setVolume(double linear) {
+    if (!(linear >= 0.0 && linear <= 1.0)) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("Volume must be linear 0..1")); return; }
+    m_mixer->setCellVolume(m_ch, m_mix, Mixer::linearToCubic(static_cast<float>(linear)));
+}
+void CellObject::setMuted(bool m) { m_mixer->setCellMuted(m_ch, m_mix, m); }
+void CellObject::SetVolumeDb(double db) {
+    if (db > 0.0) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("dB must be <= 0")); return; }
+    setVolume(db < -200.0 ? 0.0 : std::pow(10.0, db / 20.0));
+}
+QVariantMap CellObject::properties() const {
+    return {{QStringLiteral("Channel"), QVariant::fromValue(channel())}, {QStringLiteral("Mix"), QVariant::fromValue(mix())},
+            {QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()}};
+}
+void CellObject::notifyChanged() { emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()}}); }
+
+// ---- Channel
+ChannelObject::ChannelObject(Mixer *mixer, const QString &slug, QObject *parent) : ExportedObject(Service::channelPath(slug), parent), m_mixer(mixer), m_slug(slug) {}
+QString ChannelObject::name() const { return m_mixer->channelName(m_slug); }
+void ChannelObject::setName(const QString &n) { m_mixer->renameChannel(m_slug, n); }
+void ChannelObject::setIcon(const QString &i) { m_icon = i; emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("Icon"), i}}); }
+double ChannelObject::trim() const { return m_mixer->channelTrim(m_slug); }
+void ChannelObject::setTrim(double v) { if (v < 0 || v > 1) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("Trim must be 0..1")); return; } m_mixer->setChannelTrim(m_slug, v); }
+bool ChannelObject::muted() const { return m_mixer->channelMuted(m_slug); }
+void ChannelObject::setMuted(bool m) { m_mixer->setChannelMuted(m_slug, m); }
+QVariantMap ChannelObject::properties() const {
+    return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), m_icon},
+            {QStringLiteral("Trim"), trim()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("NodeName"), nodeName()}};
+}
+
+// ---- Mix
+MixObject::MixObject(Mixer *mixer, const QString &slug, QObject *parent) : ExportedObject(Service::mixPath(slug), parent), m_mixer(mixer), m_slug(slug) {}
+QString MixObject::name() const { return m_mixer->mixName(m_slug); }
+void MixObject::setName(const QString &n) { m_mixer->renameMix(m_slug, n); }
+void MixObject::setIcon(const QString &i) { m_icon = i; emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("Icon"), i}}); }
+QString MixObject::outputDevice() const { return m_mixer->mixOutputDevice(m_slug); }
+void MixObject::setOutputDevice(const QString &d) { m_mixer->setMixOutputDevice(m_slug, d); }
+QString MixObject::captureSource() const { return m_mixer->mixCaptureSource(m_slug); }
+QVariantMap MixObject::properties() const {
+    return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), m_icon},
+            {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("CaptureSource"), captureSource()}, {QStringLiteral("NodeName"), nodeName()}};
+}
+
+// ---- Mixer root
+MixerAdaptor::MixerAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor(parent), m_mixer(mixer) {}
+QString MixerAdaptor::version() const { return QStringLiteral(KMIXDECK_VERSION_STRING); }
+bool MixerAdaptor::connected() const { return m_mixer->connected(); }
+QDBusObjectPath MixerAdaptor::AddChannel(const QString &name) { m_mixer->addChannel(name); return QDBusObjectPath(Service::channelPath(Names::slugify(name))); }
+QDBusObjectPath MixerAdaptor::AddMix(const QString &name) { m_mixer->addMix(name); return QDBusObjectPath(Service::mixPath(Names::slugify(name))); }
+void MixerAdaptor::RemoveChannel(const QDBusObjectPath &p) { m_mixer->removeChannel(p.path().section(QLatin1Char('/'), -1)); }
+void MixerAdaptor::RemoveMix(const QDBusObjectPath &p) { m_mixer->removeMix(p.path().section(QLatin1Char('/'), -1)); }
+void MixerAdaptor::Save() { /* TODO(DV-5): write layout to $XDG_CONFIG_HOME/kmixdeck/layout.json + pipewire.conf.d */ }
+
+// ---- Service
+Service::Service(QObject *parent) : QObject(parent) {
+    qDBusRegisterMetaType<InterfaceMap>();
+    qDBusRegisterMetaType<ManagedObjects>();
+    connect(&m_mixer, &Mixer::layoutChanged, this, &Service::syncObjects);
+    connect(&m_mixer, &Mixer::connectedChanged, this, [this] {
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("Connected"), m_mixer.connected()}});
+    });
+    connect(&m_mixer, &Mixer::cellChanged, this, [this](const QString &ch, const QString &mix) {
+        if (auto *o = qobject_cast<CellObject *>(m_objects.value(cellPath(ch, mix)))) o->notifyChanged();
+    });
+    connect(&m_mixer, &Mixer::channelChanged, this, [this](const QString &slug) {
+        if (auto *o = m_objects.value(channelPath(slug))) emitPropertiesChanged(o->path(), o->interfaceName(), o->properties());
+    });
+    connect(&m_mixer, &Mixer::mixChanged, this, [this](const QString &slug) {
+        if (auto *o = m_objects.value(mixPath(slug))) emitPropertiesChanged(o->path(), o->interfaceName(), o->properties());
+    });
+}
+
+bool Service::start() {
+    auto bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected()) { qCritical() << "no session bus"; return false; }
+    m_mixerAdaptor = new MixerAdaptor(&m_mixer, &m_root);
+    m_om = new ObjectManagerAdaptor(&m_root, [this] { return managedObjects(); });
+    if (!bus.registerObject(QLatin1String(kRootPath), &m_root, QDBusConnection::ExportAdaptors)) { qCritical() << "registerObject failed" << bus.lastError().message(); return false; }
+    if (!bus.registerService(QLatin1String(kBusName))) { qCritical() << "bus name taken:" << kBusName; return false; }
+    syncObjects();
+    return true;
+}
+
+void Service::exportObject(ExportedObject *o) {
+    QDBusConnection::sessionBus().registerObject(o->path(), o, QDBusConnection::ExportAllProperties | QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllSignals);
+    m_objects.insert(o->path(), o);
+    Q_EMIT m_om->InterfacesAdded(QDBusObjectPath(o->path()), InterfaceMap{{o->interfaceName(), o->properties()}});
+}
+void Service::unexportObject(const QString &path) {
+    auto *o = m_objects.take(path); if (!o) return;
+    QDBusConnection::sessionBus().unregisterObject(path);
+    Q_EMIT m_om->InterfacesRemoved(QDBusObjectPath(path), QStringList{o->interfaceName()});
+    o->deleteLater();
+}
+
+void Service::syncObjects() {
+    QSet<QString> want;
+    for (const auto &ch : m_mixer.channelSlugs()) want.insert(channelPath(ch));
+    for (const auto &mx : m_mixer.mixSlugs()) want.insert(mixPath(mx));
+    for (const auto &ch : m_mixer.channelSlugs()) for (const auto &mx : m_mixer.mixSlugs()) if (m_mixer.cellPresent(ch, mx)) want.insert(cellPath(ch, mx));
+    for (const auto &p : m_objects.keys()) if (!want.contains(p)) unexportObject(p);
+    for (const auto &ch : m_mixer.channelSlugs()) if (!m_objects.contains(channelPath(ch))) exportObject(new ChannelObject(&m_mixer, ch, this));
+    for (const auto &mx : m_mixer.mixSlugs()) if (!m_objects.contains(mixPath(mx))) exportObject(new MixObject(&m_mixer, mx, this));
+    for (const auto &ch : m_mixer.channelSlugs()) for (const auto &mx : m_mixer.mixSlugs())
+        if (m_mixer.cellPresent(ch, mx) && !m_objects.contains(cellPath(ch, mx))) exportObject(new CellObject(&m_mixer, ch, mx, this));
+}
+
+ManagedObjects Service::managedObjects() const {
+    ManagedObjects out;
+    out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
+        {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()}}}});
+    for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)
+        out.insert(QDBusObjectPath(it.key()), InterfaceMap{{it.value()->interfaceName(), it.value()->properties()}});
+    return out;
+}
+
+} // namespace kmixdeck::daemon

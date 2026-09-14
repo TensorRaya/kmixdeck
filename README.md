@@ -58,7 +58,11 @@ GPL-3.0-or-later (KDE ecosystem standard). See [LICENSE](LICENSE).
 - **Architecture validated** (ADR 0002): channel × mix matrix as PipeWire null sinks + loopbacks, one
   fader per cell, persisted by WirePlumber — proven acoustically (−12.0 dB / +6.0 dB / −∞ measured).
 - **Stack decided** (ADR 0004): C++20, Qt 6, Kirigami, KDE Frameworks 6, `libpipewire` directly.
-- **Builds and runs**: matrix UI with per-cell faders/mute, add channel / add mix at runtime.
+- **Service architecture** (ADR 0005): `kmixdeckd` owns PipeWire and exports `org.kmixdeck1` on the
+  session bus; `kmixdeck` (CLI) and `kmixdeck-kde` (Kirigami) are pure D-Bus clients. Anyone can build
+  a frontend — see `docs/frontend-guide.md`. The introspection XML in `interfaces/` is the contract.
+- **Builds and runs**: matrix UI with per-cell faders/mute, add channel / add mix at runtime; CLI with
+  `--json`, dB/percent/linear levels, stable exit codes.
 - **Tested**: QTest units + acoustic integration tests against a private PipeWire daemon
   (`docs/spec/testing.md`). `ctest` is the merge gate; CI runs it on every push.
 
@@ -68,7 +72,9 @@ GPL-3.0-or-later (KDE ecosystem standard). See [LICENSE](LICENSE).
 # Ubuntu 26.04 / Debian: see .github/workflows/ci.yml for the package list
 cmake -S . -B build -G Ninja && ninja -C build
 ctest --test-dir build --output-on-failure
-./build/bin/kmixdeck
+./build/bin/kmixdeckd &        # the service (normally started by D-Bus activation)
+./build/bin/kmixdeck status    # CLI
+./build/bin/kmixdeck-kde       # KDE UI
 ```
 
 Try the audio graph **without the app** — it is plain PipeWire config:

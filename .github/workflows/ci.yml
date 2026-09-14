@@ -22,7 +22,7 @@ jobs:
             libkf6statusnotifieritem-dev libkf6notifications-dev libkf6dbusaddons-dev libkf6crash-dev \
             libkf6iconthemes-dev libkf6qqc2desktopstyle-dev libkf6colorscheme-dev \
             libpipewire-0.3-dev pipewire pipewire-audio wireplumber pipewire-bin \
-            ffmpeg python3-pytest appstream dbus dbus-daemon
+            ffmpeg python3-pytest appstream dbus dbus-daemon systemd
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
       - name: Build
@@ -35,4 +35,4 @@ jobs:
         run: |
           export XDG_RUNTIME_DIR=/tmp/xdg && mkdir -p $XDG_RUNTIME_DIR && chmod 700 $XDG_RUNTIME_DIR
           # The app uses KDBusService (single instance) → needs a session bus, like on any desktop.
-          QT_QPA_PLATFORM=offscreen dbus-run-session -- sh -c 'timeout 5 ./build/bin/kmixdeck; test $? -eq 124'
+          QT_QPA_PLATFORM=offscreen dbus-run-session -- sh -c './build/bin/kmixdeckd & timeout 5 ./build/bin/kmixdeck-kde; test $? -eq 124'

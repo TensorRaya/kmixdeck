@@ -23,7 +23,7 @@ int main(int argc, char *argv[])
     KLocalizedString::setApplicationDomain(QByteArrayLiteral("kmixdeck"));
     QApplication::setOrganizationName(QStringLiteral("kmixdeck"));
     QApplication::setOrganizationDomain(QStringLiteral("kmixdeck.org"));
-    QApplication::setApplicationName(QStringLiteral("kmixdeck"));
+    QApplication::setApplicationName(QStringLiteral("kmixdeck-kde"));
     QApplication::setDesktopFileName(QStringLiteral("org.kmixdeck.kmixdeck"));
     QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral("audio-card")));
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {

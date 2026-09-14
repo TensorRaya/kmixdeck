@@ -1,0 +1,14 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <!-- /org/kmixdeck1/cell/<channel-slug>/<mix-slug> : THE fader (ADR 0002: channelVolumes on the loopback playback stream) -->
+  <interface name="org.kmixdeck1.Cell">
+    <property name="Channel" type="o" access="read"/>
+    <property name="Mix" type="o" access="read"/>
+    <!-- linear 0..1; 0.25 = -12.04 dB, 0.5 = -6.02 dB -->
+    <property name="Volume" type="d" access="readwrite"/>
+    <property name="Muted" type="b" access="readwrite"/>
+    <!-- convenience for CLIs/scripts: set in dB (<= 0). -inf allowed as -1e9. -->
+    <method name="SetVolumeDb"><arg name="db" type="d" direction="in"/></method>
+  </interface>
+</node>

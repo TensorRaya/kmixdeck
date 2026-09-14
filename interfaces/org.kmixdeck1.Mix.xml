@@ -1,0 +1,15 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <!-- /org/kmixdeck1/mix/<slug> : an output bus (PipeWire null sink); optionally a capture source for OBS etc. -->
+  <interface name="org.kmixdeck1.Mix">
+    <property name="Slug" type="s" access="read"/>
+    <property name="Name" type="s" access="readwrite"/>
+    <property name="Icon" type="s" access="readwrite"/>
+    <!-- node.name of the physical sink this mix plays to; empty = not routed to hardware (MX-3a) -->
+    <property name="OutputDevice" type="s" access="readwrite"/>
+    <!-- node.name of the virtual capture source exposing this mix, or empty (MX-3b) -->
+    <property name="CaptureSource" type="s" access="read"/>
+    <property name="NodeName" type="s" access="read"/>
+  </interface>
+</node>

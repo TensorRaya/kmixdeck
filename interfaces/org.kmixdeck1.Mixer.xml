@@ -1,0 +1,30 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  kmixdeck D-Bus API, major version 1 (ADR 0005).
+  This file IS the contract between kmixdeckd and every frontend. Rules:
+  - additions are fine within version 1; removing or changing a member = org.kmixdeck2.
+  - volumes on the bus are LINEAR 0..1 (PipeWire's unit). Cubic/dB mapping is presentation.
+  - slugs are stable identifiers ([a-z0-9-]+), display names may change (DV-7).
+-->
+<node>
+  <!-- Root object: /org/kmixdeck1 -->
+  <interface name="org.kmixdeck1.Mixer">
+    <property name="Version" type="s" access="read"/>
+    <!-- true while the service has a live PipeWire connection -->
+    <property name="Connected" type="b" access="read"/>
+    <!-- Create a channel (input group). Returns the new object path. Slug derived from name. -->
+    <method name="AddChannel">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="path" type="o" direction="out"/>
+    </method>
+    <method name="AddMix">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="path" type="o" direction="out"/>
+    </method>
+    <method name="RemoveChannel"><arg name="path" type="o" direction="in"/></method>
+    <method name="RemoveMix"><arg name="path" type="o" direction="in"/></method>
+    <!-- Persist the layout (channels, mixes) to the service's config; cell levels persist in WirePlumber anyway. -->
+    <method name="Save"/>
+  </interface>
+</node>

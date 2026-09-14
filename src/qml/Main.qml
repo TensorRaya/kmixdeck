@@ -42,11 +42,12 @@ Kirigami.ApplicationWindow {
     function addDialogOpen(kind) { addDialog.open(kind) }
 
     footer: QQC2.ToolBar {
-        visible: !Mixer.connected
+        visible: !Mixer.serviceAvailable || !Mixer.connected
         contentItem: Kirigami.InlineMessage {
             visible: true
             type: Kirigami.MessageType.Error
-            text: i18n("Not connected to PipeWire.")
+            text: !Mixer.serviceAvailable ? i18n("The kmixdeck service (kmixdeckd) is not running.")
+                                          : i18n("kmixdeckd has no connection to PipeWire.")
         }
     }
 }

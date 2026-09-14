@@ -81,13 +81,13 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 
 | ID | Requirement | Source | Status |
 |---|---|---|---|
-| AR-1 | All mixer logic (layout, graph management, app routing, persistence, hotkey actions) MUST live in a background service (`kmixdeckd`) that runs without any UI. | owner 2026-09-14 | 📝 |
-| AR-2 | The service MUST expose its full functionality over a documented, versioned IPC API on the session bus, so that any desktop environment or third party can build a frontend without linking our code. The API spec (introspection XML) MUST ship in the repo and be the contract; the KDE UI MUST use only this API. | owner | 📝 |
-| AR-3 | A CLI (`kmixdeck`) MUST cover 100 % of the API: everything the UI can do, the CLI can do, scriptable, with `--json` output and stable exit codes. | owner | 📝 |
-| AR-4 | The service MUST be D-Bus-activatable and run as a `systemd --user` unit bound to `pipewire.service` (`BindsTo=` + `After=`, `Restart=on-failure`), following `pipewire-pulse.service`. It MUST re-discover the graph after a PipeWire restart instead of dying. | platform (pipewire-pulse.service on Ubuntu 26.04) | 📝 |
-| AR-5 | The KDE UI MUST remain functional if started before the service (it activates it via D-Bus) and MUST show a clear state when the service is gone. | owner | 📝 |
-| AR-6 | Frontends MUST NOT need PipeWire access themselves; the service is the only PipeWire client. (Level meters are the exception to evaluate: see open question Q-6.) | owner | 📝 |
-| AR-7 | The repository MUST document how to write a frontend (docs/frontend-guide.md): bus name, object model, one worked example (the CLI). | owner | 📝 |
+| AR-1 | All mixer logic (layout, graph management, app routing, persistence, hotkey actions) MUST live in a background service (`kmixdeckd`) that runs without any UI. | owner 2026-09-14; test `test_ar1_cli_set_reaches_pipewire_and_is_audible` (CLI→bus→daemon→PipeWire, −12 dB measured) | ✅ |
+| AR-2 | The service MUST expose its full functionality over a documented, versioned IPC API on the session bus, so that any desktop environment or third party can build a frontend without linking our code. The API spec (introspection XML) MUST ship in the repo and be the contract; the KDE UI MUST use only this API. | owner; tests `test_ar2_contract_matches_shipped_xml` (live introspection == interfaces/*.xml), `test_ar2_third_party_client_needs_none_of_our_code` (busctl only) | ✅ |
+| AR-3 | A CLI (`kmixdeck`) MUST cover 100 % of the API: everything the UI can do, the CLI can do, scriptable, with `--json` output and stable exit codes. | owner; tests `test_ar3_cli_status_lists_the_prototype_graph`, `test_cli_level_syntax_and_exit_codes` — App routing/`watch` still to add | 🔶 |
+| AR-4 | The service MUST be D-Bus-activatable and run as a `systemd --user` unit bound to `pipewire.service` (`BindsTo=` + `After=`, `Restart=on-failure`), following `pipewire-pulse.service`. It MUST re-discover the graph after a PipeWire restart instead of dying. | platform; unit files `data/kmixdeckd.service.in`, `data/org.kmixdeck1.service.in` — PipeWire-restart reconnect not yet tested | 🔶 |
+| AR-5 | The KDE UI MUST remain functional if started before the service (it activates it via D-Bus) and MUST show a clear state when the service is gone. | owner; test `test_ar5_frontend_call_activates_nothing_but_survives_daemon_gone` (exit 2, recovers); UI banner distinguishes service-gone vs PipeWire-gone | ✅ |
+| AR-6 | Frontends MUST NOT need PipeWire access themselves; the service is the only PipeWire client. (Level meters are the exception to evaluate: see open question Q-6.) | owner; test `test_ar6_only_the_daemon_links_pipewire` (ldd) | ✅ |
+| AR-7 | The repository MUST document how to write a frontend (docs/frontend-guide.md): bus name, object model, one worked example (the CLI). | owner; `docs/frontend-guide.md` | ✅ |
 
 ## 6. UX
 

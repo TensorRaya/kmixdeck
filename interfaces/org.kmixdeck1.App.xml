@@ -1,0 +1,14 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <!-- /org/kmixdeck1/app/<node-id> : a running application audio stream (Stream/Output/Audio) -->
+  <interface name="org.kmixdeck1.App">
+    <property name="Name" type="s" access="read"/>
+    <property name="Binary" type="s" access="read"/>
+    <property name="NodeId" type="u" access="read"/>
+    <!-- object path of the channel it is routed to, or "/" if it plays to a non-kmixdeck sink -->
+    <property name="Channel" type="o" access="read"/>
+    <!-- move the stream (and remember the choice via WirePlumber restore-target, CH-4) -->
+    <method name="MoveTo"><arg name="channel" type="o" direction="in"/></method>
+  </interface>
+</node>

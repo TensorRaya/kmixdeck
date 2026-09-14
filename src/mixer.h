@@ -47,6 +47,17 @@ public:
     Q_INVOKABLE void   setCellVolume(const QString &ch, const QString &mix, double cubic);
     Q_INVOKABLE void   setCellMuted (const QString &ch, const QString &mix, bool muted);
 
+    /// Channel-wide trim (CH-7) = channelVolumes on the channel null sink → affects every mix.
+    Q_INVOKABLE double channelTrim(const QString &slug) const;
+    Q_INVOKABLE bool   channelMuted(const QString &slug) const;
+    Q_INVOKABLE void   setChannelTrim(const QString &slug, double linear);
+    Q_INVOKABLE void   setChannelMuted(const QString &slug, bool muted);
+    Q_INVOKABLE void   renameChannel(const QString &slug, const QString &name);
+    Q_INVOKABLE void   renameMix(const QString &slug, const QString &name);
+    Q_INVOKABLE QString mixOutputDevice(const QString &slug) const;
+    Q_INVOKABLE void    setMixOutputDevice(const QString &slug, const QString &nodeName);
+    Q_INVOKABLE QString mixCaptureSource(const QString &slug) const;
+
     /// Layout edits (MX-1: any number of mixes; CH-2: any number of channels).
     Q_INVOKABLE void addChannel(const QString &displayName);
     Q_INVOKABLE void addMix(const QString &displayName);
@@ -60,6 +71,8 @@ Q_SIGNALS:
     void connectedChanged();
     void layoutChanged();
     void cellChanged(const QString &ch, const QString &mix);
+    void channelChanged(const QString &slug);
+    void mixChanged(const QString &slug);
 
 private:
     void onNode(const pw::NodeInfo &n);
@@ -71,6 +84,7 @@ private:
     QVector<Channel> m_channels;
     QVector<Mix> m_mixes;
     QHash<QString, pw::NodeInfo> m_cells;      // key: cell node name
+    QHash<QString, pw::NodeInfo> m_sinks;      // channel + mix null sinks, key: node name
     QHash<uint32_t, QString> m_idToName;
 };
 
