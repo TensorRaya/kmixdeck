@@ -19,10 +19,26 @@ Mixer::Mixer(QObject *parent) : QObject(parent) {
     QObject::connect(&m_graph, &pw::Graph::nodeAdded,   this, &Mixer::onNode);
     QObject::connect(&m_graph, &pw::Graph::nodeChanged, this, &Mixer::onNode);
     QObject::connect(&m_graph, &pw::Graph::nodeRemoved, this, &Mixer::onNodeRemoved);
-    QObject::connect(&m_graph, &pw::Graph::connected, this, [this] { m_connected = true; Q_EMIT connectedChanged(); });
+    QObject::connect(&m_graph, &pw::Graph::streamRouted, this, &Mixer::onStreamRouted);
+    QObject::connect(&m_graph, &pw::Graph::connected, this, [this] { m_connected = true; m_reconnectMs = 500; Q_EMIT connectedChanged(); });
+    // AR-4: PipeWire restarted under us → drop everything (nodeRemoved for each → layout/app objects vanish on
+    // the bus), then reconnect with backoff; the registry replays the graph and objects reappear.
     QObject::connect(&m_graph, &pw::Graph::disconnected, this, [this](const QString &why) {
-        qWarning() << "PipeWire disconnected:" << why; m_connected = false; Q_EMIT connectedChanged(); });
-    if (!m_graph.connect()) qWarning() << "PipeWire: connect failed";
+        qWarning() << "PipeWire disconnected:" << why;
+        m_graph.teardown();
+        m_channels.clear(); m_mixes.clear(); m_cells.clear(); m_sinks.clear(); m_idToName.clear();
+        for (auto id : m_apps.keys()) Q_EMIT appRemoved(id); m_apps.clear();
+        m_connected = false; Q_EMIT connectedChanged(); Q_EMIT layoutChanged();
+        m_reconnect.start(m_reconnectMs);
+    });
+    m_reconnect.setSingleShot(true);
+    QObject::connect(&m_reconnect, &QTimer::timeout, this, [this] {
+        if (m_graph.connect()) { qInfo() << "PipeWire: reconnected"; return; }
+        m_reconnectMs = std::min(m_reconnectMs * 2, 10000);
+        qWarning() << "PipeWire: reconnect failed, retry in" << m_reconnectMs << "ms";
+        m_reconnect.start(m_reconnectMs);
+    });
+    if (!m_graph.connect()) { qWarning() << "PipeWire: connect failed, retrying"; m_reconnect.start(m_reconnectMs); }
 }
 
 QStringList Mixer::channelSlugs() const { QStringList l; for (const auto &c : m_channels) l << c.slug; return l; }
@@ -70,6 +86,23 @@ void Mixer::setMixOutputDevice(const QString &slug, const QString &nodeName) {
 }
 QString Mixer::mixCaptureSource(const QString &slug) const {
     return m_graph.node(QStringLiteral("kmixdeck.source.") + slug) ? QStringLiteral("kmixdeck.source.") + slug : QString();
+}
+
+QList<uint32_t> Mixer::appIds() const { auto l = m_apps.keys(); std::sort(l.begin(), l.end()); return l; }
+std::optional<App> Mixer::app(uint32_t id) const { auto it = m_apps.constFind(id); return it == m_apps.constEnd() ? std::nullopt : std::optional<App>(*it); }
+bool Mixer::moveApp(uint32_t id, const QString &channelSlug) {
+    if (!m_apps.contains(id) || !channelSlugs().contains(channelSlug)) return false;
+    return m_graph.moveStream(id, Names::channelNode(channelSlug));
+}
+QString Mixer::slugForSinkId(uint32_t sinkId) const {
+    for (auto it = m_sinks.cbegin(); it != m_sinks.cend(); ++it)
+        if (it->id == sinkId && it.key().startsWith(QLatin1String("kmixdeck.channel."))) return it.key().mid(17);
+    return {};
+}
+void Mixer::onStreamRouted(uint32_t streamId, uint32_t sinkId) {
+    auto it = m_apps.find(streamId); if (it == m_apps.end()) return;
+    const QString slug = slugForSinkId(sinkId);
+    if (it->channelSlug != slug) { it->channelSlug = slug; Q_EMIT appChanged(streamId); }
 }
 
 void Mixer::addChannel(const QString &displayName) {
@@ -122,11 +155,19 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         if (parts.size() == 2) Q_EMIT cellChanged(parts[0], parts[1]);
         if (isNew) layout = true;
     }
+    else if (n.mediaClass == QLatin1String("Stream/Output/Audio") && !n.name.startsWith(QLatin1String("kmixdeck."))) {
+        const bool isNew = !m_apps.contains(n.id);
+        App &a = m_apps[n.id];
+        a.id = n.id; a.name = n.appName.isEmpty() ? n.name : n.appName; a.binary = n.appBinary; a.mediaName = n.mediaName; a.mediaRole = n.mediaRole; a.nodeName = n.name;
+        a.channelSlug = slugForSinkId(m_graph.streamSink(n.id));
+        if (isNew) Q_EMIT appAdded(n.id); else Q_EMIT appChanged(n.id);
+    }
     if (layout) Q_EMIT layoutChanged();
 }
 
 void Mixer::onNodeRemoved(uint32_t id) {
     const QString name = m_idToName.take(id);
+    if (m_apps.remove(id)) Q_EMIT appRemoved(id);
     if (name.isEmpty()) return;
     bool layout = false;
     if (m_cells.remove(name)) layout = true;

@@ -5,6 +5,10 @@
   <interface name="org.kmixdeck1.App">
     <property name="Name" type="s" access="read"/>
     <property name="Binary" type="s" access="read"/>
+    <!-- media.name / media.role of the stream: WirePlumber keys its "remember the target" state by
+         media.role first, then application.id, application.name, media.name, node.name (state-stream.lua). -->
+    <property name="MediaName" type="s" access="read"/>
+    <property name="MediaRole" type="s" access="read"/>
     <property name="NodeId" type="u" access="read"/>
     <!-- object path of the channel it is routed to, or "/" if it plays to a non-kmixdeck sink -->
     <property name="Channel" type="o" access="read"/>

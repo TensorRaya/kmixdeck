@@ -3,6 +3,7 @@
 #pragma once
 
 #include <QObject>
+#include <QTimer>
 #include <QAbstractListModel>
 #include <QVector>
 #include <QString>
@@ -21,6 +22,8 @@ struct Names {
 };
 
 struct Channel { QString slug; QString name; QString icon; bool virt = true; };
+/// A running application audio stream (Stream/Output/Audio that is not one of ours).
+struct App { uint32_t id = 0; QString name, binary, mediaName, mediaRole, nodeName; QString channelSlug; /* empty = not on a kmixdeck channel */ };
 struct Mix     { QString slug; QString name; QString icon; bool capture = true; QString outputDevice; };
 
 /// The (channel × mix) matrix. One fader per cell = channelVolumes on the cell's loopback playback
@@ -58,6 +61,13 @@ public:
     Q_INVOKABLE void    setMixOutputDevice(const QString &slug, const QString &nodeName);
     Q_INVOKABLE QString mixCaptureSource(const QString &slug) const;
 
+    /// Running application streams (CH-4/CH-10).
+    QList<uint32_t> appIds() const;
+    std::optional<App> app(uint32_t id) const;
+    /// Route an app stream to a channel. WirePlumber remembers it (restore-target) keyed by the stream's
+    /// media.role → application.id → application.name → media.name → node.name (state-stream.lua formKey).
+    Q_INVOKABLE bool moveApp(uint32_t id, const QString &channelSlug);
+
     /// Layout edits (MX-1: any number of mixes; CH-2: any number of channels).
     Q_INVOKABLE void addChannel(const QString &displayName);
     Q_INVOKABLE void addMix(const QString &displayName);
@@ -73,10 +83,15 @@ Q_SIGNALS:
     void cellChanged(const QString &ch, const QString &mix);
     void channelChanged(const QString &slug);
     void mixChanged(const QString &slug);
+    void appAdded(uint32_t id);
+    void appChanged(uint32_t id);
+    void appRemoved(uint32_t id);
 
 private:
     void onNode(const pw::NodeInfo &n);
     void onNodeRemoved(uint32_t id);
+    void onStreamRouted(uint32_t streamId, uint32_t sinkId);
+    QString slugForSinkId(uint32_t sinkId) const;
     void rebuildLayoutFromGraph();
 
     pw::Graph m_graph;
@@ -84,7 +99,10 @@ private:
     QVector<Channel> m_channels;
     QVector<Mix> m_mixes;
     QHash<QString, pw::NodeInfo> m_cells;      // key: cell node name
-    QHash<QString, pw::NodeInfo> m_sinks;      // channel + mix null sinks, key: node name
+    QHash<QString, pw::NodeInfo> m_sinks;
+    QHash<uint32_t, App> m_apps;
+    QTimer m_reconnect;
+    int m_reconnectMs = 500;      // channel + mix null sinks, key: node name
     QHash<uint32_t, QString> m_idToName;
 };
 

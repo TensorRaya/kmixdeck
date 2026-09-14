@@ -35,9 +35,13 @@ struct Graph::Impl {
     pw_context *context = nullptr;
     pw_core *core = nullptr;
     pw_registry *registry = nullptr;
+    pw_metadata *metadata = nullptr;      // "default" metadata object, for target.object
     spa_hook registryListener{};
     spa_hook coreListener{};
     QHash<uint32_t, NodeProxy *> nodes;           // loop thread only
+    struct LinkInfo { uint32_t out = 0, in = 0; };
+    QHash<uint32_t, LinkInfo> links;              // loop thread only: link id → (output node, input node)
+    QHash<uint32_t, uint32_t> routes;             // guarded by snapshotMutex: stream node → sink node
     mutable std::mutex snapshotMutex;
     QHash<uint32_t, NodeInfo> snapshot;           // guarded by snapshotMutex, read from Qt thread
 
@@ -67,6 +71,10 @@ struct Graph::Impl {
             np->info.mediaClass = prop(info->props, PW_KEY_MEDIA_CLASS);
             np->info.mediaName = prop(info->props, PW_KEY_MEDIA_NAME);
             np->info.target = prop(info->props, PW_KEY_TARGET_OBJECT);
+            np->info.appName = prop(info->props, PW_KEY_APP_NAME);
+            np->info.appBinary = prop(info->props, PW_KEY_APP_PROCESS_BINARY);
+            np->info.mediaRole = prop(info->props, PW_KEY_MEDIA_ROLE);
+            if (np->info.serial == 0) np->info.serial = prop(info->props, PW_KEY_OBJECT_SERIAL).toUInt();
         }
         if (info->change_mask & PW_NODE_CHANGE_MASK_STATE) {
             np->info.state = QString::fromUtf8(pw_node_state_as_string(info->state));
@@ -136,6 +144,16 @@ struct Graph::Impl {
     // --- registry
     static void onGlobal(void *data, uint32_t id, uint32_t /*permissions*/, const char *type, uint32_t /*version*/, const spa_dict *props) {
         auto *impl = static_cast<Impl *>(data);
+        if (type && strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0) {
+            if (prop(props, PW_KEY_METADATA_NAME) == QLatin1String("default") && !impl->metadata)
+                impl->metadata = static_cast<pw_metadata *>(pw_registry_bind(impl->registry, id, type, PW_VERSION_METADATA, 0));
+            return;
+        }
+        if (type && strcmp(type, PW_TYPE_INTERFACE_Link) == 0) {
+            const uint32_t out = prop(props, PW_KEY_LINK_OUTPUT_NODE).toUInt(), in = prop(props, PW_KEY_LINK_INPUT_NODE).toUInt();
+            if (out && in) { impl->links.insert(id, {out, in}); impl->recomputeRoute(out); }
+            return;
+        }
         if (!type || strcmp(type, PW_TYPE_INTERFACE_Node) != 0) return;
         // We only mirror audio nodes.
         const QString mc = prop(props, PW_KEY_MEDIA_CLASS);
@@ -148,6 +166,10 @@ struct Graph::Impl {
         np->info.description = prop(props, PW_KEY_NODE_DESCRIPTION);
         np->info.mediaClass = mc;
         np->info.mediaName = prop(props, PW_KEY_MEDIA_NAME);
+        np->info.appName = prop(props, PW_KEY_APP_NAME);
+        np->info.appBinary = prop(props, PW_KEY_APP_PROCESS_BINARY);
+        np->info.mediaRole = prop(props, PW_KEY_MEDIA_ROLE);
+        np->info.serial = prop(props, PW_KEY_OBJECT_SERIAL).toUInt();
         np->proxy = static_cast<pw_proxy *>(pw_registry_bind(impl->registry, id, type, PW_VERSION_NODE, 0));
         if (!np->proxy) { delete np; return; }
         pw_proxy_add_object_listener(np->proxy, &np->listener, &nodeEvents, np);
@@ -156,7 +178,22 @@ struct Graph::Impl {
         // ask for Props once; further changes arrive via onNodeInfo(PARAMS) → enum_params
         pw_node_subscribe_params(reinterpret_cast<pw_node *>(np->proxy), (uint32_t[]){SPA_PARAM_Props}, 1);
     }
-    static void onGlobalRemove(void * /*data*/, uint32_t /*id*/) { /* handled by proxy 'removed' */ }
+    void recomputeRoute(uint32_t outNode) {
+        // majority target of this node's outgoing links (a stereo stream has 2 links to the same sink)
+        QHash<uint32_t, int> count;
+        for (const auto &l : links) if (l.out == outNode) count[l.in]++;
+        uint32_t best = 0; int n = 0;
+        for (auto it = count.cbegin(); it != count.cend(); ++it) if (it.value() > n) { n = it.value(); best = it.key(); }
+        bool changed;
+        { std::lock_guard<std::mutex> g(snapshotMutex); changed = routes.value(outNode) != best; if (best) routes[outNode] = best; else routes.remove(outNode); }
+        if (changed) QMetaObject::invokeMethod(q, [q = this->q, outNode, best] { Q_EMIT q->streamRouted(outNode, best); }, Qt::QueuedConnection);
+    }
+    static void onGlobalRemove(void *data, uint32_t id) {
+        auto *impl = static_cast<Impl *>(data);
+        auto it = impl->links.find(id);
+        if (it != impl->links.end()) { const uint32_t out = it->out; impl->links.erase(it); impl->recomputeRoute(out); }
+        // nodes are handled by the proxy 'removed' event
+    }
     static const pw_registry_events registryEvents;
 
     static void onCoreError(void *data, uint32_t id, int seq, int res, const char *message) {
@@ -183,6 +220,7 @@ Graph::Graph(QObject *parent) : QObject(parent), d(std::make_unique<Impl>()) {
 Graph::~Graph() {
     if (d->loop) {
         pw_thread_loop_lock(d->loop);
+        if (d->metadata) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(d->metadata));
         if (d->registry) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(d->registry));
         if (d->core) pw_core_disconnect(d->core);
         pw_thread_loop_unlock(d->loop);
@@ -194,11 +232,13 @@ Graph::~Graph() {
 }
 
 bool Graph::connect() {
-    d->loop = pw_thread_loop_new("kmixdeck-pw", nullptr);
-    if (!d->loop) return false;
-    d->context = pw_context_new(pw_thread_loop_get_loop(d->loop), nullptr, 0);
-    if (!d->context) return false;
-    pw_thread_loop_start(d->loop);
+    if (!d->loop) {
+        d->loop = pw_thread_loop_new("kmixdeck-pw", nullptr);
+        if (!d->loop) return false;
+        d->context = pw_context_new(pw_thread_loop_get_loop(d->loop), nullptr, 0);
+        if (!d->context) return false;
+        pw_thread_loop_start(d->loop);
+    }
     pw_thread_loop_lock(d->loop);
     d->core = pw_context_connect(d->context, nullptr, 0);
     if (!d->core) { pw_thread_loop_unlock(d->loop); return false; }
@@ -209,6 +249,24 @@ bool Graph::connect() {
     m_connected = true;
     Q_EMIT connected();
     return true;
+}
+
+/// Tear down the core connection (after EPIPE) and forget every mirrored object, emitting nodeRemoved
+/// for each so the model above stays truthful. Loop and context survive; connect() re-attaches.
+void Graph::teardown() {
+    if (!d->loop) return;
+    QList<uint32_t> ids;
+    pw_thread_loop_lock(d->loop);
+    ids = d->nodes.keys();
+    for (auto *np : d->nodes) { spa_hook_remove(&np->listener); spa_hook_remove(&np->proxyListener); delete np; }   // proxies die with the core
+    d->nodes.clear(); d->links.clear();
+    d->metadata = nullptr; d->registry = nullptr;
+    spa_hook_remove(&d->coreListener); spa_hook_remove(&d->registryListener);
+    if (d->core) { pw_core_disconnect(d->core); d->core = nullptr; }
+    pw_thread_loop_unlock(d->loop);
+    { std::lock_guard<std::mutex> g(d->snapshotMutex); d->snapshot.clear(); d->routes.clear(); }
+    m_connected = false;
+    for (uint32_t id : ids) Q_EMIT nodeRemoved(id);
 }
 
 QVector<NodeInfo> Graph::nodes() const {
@@ -270,6 +328,30 @@ void Graph::createLoopback(const QString &name, const QString &description, cons
         .arg(description, name, from, to);
     pw_context_load_module(d->context, "libpipewire-module-loopback", args.toUtf8().constData(), nullptr);
     pw_thread_loop_unlock(d->loop);
+}
+
+uint32_t Graph::streamSink(uint32_t streamId) const {
+    std::lock_guard<std::mutex> g(d->snapshotMutex);
+    return d->routes.value(streamId, 0);
+}
+
+void Graph::setStreamTarget(uint32_t streamId, uint32_t sinkSerial) {
+    pw_thread_loop_lock(d->loop);
+    if (d->metadata) {
+        const QByteArray v = QByteArray::number(sinkSerial);
+        pw_metadata_set_property(d->metadata, streamId, "target.object", "Spa:Id", v.constData());
+    } else {
+        qWarning() << "no 'default' metadata object yet; cannot route stream" << streamId;
+    }
+    pw_thread_loop_unlock(d->loop);
+}
+
+bool Graph::moveStream(uint32_t streamId, const QString &sinkNodeName) {
+    const auto sink = node(sinkNodeName);
+    if (!sink || sink->serial == 0) return false;
+    { std::lock_guard<std::mutex> g(d->snapshotMutex); if (!d->snapshot.contains(streamId)) return false; }
+    setStreamTarget(streamId, sink->serial);
+    return true;
 }
 
 void Graph::destroyObject(uint32_t id) {

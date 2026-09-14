@@ -27,6 +27,10 @@ struct NodeInfo {
     QString mediaClass;    // Audio/Sink, Stream/Output/Audio, ...
     QString mediaName;     // media.name (WirePlumber stream-restore key)
     QString target;        // node.target if set
+    QString appName;       // application.name
+    QString appBinary;     // application.process.binary
+    QString mediaRole;     // media.role (WirePlumber keys stream state by this FIRST — see ADR 0006)
+    uint32_t serial = 0;   // object.serial (what target.object metadata takes)
     float volume = 1.0f;   // channelVolumes[0], linear
     bool mute = false;
     QString state;         // suspended / idle / running
@@ -42,6 +46,8 @@ public:
     ~Graph() override;
 
     bool connect();
+    /// Drop the core connection and all mirrored state (emits nodeRemoved for everything). connect() again to resume.
+    void teardown();
     bool isConnected() const { return m_connected; }
 
     /// Snapshot of all known nodes (Qt thread).
@@ -57,6 +63,14 @@ public:
     /// Load a loopback module wiring `from` sink's monitor into `to` sink. Returns module id via callback.
     void createLoopback(const QString &name, const QString &description, const QString &from, const QString &to);
     void destroyObject(uint32_t id);
+    /// Current sink a stream's output ports are linked to (node id), or 0. Derived from Link globals.
+    uint32_t streamSink(uint32_t streamId) const;
+
+    /// Route a stream to a sink: sets metadata target.object = <sink serial> on the stream node.
+    /// This is exactly what wpctl set-default / pavucontrol do; WirePlumber persists it (restore-target).
+    void setStreamTarget(uint32_t streamId, uint32_t sinkSerial);
+    /// Link a stream to a sink by name (looks up serial). Returns false if either is unknown.
+    bool moveStream(uint32_t streamId, const QString &sinkNodeName);
 
 Q_SIGNALS:
     void connected();
@@ -64,6 +78,8 @@ Q_SIGNALS:
     void nodeAdded(const kmixdeck::pw::NodeInfo &node);
     void nodeChanged(const kmixdeck::pw::NodeInfo &node);
     void nodeRemoved(uint32_t id);
+    /// A stream's output is now linked to a different node (or none = 0).
+    void streamRouted(uint32_t streamId, uint32_t sinkId);
 
 public:
     struct Impl;   // public for the C callback trampolines

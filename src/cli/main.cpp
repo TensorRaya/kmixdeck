@@ -140,6 +140,7 @@ int main(int argc, char *argv[]) {
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|trim <slug> <level>|mute <slug> [on|off]\n"
         "  mix     list|add <name>|remove <slug>|rename <slug> <name>|output <slug> <node.name>\n"
         "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
+        "  app     list|move <id|name> <channel>          running application streams\n"
         "  watch                                      print property changes as they happen\n\n"
         "Levels: linear 0..1, or NdB (e.g. -12dB), or N% (UI/cubic scale). Exit codes: 0 ok, 1 usage, 2 no service, 3 not found, 4 rejected."));
     p.addHelpOption(); p.addVersionOption();
@@ -188,6 +189,30 @@ int main(int argc, char *argv[]) {
         if (sub == "set") { if (!need(5)) return Usage; double l; if (!parseLevel(a[4], &l)) return fail(Usage, "bad level '" + a[4] + "'"); return setProp(path, "org.kmixdeck1.Cell", "Volume", l, &e) ? Ok : fail(Rejected, e); }
         if (sub == "mute") { bool b; if (!parseBool(a, 4, &b)) return fail(Usage, "on|off"); return setProp(path, "org.kmixdeck1.Cell", "Muted", b, &e) ? Ok : fail(Rejected, e); }
         return fail(Usage, "unknown subcommand '" + sub + "'");
+    }
+    if (cmd == "app") {
+        if (sub == "list") {
+            if (g_json) { QJsonArray arr; for (auto it = o.apps.cbegin(); it != o.apps.cend(); ++it) { auto v = it.value(); v["Path"] = it.key(); arr.append(QJsonObject::fromVariantMap(v)); } out << QJsonDocument(arr).toJson(); }
+            else for (auto it = o.apps.cbegin(); it != o.apps.cend(); ++it) {
+                const QString chPath = it.value().value("Channel").toString();
+                out << QStringLiteral("%1  %2  %3  -> %4\n").arg(it.value().value("NodeId").toString(), 5).arg(it.value().value("Name").toString().left(24), -24)
+                       .arg(it.value().value("MediaName").toString().left(20), -20).arg(chPath == "/" ? QStringLiteral("(not on a channel)") : chPath.section('/', -1));
+            }
+            return Ok;
+        }
+        if (sub == "move") {
+            if (!need(4)) return Usage;
+            QString appPath;
+            for (auto it = o.apps.cbegin(); it != o.apps.cend(); ++it)
+                if (it.value().value("NodeId").toString() == a[2] || it.value().value("Name").toString().compare(a[2], Qt::CaseInsensitive) == 0) appPath = it.key();
+            if (appPath.isEmpty()) return fail(NotFound, "no app '" + a[2] + "'");
+            const QString chPath = QStringLiteral("%1/channel/%2").arg(ROOT, a[3]);
+            if (!o.channels.contains(chPath)) return fail(NotFound, "no channel '" + a[3] + "'");
+            QDBusInterface appIf(BUS, appPath, "org.kmixdeck1.App", QDBusConnection::sessionBus());
+            QDBusMessage r = appIf.call("MoveTo", QVariant::fromValue(QDBusObjectPath(chPath)));
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        return fail(Usage, "app list | app move <id|name> <channel>");
     }
     if (cmd == "watch") {
         Watcher w; auto bus = QDBusConnection::sessionBus();

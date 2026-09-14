@@ -101,6 +101,30 @@ private:
     Mixer *m_mixer; QString m_slug, m_icon;
 };
 
+// ---- org.kmixdeck1.App ------------------------------------------------------------------
+class AppObject : public ExportedObject {
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.kmixdeck1.App")
+    Q_PROPERTY(QString Name READ name CONSTANT)
+    Q_PROPERTY(QString Binary READ binary CONSTANT)
+    Q_PROPERTY(QString MediaName READ mediaName CONSTANT)
+    Q_PROPERTY(QString MediaRole READ mediaRole CONSTANT)
+    Q_PROPERTY(uint NodeId READ nodeId CONSTANT)
+    Q_PROPERTY(QDBusObjectPath Channel READ channel)
+public:
+    AppObject(Mixer *mixer, uint32_t id, QObject *parent);
+    QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.App"); }
+    QVariantMap properties() const override;
+    QString name() const; QString binary() const; QString mediaName() const; QString mediaRole() const;
+    uint nodeId() const { return m_id; }
+    QDBusObjectPath channel() const;
+    void notifyChanged();
+public Q_SLOTS:
+    void MoveTo(const QDBusObjectPath &channel);
+private:
+    Mixer *m_mixer; uint32_t m_id;
+};
+
 // ---- org.kmixdeck1.Mixer (root) --------------------------------------------------------
 class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_OBJECT
@@ -130,6 +154,7 @@ public:
 
     static QString channelPath(const QString &slug) { return QStringLiteral("%1/channel/%2").arg(QLatin1String(kRootPath), slug); }
     static QString mixPath(const QString &slug)     { return QStringLiteral("%1/mix/%2").arg(QLatin1String(kRootPath), slug); }
+    static QString appPath(uint32_t id)             { return QStringLiteral("%1/app/%2").arg(QLatin1String(kRootPath)).arg(id); }
     static QString cellPath(const QString &ch, const QString &mix) { return QStringLiteral("%1/cell/%2/%3").arg(QLatin1String(kRootPath), ch, mix); }
 
 private:

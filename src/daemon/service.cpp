@@ -69,6 +69,24 @@ QVariantMap MixObject::properties() const {
             {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("CaptureSource"), captureSource()}, {QStringLiteral("NodeName"), nodeName()}};
 }
 
+// ---- App
+AppObject::AppObject(Mixer *mixer, uint32_t id, QObject *parent) : ExportedObject(Service::appPath(id), parent), m_mixer(mixer), m_id(id) {}
+QString AppObject::name() const { auto a = m_mixer->app(m_id); return a ? a->name : QString(); }
+QString AppObject::binary() const { auto a = m_mixer->app(m_id); return a ? a->binary : QString(); }
+QString AppObject::mediaName() const { auto a = m_mixer->app(m_id); return a ? a->mediaName : QString(); }
+QString AppObject::mediaRole() const { auto a = m_mixer->app(m_id); return a ? a->mediaRole : QString(); }
+QDBusObjectPath AppObject::channel() const { auto a = m_mixer->app(m_id); return QDBusObjectPath(a && !a->channelSlug.isEmpty() ? Service::channelPath(a->channelSlug) : QStringLiteral("/")); }
+void AppObject::MoveTo(const QDBusObjectPath &channel) {
+    const QString prefix = Service::channelPath(QString());
+    if (!channel.path().startsWith(prefix)) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("not a channel path")); return; }
+    if (!m_mixer->moveApp(m_id, channel.path().mid(prefix.size()))) sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("unknown app or channel"));
+}
+QVariantMap AppObject::properties() const {
+    return {{QStringLiteral("Name"), name()}, {QStringLiteral("Binary"), binary()}, {QStringLiteral("MediaName"), mediaName()}, {QStringLiteral("MediaRole"), mediaRole()},
+            {QStringLiteral("NodeId"), nodeId()}, {QStringLiteral("Channel"), QVariant::fromValue(channel())}};
+}
+void AppObject::notifyChanged() { emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("Channel"), QVariant::fromValue(channel())}}); }
+
 // ---- Mixer root
 MixerAdaptor::MixerAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor(parent), m_mixer(mixer) {}
 QString MixerAdaptor::version() const { return QStringLiteral(KMIXDECK_VERSION_STRING); }
@@ -93,6 +111,9 @@ Service::Service(QObject *parent) : QObject(parent) {
     connect(&m_mixer, &Mixer::channelChanged, this, [this](const QString &slug) {
         if (auto *o = m_objects.value(channelPath(slug))) emitPropertiesChanged(o->path(), o->interfaceName(), o->properties());
     });
+    connect(&m_mixer, &Mixer::appAdded, this, [this](uint32_t id) { if (!m_objects.contains(appPath(id))) exportObject(new AppObject(&m_mixer, id, this)); });
+    connect(&m_mixer, &Mixer::appRemoved, this, [this](uint32_t id) { unexportObject(appPath(id)); });
+    connect(&m_mixer, &Mixer::appChanged, this, [this](uint32_t id) { if (auto *o = qobject_cast<AppObject *>(m_objects.value(appPath(id)))) o->notifyChanged(); });
     connect(&m_mixer, &Mixer::mixChanged, this, [this](const QString &slug) {
         if (auto *o = m_objects.value(mixPath(slug))) emitPropertiesChanged(o->path(), o->interfaceName(), o->properties());
     });
@@ -126,7 +147,9 @@ void Service::syncObjects() {
     for (const auto &ch : m_mixer.channelSlugs()) want.insert(channelPath(ch));
     for (const auto &mx : m_mixer.mixSlugs()) want.insert(mixPath(mx));
     for (const auto &ch : m_mixer.channelSlugs()) for (const auto &mx : m_mixer.mixSlugs()) if (m_mixer.cellPresent(ch, mx)) want.insert(cellPath(ch, mx));
+    for (const auto &id : m_mixer.appIds()) want.insert(appPath(id));
     for (const auto &p : m_objects.keys()) if (!want.contains(p)) unexportObject(p);
+    for (const auto &id : m_mixer.appIds()) if (!m_objects.contains(appPath(id))) exportObject(new AppObject(&m_mixer, id, this));
     for (const auto &ch : m_mixer.channelSlugs()) if (!m_objects.contains(channelPath(ch))) exportObject(new ChannelObject(&m_mixer, ch, this));
     for (const auto &mx : m_mixer.mixSlugs()) if (!m_objects.contains(mixPath(mx))) exportObject(new MixObject(&m_mixer, mx, this));
     for (const auto &ch : m_mixer.channelSlugs()) for (const auto &mx : m_mixer.mixSlugs())

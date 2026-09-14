@@ -4,7 +4,7 @@
 Each assertion here is a requirement from docs/spec/requirements.md, referenced by ID.
 Run: pytest -v tests/integration   (needs pipewire, wireplumber, pw-* tools, ffmpeg; no sound card)
 """
-import math, pytest
+import subprocess, math, pytest
 from pw_sandbox import start_private_pipewire
 
 CHANNELS = ["game", "system", "voice"]
@@ -114,3 +114,17 @@ def test_cell_nodes_run_in_one_graph_cycle(pw):
     assert len(running) >= 6, [(o["info"]["props"]["node.name"], o["info"].get("state")) for o in nodes]
     own_latency = [o["info"]["props"]["node.name"] for o in nodes if "node.latency" in o["info"]["props"] or "node.force-quantum" in o["info"]["props"]]
     assert own_latency == [], f"nodes forcing their own quantum: {own_latency}"
+
+
+def test_no_feedback_loop_mix_outputs_never_target_a_channel(pw):
+    """Regression (2026-09-14): with the default sink = a kmixdeck channel, the monitor-mix output looped back
+    into the channel. Every kmixdeck.out.* must be linked to nothing or to a non-kmixdeck sink."""
+    links = subprocess.run(["pw-link", "-l"], env=pw.env, capture_output=True, text=True).stdout.splitlines()
+    bad = []
+    for i, l in enumerate(links):
+        if l.startswith("kmixdeck.out.") and ":output_" in l:
+            j = i + 1
+            while j < len(links) and links[j].startswith(" "):
+                if "|->" in links[j] and "kmixdeck.channel." in links[j]: bad.append((l.strip(), links[j].strip()))
+                j += 1
+    assert not bad, bad

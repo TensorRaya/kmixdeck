@@ -121,3 +121,26 @@ ADR.
 - Naming convention for nodes (DV-7): `kmixdeck.channel.<slug>`,
   `kmixdeck.mix.<slug>`, `kmixdeck.link.<channel>.<mix>` — stable across
   updates, never derived from display names.
+
+## Addendum 2026-09-14 (b): app routing and two traps
+
+**App routing = metadata, not links.** Moving an application stream onto a channel is
+`pw-metadata <stream-id> target.object <channel-serial> Spa:Id` — the same call `wpctl`/`pavucontrol`
+make. WirePlumber's `node/state-stream.lua` then stores the target **by node.name** under a key formed
+from the stream's `media.role` → `application.id` → `application.name` → `media.name` → `node.name`
+(first one present wins, `formKey()`), and re-applies it when a matching stream appears — across app
+restarts *and* PipeWire restarts (serials change, names do not). Measured in
+`test_ch4_routing_survives_app_restart` / `..._pipewire_restart`. Consequence: kmixdeck never keeps a
+routing table of its own; the service only issues the metadata call. (Answers the "re-add after reboot"
+complaint from Sonusmix #38 — and notes the limit: two apps sharing `media.role` and no other key
+collide in WirePlumber's store. Mitigation lives on the WirePlumber side, TBD.)
+
+**Trap 1 — fallback to default sink.** A loopback whose `node.target` is absent falls back to the
+*default* sink (`linking/find-defined-target.lua`) unless `node.dont-fallback = true`. When the default
+sink is one of our own nodes (Plasma lets you choose it; the test VM had it), the monitor-mix output fed
+the Stream mix — an audible loop and every level measurement wrong. Fix: every kmixdeck loopback carries
+`node.dont-fallback = true`; the mix output stays unlinked until `Mix.OutputDevice` is set. Regression
+test `test_no_feedback_loop_mix_outputs_never_target_a_channel`.
+
+**Trap 2 — measuring.** `pw-record --target X` attaches to *any* port of X, including the mic-side
+input. Tests wire the recorder by explicit port name (`X:monitor_FL`) — rule VF-5.

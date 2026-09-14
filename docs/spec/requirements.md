@@ -16,13 +16,13 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 | CH-1 | The app MUST provide virtual audio channels (e.g. *Game*, *System*, *Voice*, *Music*, *Browser*) that appear to the desktop as ordinary output devices, selectable in any application and in the Plasma volume applet. | owner, wavelink | 📝 |
 | CH-2 | Channels MUST be user-definable: create, rename, reorder, delete, choose icon/colour. No fixed set, no fixed count. | owner | 📝 |
 | CH-3 | Physical inputs (microphones, capture cards, line-in, Bluetooth) MUST be usable as channels alongside virtual ones. | wavelink | 📝 |
-| CH-4 | An application MUST be assignable to a channel from within the app (drag-and-drop or picker); the assignment MUST persist across app restarts, PipeWire restarts and reboots. | owner, wavelink | 📝 |
+| CH-4 | An application MUST be assignable to a channel from within the app (drag-and-drop or picker); the assignment MUST persist across app restarts, PipeWire restarts and reboots. | owner, wavelink; tests `test_ch4_move_app_to_channel_is_immediate_and_audible`, `test_ch4_routing_survives_app_restart`, `test_ch4_routing_survives_pipewire_restart` (WirePlumber restore-target, keyed by node.name) | ✅ |
 | CH-5 | New, never-seen applications MUST land on a user-chosen default channel (default: *System*). | owner | 📝 |
 | CH-6 | Assignment MUST survive PipeWire renaming or re-creating an app's node (see Sonusmix #38); matching MUST NOT rely on volatile node IDs alone. | platform | 📝 |
 | CH-7 | Each channel MUST have: mute, gain trim, level meter (peak + RMS), clip indicator. | wavelink | 📝 |
 | CH-8 | Channels MAY be grouped/linked so one fader moves several channels. | wavelink | 📝 |
 | CH-9 | Deleting a channel or mix MUST be undoable (Wave Link 3.2 added undo after user complaints). | wavelink #12 | 📝 |
-| CH-10 | The app picker MUST group applications by category and show which channel each running app is on; apps without a recognisable PipeWire node (Sonusmix #37: mpv) MUST still be listed via their client/application name. | wavelink #10, users | 📝 |
+| CH-10 | The app picker MUST group applications by category and show which channel each running app is on; apps without a recognisable PipeWire node (Sonusmix #37: mpv) MUST still be listed via their client/application name. | wavelink #10, users; test `test_ch10_running_apps_are_listed_with_their_channel`; `org.kmixdeck1.App` objects; `kmixdeck app list` | ✅ |
 | CH-11 | Unused/hidden physical devices SHOULD be hideable from the channel list without deleting them. | wavelink #14 | 📝 |
 
 ## 2. Mixes (outputs)
@@ -83,8 +83,8 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 |---|---|---|---|
 | AR-1 | All mixer logic (layout, graph management, app routing, persistence, hotkey actions) MUST live in a background service (`kmixdeckd`) that runs without any UI. | owner 2026-09-14; test `test_ar1_cli_set_reaches_pipewire_and_is_audible` (CLI→bus→daemon→PipeWire, −12 dB measured) | ✅ |
 | AR-2 | The service MUST expose its full functionality over a documented, versioned IPC API on the session bus, so that any desktop environment or third party can build a frontend without linking our code. The API spec (introspection XML) MUST ship in the repo and be the contract; the KDE UI MUST use only this API. | owner; tests `test_ar2_contract_matches_shipped_xml` (live introspection == interfaces/*.xml), `test_ar2_third_party_client_needs_none_of_our_code` (busctl only) | ✅ |
-| AR-3 | A CLI (`kmixdeck`) MUST cover 100 % of the API: everything the UI can do, the CLI can do, scriptable, with `--json` output and stable exit codes. | owner; tests `test_ar3_cli_status_lists_the_prototype_graph`, `test_cli_level_syntax_and_exit_codes` — App routing/`watch` still to add | 🔶 |
-| AR-4 | The service MUST be D-Bus-activatable and run as a `systemd --user` unit bound to `pipewire.service` (`BindsTo=` + `After=`, `Restart=on-failure`), following `pipewire-pulse.service`. It MUST re-discover the graph after a PipeWire restart instead of dying. | platform; unit files `data/kmixdeckd.service.in`, `data/org.kmixdeck1.service.in` — PipeWire-restart reconnect not yet tested | 🔶 |
+| AR-3 | A CLI (`kmixdeck`) MUST cover 100 % of the API: everything the UI can do, the CLI can do, scriptable, with `--json` output and stable exit codes. | owner; tests `test_ar3_cli_status_lists_the_prototype_graph`, `test_cli_level_syntax_and_exit_codes` — App routing/`watch` still to add; `kmixdeck app list|move` added; `watch` implemented | ✅ |
+| AR-4 | The service MUST be D-Bus-activatable and run as a `systemd --user` unit bound to `pipewire.service` (`BindsTo=` + `After=`, `Restart=on-failure`), following `pipewire-pulse.service`. It MUST re-discover the graph after a PipeWire restart instead of dying. | platform; unit files `data/kmixdeckd.service.in`, `data/org.kmixdeck1.service.in` — PipeWire-restart reconnect not yet tested; reconnect with backoff on EPIPE, objects vanish/reappear on the bus; test `test_ch4_routing_survives_pipewire_restart` covers the daemon surviving a PipeWire restart | ✅ |
 | AR-5 | The KDE UI MUST remain functional if started before the service (it activates it via D-Bus) and MUST show a clear state when the service is gone. | owner; test `test_ar5_frontend_call_activates_nothing_but_survives_daemon_gone` (exit 2, recovers); UI banner distinguishes service-gone vs PipeWire-gone | ✅ |
 | AR-6 | Frontends MUST NOT need PipeWire access themselves; the service is the only PipeWire client. (Level meters are the exception to evaluate: see open question Q-6.) | owner; test `test_ar6_only_the_daemon_links_pipewire` (ldd) | ✅ |
 | AR-7 | The repository MUST document how to write a frontend (docs/frontend-guide.md): bus name, object model, one worked example (the CLI). | owner; `docs/frontend-guide.md` | ✅ |
@@ -110,6 +110,8 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 | VF-3 | Measurements that justify an architecture decision MUST live in the ADR with a reproducible script/test, not in prose. | owner | ✅ (ADR 0002) |
 | VF-4 | `ctest` (unit + integration) MUST pass before merge; no sound card may be required to run it. | owner | ✅ |
 | VF-5 | Audio measurements MUST use explicit port linking (`pw-link` by port name). `--target` auto-connect is forbidden in tests — it attached to the wrong port once and hid a real result. | lesson 2026-09-14 | ✅ |
+
+| VF-6 | No kmixdeck output may ever be linked to a kmixdeck channel (feedback). Enforced by test on every graph change. | trap found 2026-09-14; test `test_no_feedback_loop_mix_outputs_never_target_a_channel` | ✅ |
 
 ## 8. Non-goals (for now)
 

@@ -135,3 +135,86 @@ def test_ar5_frontend_call_activates_nothing_but_survives_daemon_gone(stack):
         if stack.cli("status", check=False).returncode == 0: break
         time.sleep(0.1)
     assert stack.cli("status", json_out=True)["connected"] is True
+
+
+# ---------------------------------------------------------------- app routing (CH-4, CH-10)
+FAKE_APP = '{ application.name = "FakeGame" application.process.binary = "fakegame" media.name = "BGM" media.role = "Game" node.name = "fakegame-out" }'
+
+
+def start_fake_app(stack):
+    p = subprocess.Popen(["pw-play", "-P", FAKE_APP, str(stack.pw.tone())], env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(50):
+        apps = stack.cli("app", "list", json_out=True)
+        if any(a["Name"] == "FakeGame" for a in apps): return p, next(a for a in apps if a["Name"] == "FakeGame")
+        time.sleep(0.1)
+    p.kill(); raise AssertionError("fake app never appeared on the bus")
+
+
+def current_sink_of(stack, node_name="fakegame-out"):
+    links = subprocess.run(["pw-link", "-l"], env=stack.pw.env, capture_output=True, text=True).stdout.splitlines()
+    for i, l in enumerate(links):
+        if f"{node_name}:output_FL" in l and i > 0 and "|<-" in l:
+            return links[i - 1].strip().split(":")[0]
+    return None
+
+
+def test_ch10_running_apps_are_listed_with_their_channel(stack):
+    p, app = start_fake_app(stack)
+    try:
+        assert app["Binary"] == "fakegame" and app["MediaName"] == "BGM" and app["MediaRole"] == "Game"
+        assert app["Channel"] in ("/", "/org/kmixdeck1/channel/game")   # default sink in the sandbox is whatever WirePlumber picked
+    finally:
+        p.kill(); p.wait()
+
+
+def test_ch4_move_app_to_channel_is_immediate_and_audible(stack):
+    p, app = start_fake_app(stack)
+    try:
+        stack.cli("app", "move", "FakeGame", "voice")
+        for _ in range(30):
+            if current_sink_of(stack) == "kmixdeck.channel.voice": break
+            time.sleep(0.1)
+        assert current_sink_of(stack) == "kmixdeck.channel.voice"
+        assert stack.cli("app", "list", json_out=True)[0]["Channel"] == "/org/kmixdeck1/channel/voice"
+        # audible: voice→stream at 1.0, voice→monitor muted → tone only in Stream mix
+        stack.cli("cell", "set", "voice", "stream", "1.0"); stack.cli("cell", "mute", "voice", "monitor", "on")
+        strm, mon = stack.pw.level_at("kmixdeck.mix.stream"), stack.pw.level_at("kmixdeck.mix.monitor")
+        assert strm > -40 and mon == -math.inf, (strm, mon)
+        stack.cli("cell", "mute", "voice", "monitor", "off")
+    finally:
+        p.kill(); p.wait()
+
+
+def test_ch4_routing_survives_app_restart(stack):
+    """Sonusmix #38: 'I have to re-add app nodes after a reboot'. Here: WirePlumber remembers the target for us."""
+    p, _ = start_fake_app(stack)
+    stack.cli("app", "move", "FakeGame", "system"); time.sleep(3.0)   # WirePlumber save_after_timeout
+    p.kill(); p.wait(); time.sleep(0.5)
+    p, app = start_fake_app(stack)
+    try:
+        for _ in range(30):
+            if current_sink_of(stack) == "kmixdeck.channel.system": break
+            time.sleep(0.1)
+        assert current_sink_of(stack) == "kmixdeck.channel.system"
+        assert app["Channel"] == "/org/kmixdeck1/channel/system" or stack.cli("app", "list", json_out=True)[0]["Channel"] == "/org/kmixdeck1/channel/system"
+    finally:
+        p.kill(); p.wait()
+
+
+def test_ch4_routing_survives_pipewire_restart(stack):
+    """Same, across a pipewire+wireplumber restart (serials change; WirePlumber stores the target by node.name)."""
+    p, _ = start_fake_app(stack)
+    stack.cli("app", "move", "FakeGame", "system"); time.sleep(3.0)
+    p.kill(); p.wait()
+    stack.pw.restart()
+    for _ in range(50):   # daemon reconnects? (AR-4) — at minimum the CLI must work again
+        if stack.cli("status", check=False).returncode == 0: break
+        time.sleep(0.2)
+    p, _ = start_fake_app(stack)
+    try:
+        for _ in range(30):
+            if current_sink_of(stack) == "kmixdeck.channel.system": break
+            time.sleep(0.1)
+        assert current_sink_of(stack) == "kmixdeck.channel.system"
+    finally:
+        p.kill(); p.wait()
