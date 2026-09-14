@@ -2,9 +2,7 @@
 
 Numbered, testable requirements. `MUST` / `SHOULD` / `MAY` as in RFC 2119.
 Each requirement carries a source: `[owner]` = project owner's stated need,
-`[wavelink]` = feature parity with Elgato Wave Link (see
-`docs/research/wavelink-feature-inventory.md`), `[users]` = recurring user
-feedback across comparable products (see `docs/research/user-feedback.md`),
+`[wavelink #n]` = feature n in `docs/research/wavelink-feature-inventory.md` (Ln = documented limitation), `[users]` = recurring user feedback in `docs/research/user-feedback.md`,
 `[platform]` = required by PipeWire/KDE integration.
 
 Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
@@ -23,6 +21,9 @@ Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
 | CH-6 | Assignment MUST survive PipeWire renaming or re-creating an app's node (see Sonusmix #38); matching MUST NOT rely on volatile node IDs alone. | platform | 📝 |
 | CH-7 | Each channel MUST have: mute, gain trim, level meter (peak + RMS), clip indicator. | wavelink | 📝 |
 | CH-8 | Channels MAY be grouped/linked so one fader moves several channels. | wavelink | 📝 |
+| CH-9 | Deleting a channel or mix MUST be undoable (Wave Link 3.2 added undo after user complaints). | wavelink #12 | 📝 |
+| CH-10 | The app picker MUST group applications by category and show which channel each running app is on; apps without a recognisable PipeWire node (Sonusmix #37: mpv) MUST still be listed via their client/application name. | wavelink #10, users | 📝 |
+| CH-11 | Unused/hidden physical devices SHOULD be hideable from the channel list without deleting them. | wavelink #14 | 📝 |
 
 ## 2. Mixes (outputs)
 
@@ -36,6 +37,8 @@ Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
 | MX-6 | Each mix MUST have a master fader, mute and meter. | wavelink | 📝 |
 | MX-7 | Per-channel fader per mix MUST include a *link to another mix* toggle (e.g. "Stream follows Monitor for this channel") that can be broken at any time. | wavelink | 📝 |
 | MX-8 | A mix MAY be duplicated as a starting point for a new mix. | owner | 📝 |
+| MX-9 | A mix MUST be sendable to several hardware outputs at once (e.g. headphones + speakers). | wavelink #5 | 📝 |
+| MX-10 | Muted mixes MUST be unmistakable in the UI (Wave Link: header turns red). | wavelink #8 | 📝 |
 
 ## 3. Microphone & effects
 
@@ -46,6 +49,8 @@ Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
 | FX-3 | Effects on a channel apply before the mix faders, so every mix hears the processed signal. | wavelink | 📝 |
 | FX-4 | The mic channel SHOULD offer one-click presets (e.g. "Voice — clean", "Voice — broadcast") that the user can edit and save. | users | 📝 |
 | FX-5 | Effects MUST be bypassable per effect and per chain without audio dropouts. | wavelink | 📝 |
+| FX-6 | Effects MUST be available on mixes (output) as well as on channels (input) — e.g. a limiter on the Stream mix. | wavelink #37 | 📝 |
+| FX-7 | Effect chains MUST be copyable between channels, including from channels whose device is currently absent. | wavelink #35 | 📝 |
 
 ## 4. Control & integration
 
@@ -57,6 +62,7 @@ Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
 | CT-4 | The app MUST integrate with the Plasma system tray (StatusNotifierItem): quick mute, mix switch, level indication. | owner | 📝 |
 | CT-5 | Volumes shown in kmixdeck and in the Plasma volume applet MUST agree (no two truths). | platform | 📝 |
 | CT-6 | OBS SHOULD see each mix as a cleanly named capture device, and MAY additionally see each channel separately (for multi-track recording). | owner | 📝 |
+| CT-7 | Settings backup/restore and export MUST be available; a corrupt entry MUST NOT invalidate the whole config (Wave Link 3.3 fixed exactly this). | wavelink #24, L9 | 📝 |
 
 ## 5. Devices & audio behaviour
 
@@ -67,6 +73,8 @@ Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
 | DV-3 | Hot-plug: when the monitor output device disappears (headset unplugged, Bluetooth drops), the mix MUST fall back to a user-defined device and return automatically when it reappears. | users | 📝 |
 | DV-4 | Sample rate and quantum SHOULD follow the PipeWire session; the app MUST NOT force its own rate. | platform | 📝 |
 | DV-5 | Configuration MUST be plain files under `$XDG_CONFIG_HOME`, human-readable, diff-able, and MUST restore the full graph on login without user action. | owner | 📝 |
+| DV-6 | Sleep/wake and device re-enumeration MUST NOT lose routing or require a restart (Wave Link 3.x release notes list repeated fixes here; VoiceMeeter forum: crackling after updates). | wavelink #44, users | 📝 |
+| DV-7 | Virtual device identity (node.name) MUST stay stable across app updates so OBS/Discord keep their device selection (Wave Link L7: driver update changed device IDs). | wavelink L7 | 📝 |
 
 ## 6. UX
 
@@ -77,6 +85,8 @@ Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
 | UX-3 | First-run wizard SHOULD create default channels and mixes, detect the microphone and the default output, and assign running apps. | wavelink | 📝 |
 | UX-4 | Full keyboard operability and screen-reader labels per KDE HIG. | platform | 📝 |
 | UX-5 | Languages: English first; German second; translatable via KDE's i18n. | owner | 📝 |
+| UX-6 | Level meters (VU) on every channel and every mix (top Linux wish: Sonusmix #20; Pulsemeeter has them). | users | 📝 |
+| UX-7 | Volume sliders MUST use a logarithmic curve and show dB and percent. | wavelink #19, #20 | 📝 |
 
 ## 7. Non-goals (for now)
 
@@ -84,6 +94,8 @@ Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
 - Being a DAW: no recording, no timeline.
 - Replacing OBS's own mixer.
 - Proprietary plugin formats (VST3 on Linux is possible but not a target for v1).
+- Hardware-tied features (Wave XLR Pro hardware mixer, firmware updates, console connectivity) — we have no hardware.
+- A marketplace. Presets are files; share them however you like.
 
 ## Open questions
 

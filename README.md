@@ -22,7 +22,8 @@ and never solved independent per-mix levels
 ([#72](https://codeberg.org/sonusmix/sonusmix/issues/72)).
 
 See [ADR 0001](docs/adr/0001-new-project-not-a-fork.md) for why this is a new
-project rather than a fork.
+project rather than a fork, and [ADR 0002](docs/adr/0002-audio-graph-loopback-matrix.md)
+for the proposed audio graph (to be validated with a prototype).
 
 ## Core ideas (short version — full spec in `docs/spec/`)
 
