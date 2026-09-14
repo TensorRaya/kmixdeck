@@ -77,6 +77,18 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 | DV-6 | Sleep/wake and device re-enumeration MUST NOT lose routing or require a restart (Wave Link 3.x release notes list repeated fixes here; VoiceMeeter forum: crackling after updates). | wavelink #44, users | 📝 |
 | DV-7 | Virtual device identity (node.name) MUST stay stable across app updates so OBS/Discord keep their device selection (Wave Link L7: driver update changed device IDs). | wavelink L7; tests `test_dv7_levels_and_mute_survive_daemon_restart`, `test_dv7_state_is_keyed_by_stable_name_not_display_name` | ✅ |
 
+## 5a. Architecture: service, CLI, frontends
+
+| ID | Requirement | Source | Status |
+|---|---|---|---|
+| AR-1 | All mixer logic (layout, graph management, app routing, persistence, hotkey actions) MUST live in a background service (`kmixdeckd`) that runs without any UI. | owner 2026-09-14 | 📝 |
+| AR-2 | The service MUST expose its full functionality over a documented, versioned IPC API on the session bus, so that any desktop environment or third party can build a frontend without linking our code. The API spec (introspection XML) MUST ship in the repo and be the contract; the KDE UI MUST use only this API. | owner | 📝 |
+| AR-3 | A CLI (`kmixdeck`) MUST cover 100 % of the API: everything the UI can do, the CLI can do, scriptable, with `--json` output and stable exit codes. | owner | 📝 |
+| AR-4 | The service MUST be D-Bus-activatable and run as a `systemd --user` unit bound to `pipewire.service` (`BindsTo=` + `After=`, `Restart=on-failure`), following `pipewire-pulse.service`. It MUST re-discover the graph after a PipeWire restart instead of dying. | platform (pipewire-pulse.service on Ubuntu 26.04) | 📝 |
+| AR-5 | The KDE UI MUST remain functional if started before the service (it activates it via D-Bus) and MUST show a clear state when the service is gone. | owner | 📝 |
+| AR-6 | Frontends MUST NOT need PipeWire access themselves; the service is the only PipeWire client. (Level meters are the exception to evaluate: see open question Q-6.) | owner | 📝 |
+| AR-7 | The repository MUST document how to write a frontend (docs/frontend-guide.md): bus name, object model, one worked example (the CLI). | owner | 📝 |
+
 ## 6. UX
 
 | ID | Requirement | Source | Status |
@@ -109,6 +121,8 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 - A marketplace. Presets are files; share them however you like.
 
 ## Open questions
+
+- **Q-6 (level meters):** VU meters (UX-3) need audio samples. Options: (a) service computes peak/RMS per node and publishes at ~20 Hz over IPC, (b) frontends read `pw-stream` monitors themselves (breaks AR-6), (c) shared-memory ring. Decide with a measurement of D-Bus overhead at 20 Hz × (channels+mixes) properties.
 
 Tracked as issues with label `question`. Initial list:
 
