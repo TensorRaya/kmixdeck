@@ -144,3 +144,9 @@ test `test_no_feedback_loop_mix_outputs_never_target_a_channel`.
 
 **Trap 2 — measuring.** `pw-record --target X` attaches to *any* port of X, including the mic-side
 input. Tests wire the recorder by explicit port name (`X:monitor_FL`) — rule VF-5.
+
+**Trap 3 — moving a stream too early.** `target.object` set before WirePlumber has registered the
+stream node *links* correctly (the linking hooks read metadata) but is *not remembered*: the
+store-stream-target hook looks the node up in its own object manager at metadata-changed time and
+returns silently if it is absent. Seen on the CI runner (slower than a desktop). Frontends should offer
+"move" only for streams that already have a link — the bus exposes `App.Channel` for exactly that.

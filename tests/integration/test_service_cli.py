@@ -142,12 +142,18 @@ FAKE_APP = '{ application.name = "FakeGame" application.process.binary = "fakega
 
 
 def start_fake_app(stack):
+    """Start a fake game and wait until BOTH kmixdeckd (bus object) and WirePlumber (initial link) have seen it.
+    Moving a stream before WirePlumber has registered it links fine but is NOT remembered: its
+    store-stream-target hook looks the node up in its own object manager at metadata-changed time
+    (state-stream.lua) and silently returns if it is not there yet. Found on the slow CI runner."""
     p = subprocess.Popen(["pw-play", "-P", FAKE_APP, str(stack.pw.tone())], env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(50):
+    app = None
+    for _ in range(100):
         apps = stack.cli("app", "list", json_out=True)
-        if any(a["Name"] == "FakeGame" for a in apps): return p, next(a for a in apps if a["Name"] == "FakeGame")
+        app = next((a for a in apps if a["Name"] == "FakeGame"), None)
+        if app and current_sink_of(stack) is not None: return p, app
         time.sleep(0.1)
-    p.kill(); raise AssertionError("fake app never appeared on the bus")
+    p.kill(); raise AssertionError("fake app never appeared on the bus / never got linked by WirePlumber")
 
 
 def wait_wireplumber_saved_target(stack, target, timeout=15.0):
