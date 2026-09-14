@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "mixer.h"
+#include <QTimer>
 #include <QRegularExpression>
 #include <QDebug>
 #include <cmath>
@@ -15,12 +16,15 @@ QString Names::slugify(const QString &display) {
     return s.isEmpty() ? QStringLiteral("x") : s;
 }
 
-Mixer::Mixer(QObject *parent) : QObject(parent) {
+Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     QObject::connect(&m_graph, &pw::Graph::nodeAdded,   this, &Mixer::onNode);
     QObject::connect(&m_graph, &pw::Graph::nodeChanged, this, &Mixer::onNode);
     QObject::connect(&m_graph, &pw::Graph::nodeRemoved, this, &Mixer::onNodeRemoved);
     QObject::connect(&m_graph, &pw::Graph::streamRouted, this, &Mixer::onStreamRouted);
-    QObject::connect(&m_graph, &pw::Graph::connected, this, [this] { m_connected = true; m_reconnectMs = 500; Q_EMIT connectedChanged(); });
+    QObject::connect(&m_graph, &pw::Graph::connected, this, [this] {
+        m_connected = true; m_reconnectMs = 500; Q_EMIT connectedChanged();
+        QTimer::singleShot(400, this, [this] { reconcile(); });   // registry replay first, then fill the gaps
+    });
     // AR-4: PipeWire restarted under us → drop everything (nodeRemoved for each → layout/app objects vanish on
     // the bus), then reconnect with backoff; the registry replays the graph and objects reappear.
     QObject::connect(&m_graph, &pw::Graph::disconnected, this, [this](const QString &why) {
@@ -39,6 +43,38 @@ Mixer::Mixer(QObject *parent) : QObject(parent) {
         m_reconnect.start(m_reconnectMs);
     });
     if (!m_graph.connect()) { qWarning() << "PipeWire: connect failed, retrying"; m_reconnect.start(m_reconnectMs); }
+}
+
+bool Mixer::loadLayout() {
+    Layout l;
+    if (!m_layoutPath.isEmpty() && l.load(m_layoutPath)) { m_layout = l; return true; }
+    return false;
+}
+bool Mixer::saveLayout() const {
+    bool ok = true;
+    if (!m_layoutPath.isEmpty()) ok &= m_layout.save(m_layoutPath);
+    if (!m_pwConfPath.isEmpty()) ok &= m_layout.writePipewireConf(m_pwConfPath);
+    return ok;
+}
+void Mixer::reconcile() {
+    if (!m_connected) return;
+    // Layout → PipeWire: create what is declared but missing. Names carry the display strings.
+    for (const auto &c : m_layout.channels) {
+        if (!m_graph.node(Names::channelNode(c.slug))) m_graph.createNullSink(Names::channelNode(c.slug), c.name, true);
+        bool found = false; for (auto &ch : m_channels) if (ch.slug == c.slug) { found = true; ch.name = c.name; }
+        if (!found) m_channels.push_back({c.slug, c.name, c.icon, true});
+    }
+    for (const auto &m : m_layout.mixes) {
+        if (!m_graph.node(Names::mixNode(m.slug))) m_graph.createNullSink(Names::mixNode(m.slug), QStringLiteral("Mix: ") + m.name, false);
+        bool found = false; for (auto &mx : m_mixes) if (mx.slug == m.slug) { found = true; mx.name = m.name; mx.outputDevice = m.outputDevice; }
+        if (!found) m_mixes.push_back({m.slug, m.name, m.icon, true, m.outputDevice});
+    }
+    for (const auto &c : m_layout.channels)
+        for (const auto &m : m_layout.mixes)
+            if (!m_graph.node(Names::cellNode(c.slug, m.slug)))
+                m_graph.createLoopback(Names::cellNode(c.slug, m.slug), c.name + QStringLiteral(" → ") + m.name, Names::channelNode(c.slug), Names::mixNode(m.slug));
+    m_reconciled = true;
+    Q_EMIT layoutChanged();
 }
 
 QStringList Mixer::channelSlugs() const { QStringList l; for (const auto &c : m_channels) l << c.slug; return l; }
@@ -77,12 +113,17 @@ void Mixer::setChannelMuted(const QString &slug, bool muted) {
     auto it = m_sinks.find(Names::channelNode(slug)); if (it == m_sinks.end()) return;
     it->mute = muted; m_graph.setVolume(it->id, it->volume, muted); Q_EMIT channelChanged(slug);
 }
-void Mixer::renameChannel(const QString &slug, const QString &name) { for (auto &c : m_channels) if (c.slug == slug) { c.name = name; Q_EMIT channelChanged(slug); } }
-void Mixer::renameMix(const QString &slug, const QString &name)     { for (auto &m : m_mixes) if (m.slug == slug) { m.name = name; Q_EMIT mixChanged(slug); } }
+void Mixer::renameChannel(const QString &slug, const QString &name) { for (auto &c : m_channels) if (c.slug == slug) { c.name = name; Q_EMIT channelChanged(slug); } if (auto *l = m_layout.channel(slug)) { l->name = name; saveLayout(); } }
+void Mixer::renameMix(const QString &slug, const QString &name)     { for (auto &m : m_mixes) if (m.slug == slug) { m.name = name; Q_EMIT mixChanged(slug); } if (auto *l = m_layout.mix(slug)) { l->name = name; saveLayout(); } }
 QString Mixer::mixOutputDevice(const QString &slug) const { for (const auto &m : m_mixes) if (m.slug == slug) return m.outputDevice; return {}; }
 void Mixer::setMixOutputDevice(const QString &slug, const QString &nodeName) {
     for (auto &m : m_mixes) if (m.slug == slug) { m.outputDevice = nodeName; Q_EMIT mixChanged(slug); }
-    // TODO(MX-3a): create/retarget the "kmixdeck.out.<slug>" loopback to nodeName
+    if (auto *l = m_layout.mix(slug)) { l->outputDevice = nodeName; saveLayout(); }
+    // live retarget of kmixdeck.out.<slug>: metadata target.object on its playback stream
+    if (auto out = m_graph.node(QStringLiteral("kmixdeck.out.") + slug)) {
+        if (nodeName.isEmpty()) return;   // TODO: unlink; needs pw_metadata clear + node.dont-fallback semantics
+        if (!m_graph.moveStream(out->id, nodeName)) qWarning() << "output device not found:" << nodeName;
+    }
 }
 QString Mixer::mixCaptureSource(const QString &slug) const {
     return m_graph.node(QStringLiteral("kmixdeck.source.") + slug) ? QStringLiteral("kmixdeck.source.") + slug : QString();
@@ -107,27 +148,29 @@ void Mixer::onStreamRouted(uint32_t streamId, uint32_t sinkId) {
 
 void Mixer::addChannel(const QString &displayName) {
     const QString slug = Names::slugify(displayName);
-    if (channelSlugs().contains(slug)) return;
-    m_graph.createNullSink(Names::channelNode(slug), displayName, /*passive*/ true);
-    for (const auto &m : m_mixes)
-        m_graph.createLoopback(Names::cellNode(slug, m.slug), QStringLiteral("%1 → %2").arg(displayName, m.name),
-                               Names::channelNode(slug), Names::mixNode(m.slug));
+    if (slug.isEmpty() || m_layout.channel(slug)) return;
+    m_layout.channels.push_back({slug, displayName, {}});
+    saveLayout(); reconcile();
 }
 void Mixer::addMix(const QString &displayName) {
     const QString slug = Names::slugify(displayName);
-    if (mixSlugs().contains(slug)) return;
-    m_graph.createNullSink(Names::mixNode(slug), QStringLiteral("Mix: ") + displayName, /*passive*/ false);
-    for (const auto &c : m_channels)
-        m_graph.createLoopback(Names::cellNode(c.slug, slug), QStringLiteral("%1 → %2").arg(c.name, displayName),
-                               Names::channelNode(c.slug), Names::mixNode(slug));
+    if (slug.isEmpty() || m_layout.mix(slug)) return;
+    m_layout.mixes.push_back({slug, displayName, {}, {}});
+    saveLayout(); reconcile();
 }
 void Mixer::removeChannel(const QString &slug) {
+    m_layout.channels.removeIf([&](const LayoutChannel &c) { return c.slug == slug; });
+    saveLayout();
     for (auto it = m_cells.begin(); it != m_cells.end(); ++it) if (it.key().startsWith(Names::cellNode(slug, QString()))) m_graph.destroyObject(it->id);
     if (auto n = m_graph.node(Names::channelNode(slug))) m_graph.destroyObject(n->id);
+    m_channels.removeIf([&](const Channel &c) { return c.slug == slug; }); Q_EMIT layoutChanged();
 }
 void Mixer::removeMix(const QString &slug) {
+    m_layout.mixes.removeIf([&](const LayoutMix &m) { return m.slug == slug; });
+    saveLayout();
     for (auto it = m_cells.begin(); it != m_cells.end(); ++it) if (it.key().endsWith(QLatin1Char('.') + slug)) m_graph.destroyObject(it->id);
     if (auto n = m_graph.node(Names::mixNode(slug))) m_graph.destroyObject(n->id);
+    m_mixes.removeIf([&](const Mix &m) { return m.slug == slug; }); Q_EMIT layoutChanged();
 }
 
 // Discover our objects from the live graph — the graph is the source of truth (DV-1).

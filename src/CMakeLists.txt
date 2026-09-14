@@ -1,6 +1,7 @@
 # --- core: PipeWire layer + mixer model (QML-free, used by the daemon and by unit tests)
 add_library(kmixdeck_core STATIC
     mixer.cpp mixer.h
+    layout.cpp layout.h
     pipewire/graph.cpp pipewire/graph.h
 )
 target_include_directories(kmixdeck_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

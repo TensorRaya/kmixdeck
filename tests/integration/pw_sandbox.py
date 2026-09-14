@@ -167,6 +167,10 @@ def start_private_pipewire(extra_conf: Path | None = PROTOTYPE_CONF) -> PwDaemon
         for f in sub.glob("*.conf"): shutil.copy(f, dst / f.name)
     if extra_conf:
         shutil.copy(extra_conf, rt / "pipewire.conf.d" / "90-kmixdeck.conf")
+    # kmixdeckd writes $XDG_CONFIG_HOME/pipewire/pipewire.conf.d/90-kmixdeck.conf; PIPEWIRE_CONFIG_DIR replaces the
+    # search path, so point that directory at our conf.d — what the daemon writes is what the daemon loads.
+    (rt / "config" / "pipewire").mkdir(parents=True)
+    (rt / "config" / "pipewire" / "pipewire.conf.d").symlink_to(rt / "pipewire.conf.d")
     # WirePlumber reads XDG_CONFIG_HOME/wireplumber and /usr/share/wireplumber — leave it on stock.
     d = PwDaemon(runtime_dir=rt, env=env, procs=[])
     d._start_procs()

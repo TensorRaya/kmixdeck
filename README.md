@@ -61,6 +61,9 @@ GPL-3.0-or-later (KDE ecosystem standard). See [LICENSE](LICENSE).
 - **Service architecture** (ADR 0005): `kmixdeckd` owns PipeWire and exports `org.kmixdeck1` on the
   session bus; `kmixdeck` (CLI) and `kmixdeck-kde` (Kirigami) are pure D-Bus clients. Anyone can build
   a frontend — see `docs/frontend-guide.md`. The introspection XML in `interfaces/` is the contract.
+- **Layout is data**: `~/.config/kmixdeck/layout.json` (channels, mixes) → the service renders
+  `~/.config/pipewire/pipewire.conf.d/90-kmixdeck.conf`, so the graph exists at login without the
+  service and survives it dying. `prototype/` is now just the hand-written reference of that output.
 - **Builds and runs**: matrix UI with per-cell faders/mute, add channel / add mix at runtime; CLI with
   `--json`, dB/percent/linear levels, stable exit codes.
 - **Tested**: QTest units + acoustic integration tests against a private PipeWire daemon

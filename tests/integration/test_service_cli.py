@@ -218,3 +218,52 @@ def test_ch4_routing_survives_pipewire_restart(stack):
         assert current_sink_of(stack) == "kmixdeck.channel.system"
     finally:
         p.kill(); p.wait()
+
+
+# ---------------------------------------------------------------- layout persistence (DV-1, DV-5, MX-1)
+def test_mx1_add_mix_at_runtime_creates_cells_and_persists(stack):
+    """Add a 3rd mix through the CLI → 3 new cells appear on the bus and in PipeWire; layout.json + conf written."""
+    r = stack.cli("mix", "add", "Recording")
+    assert r.stdout.strip() == "/org/kmixdeck1/mix/recording"
+    for _ in range(50):
+        st = stack.cli("status", json_out=True)
+        if len(st["cells"]) == 9: break
+        time.sleep(0.1)
+    assert {m["Slug"] for m in st["mixes"]} == {"monitor", "stream", "recording"}
+    assert len(st["cells"]) == 9
+    stack.pw.wait_node("kmixdeck.link.voice.recording")
+    layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
+    assert [m["slug"] for m in layout["mixes"]] == ["monitor", "stream", "recording"]
+    conf = (Path(stack.pw.runtime_dir) / "pipewire.conf.d" / "90-kmixdeck.conf").read_text()
+    assert 'node.name = "kmixdeck.link.game.recording"' in conf and "node.dont-fallback = true" in conf
+
+
+def test_dv1_layout_survives_without_the_daemon(stack):
+    """The graph is PipeWire config, not daemon state: kill kmixdeckd, restart PipeWire, the 3rd mix still exists."""
+    stack.daemon.terminate(); stack.daemon.wait(timeout=3)
+    # remove the hand-written prototype so ONLY the generated conf defines the graph
+    (Path(stack.pw.runtime_dir) / "pipewire.conf.d" / "90-kmixdeck.conf").exists()
+    stack.pw.restart()
+    stack.pw.wait_node("kmixdeck.link.voice.recording")
+    assert stack.pw.props("kmixdeck.link.voice.recording")["volume"] == pytest.approx(1.0)
+    # daemon comes back, sees the graph, exports it — nothing recreated twice
+    stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    for _ in range(50):
+        if stack.cli("status", check=False).returncode == 0: break
+        time.sleep(0.1)
+    time.sleep(1.0)
+    st = stack.cli("status", json_out=True)
+    assert len(st["cells"]) == 9
+    nodes = subprocess.run(["pw-cli", "ls", "Node"], env=stack.pw.env, capture_output=True, text=True).stdout
+    assert nodes.count('"kmixdeck.mix.recording"') == 1, "mix node duplicated by reconcile"
+
+
+def test_mx1_remove_mix(stack):
+    stack.cli("mix", "remove", "recording")
+    for _ in range(50):
+        st = stack.cli("status", json_out=True)
+        if len(st["cells"]) == 6: break
+        time.sleep(0.1)
+    assert {m["Slug"] for m in st["mixes"]} == {"monitor", "stream"}
+    layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
+    assert [m["slug"] for m in layout["mixes"]] == ["monitor", "stream"]

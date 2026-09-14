@@ -6,6 +6,7 @@
 #include <QDBusMetaType>
 #include <QDBusError>
 #include <QDebug>
+#include <QFile>
 #include <cmath>
 
 namespace kmixdeck::daemon {
@@ -95,10 +96,16 @@ QDBusObjectPath MixerAdaptor::AddChannel(const QString &name) { m_mixer->addChan
 QDBusObjectPath MixerAdaptor::AddMix(const QString &name) { m_mixer->addMix(name); return QDBusObjectPath(Service::mixPath(Names::slugify(name))); }
 void MixerAdaptor::RemoveChannel(const QDBusObjectPath &p) { m_mixer->removeChannel(p.path().section(QLatin1Char('/'), -1)); }
 void MixerAdaptor::RemoveMix(const QDBusObjectPath &p) { m_mixer->removeMix(p.path().section(QLatin1Char('/'), -1)); }
-void MixerAdaptor::Save() { /* TODO(DV-5): write layout to $XDG_CONFIG_HOME/kmixdeck/layout.json + pipewire.conf.d */ }
+void MixerAdaptor::Save() { if (!m_mixer->saveLayout()) qWarning() << "Save(): could not write layout"; }
 
 // ---- Service
 Service::Service(QObject *parent) : QObject(parent) {
+    m_mixer.setLayoutPaths(Layout::defaultPath(), Layout::defaultPipewireConfPath());
+    if (!m_mixer.loadLayout()) {
+        // First run (or unreadable file → DV-6: never overwrite a corrupt file with defaults silently)
+        if (!QFile::exists(Layout::defaultPath())) { qInfo() << "no layout yet — writing starter layout to" << Layout::defaultPath(); }
+        else qWarning() << "layout.json unreadable; running with the starter layout, NOT overwriting the file";
+    }
     qDBusRegisterMetaType<InterfaceMap>();
     qDBusRegisterMetaType<ManagedObjects>();
     connect(&m_mixer, &Mixer::layoutChanged, this, &Service::syncObjects);

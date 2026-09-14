@@ -9,6 +9,7 @@
 #include <QString>
 #include <optional>
 #include "pipewire/graph.h"
+#include "layout.h"
 
 namespace kmixdeck {
 
@@ -35,6 +36,13 @@ class Mixer : public QObject {
     Q_PROPERTY(QStringList mixSlugs READ mixSlugs NOTIFY layoutChanged)
 public:
     explicit Mixer(QObject *parent = nullptr);
+
+    /// The declared layout (source of truth). Loaded from layoutPath at start; saved on every edit.
+    const Layout &layout() const { return m_layout; }
+    void setLayoutPaths(const QString &jsonPath, const QString &pwConfPath) { m_layoutPath = jsonPath; m_pwConfPath = pwConfPath; }
+    bool loadLayout();                 // returns false if missing/corrupt (then keeps current)
+    bool saveLayout() const;           // JSON + pipewire.conf.d fragment (DV-1, DV-5)
+    void reconcile();                  // make PipeWire match the layout (create missing nodes)
 
     bool connected() const { return m_connected; }
     QStringList channelSlugs() const;
@@ -101,6 +109,9 @@ private:
     QHash<QString, pw::NodeInfo> m_cells;      // key: cell node name
     QHash<QString, pw::NodeInfo> m_sinks;
     QHash<uint32_t, App> m_apps;
+    Layout m_layout;
+    QString m_layoutPath, m_pwConfPath;
+    bool m_reconciled = false;
     QTimer m_reconnect;
     int m_reconnectMs = 500;      // channel + mix null sinks, key: node name
     QHash<uint32_t, QString> m_idToName;

@@ -29,7 +29,7 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 
 | ID | Requirement | Source | Status |
 |---|---|---|---|
-| MX-1 | The app MUST support **any number of output mixes** (1…n), added with a `+` action and removed individually. There MUST NOT be a hard-coded maximum. | owner | 📝 (design decision; test lands with runtime add/remove of mixes, issue #2) |
+| MX-1 | The app MUST support **any number of output mixes** (1…n), added with a `+` action and removed individually. There MUST NOT be a hard-coded maximum. | owner; tests `test_mx1_add_mix_at_runtime_creates_cells_and_persists`, `test_mx1_remove_mix` (3rd mix → 9 cells, removal → 6) | ✅ |
 | MX-2a | Mute MUST be per cell (channel × mix): muting *Game* in *Stream* MUST NOT affect *Game* in *Monitor* nor *System* in *Stream*. | owner; test `test_ch4_mute_is_per_cell` | ✅ |
 | MX-2 | Every mix MUST have its own fader (and mute) **per channel**. Changing *Game* in mix *Monitor* MUST NOT change *Game* in mix *Stream*. | owner; test `test_mx2_per_mix_level_is_independent`, `test_mx2_other_direction` (−12.0 dB / +6.0 dB measured) | ✅ |
 | MX-3 | A mix MUST be routable to (a) a physical output device (headphones, speakers), (b) a virtual capture device that other software (OBS, Discord, a recorder) can pick as its input, or (c) both. | owner, wavelink; (b) covered by `test_graph_comes_up_from_config_alone` (`kmixdeck.source.stream`), (a)/(c) open | 🔶 |
@@ -69,11 +69,11 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 
 | ID | Requirement | Source | Status |
 |---|---|---|---|
-| DV-1 | The app MUST NOT sit in the audio path as a process. Audio MUST keep flowing when the UI is closed or crashes. | owner; test `test_graph_comes_up_from_config_alone` (graph from config, no app process) | ✅ |
+| DV-1 | The app MUST NOT sit in the audio path as a process. Audio MUST keep flowing when the UI is closed or crashes. | owner; test `test_graph_comes_up_from_config_alone` (graph from config, no app process); test `test_dv1_layout_survives_without_the_daemon` (daemon killed, PipeWire restarted, graph still there from generated conf; reconcile creates nothing twice) | ✅ |
 | DV-2 | Added latency per hop (channel → mix → device) MUST be ≤ one PipeWire quantum at the session's rate; the design MUST avoid unnecessary resampling. | owner | 📝 |
 | DV-3 | Hot-plug: when the monitor output device disappears (headset unplugged, Bluetooth drops), the mix MUST fall back to a user-defined device and return automatically when it reappears. | users | 📝 |
 | DV-4 | Sample rate and quantum SHOULD follow the PipeWire session; the app MUST NOT force its own rate. | platform | 📝 |
-| DV-5 | Configuration MUST be plain files under `$XDG_CONFIG_HOME`, human-readable, diff-able, and MUST restore the full graph on login without user action. | owner | 📝 |
+| DV-5 | Configuration MUST be plain files under `$XDG_CONFIG_HOME`, human-readable, diff-able, and MUST restore the full graph on login without user action. | owner; `layout.json` + generated `pipewire.conf.d/90-kmixdeck.conf` on every edit (QSaveFile, atomic) | ✅ |
 | DV-6 | Sleep/wake and device re-enumeration MUST NOT lose routing or require a restart (Wave Link 3.x release notes list repeated fixes here; VoiceMeeter forum: crackling after updates). | wavelink #44, users | 📝 |
 | DV-7 | Virtual device identity (node.name) MUST stay stable across app updates so OBS/Discord keep their device selection (Wave Link L7: driver update changed device IDs). | wavelink L7; tests `test_dv7_levels_and_mute_survive_daemon_restart`, `test_dv7_state_is_keyed_by_stable_name_not_display_name` | ✅ |
 
