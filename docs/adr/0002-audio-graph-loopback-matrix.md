@@ -1,6 +1,6 @@
 # ADR 0002 — Audio graph: where the (channel × mix) gain lives
 
-- Status: **proposed** — to be validated with a prototype before acceptance
+- Status: **accepted** (2026-09-14, validated with `prototype/` — measurements below)
 - Date: 2026-09-14
 - Depends on: `docs/research/pipewire-kde-technical-notes.md` §1–2
 
@@ -57,7 +57,43 @@ app ──▶ [Channel: Game] (Audio/Sink, null)
   lightweight streams — needs measurement (see below), but this is what
   `pipewire-pulse` does for every app anyway.
 
-## What must be true for this to hold (prototype checklist)
+## Validation (2026-09-14, PipeWire 1.6.2 / WirePlumber 0.5.13, headless VM, and PipeWire 1.6.8 on the reference laptop)
+
+Prototype: `prototype/kmixdeck-prototype.conf` (3 channels × 2 mixes, pure config, no app).
+Method: 1 kHz tone into channel *Game* (`pw-play`), RMS measured at the monitor ports of both
+mixes (`pw-record` wired by hand with `pw-link` — **note**: `pw-record --target <sink>` picks an
+arbitrary port and gave false "no difference" readings first; always wire explicitly).
+
+| Test | Game→Monitor | Game→Stream | Δ stream−monitor | Expected |
+|---|---|---|---|---|
+| A | 1.0 | 1.0 | **−0.0 dB** | 0 |
+| B | 1.0 | 0.25 (linear) | **−12.0 dB** | −12.0 |
+| C | 0.5 | 1.0 | **+6.0 dB** | +6.0 |
+| D | 1.0 | muted | **−inf** | −inf |
+| E | — | System→Stream while Game→Stream muted | unaffected | unaffected |
+
+**MX-2 holds**: a cell's `channelVolumes` on the loopback *playback* stream is the fader, and
+it only affects that (channel, mix) pair.
+
+**Persistence**: WirePlumber's stream state (`~/.local/state/wireplumber/stream-properties`)
+keys `Output/Audio` streams by **`media.name`** (fallback: description). With
+`media.name = node.name` set on every loopback stream, cell volume **and mute** survive
+`systemctl --user restart pipewire wireplumber` and reboots without the app running.
+Without `media.name` the key was the human-readable description — renaming a channel would
+have lost its levels. This is now in the prototype config and is a requirement (DV-7).
+
+**Cost**: all kmixdeck nodes run in the driver's cycle (quantum 1024/48 kHz), per-node DSP
+time 1–3 µs; `pipewire` process ≈ 1 % of one core with a tone through 6 cells (VM, no
+hardware device). Loopback adds one graph cycle per hop: channel→mix→device = 2 cycles ≈ 43 ms
+at 1024/48k, less with a smaller quantum.
+
+**Volume location findings** (for the implementation, measured): `channelVolumes` on the
+loopback playback stream → works. `softVolumes`, `volume` on the same stream → no effect.
+`channelVolumes` on the loopback *capture* stream → no effect. `channelVolumes` or
+`monitorVolumes` on the channel null-sink → affects **all** mixes (that is the channel's
+trim, CH-7, not a cell fader).
+
+## Prototype checklist (kept for reference; all items now answered above)
 
 1. Latency channel→mix→device ≤ 2 quanta at 48 kHz/1024 (~43 ms) — measure
    with `pw-top` and a loopback test; if too high, lower quantum for our

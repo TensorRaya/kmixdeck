@@ -1,0 +1,115 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 kmixdeck contributors
+#include "mixer.h"
+#include <QRegularExpression>
+#include <QDebug>
+#include <cmath>
+
+namespace kmixdeck {
+
+QString Names::slugify(const QString &display) {
+    QString s = display.toLower().normalized(QString::NormalizationForm_KD);
+    s.remove(QRegularExpression(QStringLiteral("\\p{Mn}")));   // strip combining marks left by KD (Ü → U + ¨)
+    s.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral("-"));
+    s = s.trimmed(); while (s.startsWith(QLatin1Char('-'))) s.remove(0, 1); while (s.endsWith(QLatin1Char('-'))) s.chop(1);
+    return s.isEmpty() ? QStringLiteral("x") : s;
+}
+
+Mixer::Mixer(QObject *parent) : QObject(parent) {
+    QObject::connect(&m_graph, &pw::Graph::nodeAdded,   this, &Mixer::onNode);
+    QObject::connect(&m_graph, &pw::Graph::nodeChanged, this, &Mixer::onNode);
+    QObject::connect(&m_graph, &pw::Graph::nodeRemoved, this, &Mixer::onNodeRemoved);
+    QObject::connect(&m_graph, &pw::Graph::connected, this, [this] { m_connected = true; Q_EMIT connectedChanged(); });
+    QObject::connect(&m_graph, &pw::Graph::disconnected, this, [this](const QString &why) {
+        qWarning() << "PipeWire disconnected:" << why; m_connected = false; Q_EMIT connectedChanged(); });
+    if (!m_graph.connect()) qWarning() << "PipeWire: connect failed";
+}
+
+QStringList Mixer::channelSlugs() const { QStringList l; for (const auto &c : m_channels) l << c.slug; return l; }
+QStringList Mixer::mixSlugs() const     { QStringList l; for (const auto &m : m_mixes) l << m.slug; return l; }
+QString Mixer::channelName(const QString &slug) const { for (const auto &c : m_channels) if (c.slug == slug) return c.name; return slug; }
+QString Mixer::mixName(const QString &slug) const     { for (const auto &m : m_mixes) if (m.slug == slug) return m.name; return slug; }
+
+bool   Mixer::cellPresent(const QString &ch, const QString &mix) const { return m_cells.contains(Names::cellNode(ch, mix)); }
+double Mixer::cellVolume(const QString &ch, const QString &mix) const {
+    auto it = m_cells.constFind(Names::cellNode(ch, mix)); return it == m_cells.constEnd() ? 0.0 : linearToCubic(it->volume);
+}
+bool Mixer::cellMuted(const QString &ch, const QString &mix) const {
+    auto it = m_cells.constFind(Names::cellNode(ch, mix)); return it == m_cells.constEnd() ? true : it->mute;
+}
+void Mixer::setCellVolume(const QString &ch, const QString &mix, double cubic) {
+    auto it = m_cells.find(Names::cellNode(ch, mix)); if (it == m_cells.end()) return;
+    const float lin = cubicToLinear(std::clamp(cubic, 0.0, 1.0));
+    it->volume = lin;                         // optimistic; PipeWire echoes via nodeChanged
+    m_graph.setVolume(it->id, lin, it->mute);
+    Q_EMIT cellChanged(ch, mix);
+}
+void Mixer::setCellMuted(const QString &ch, const QString &mix, bool muted) {
+    auto it = m_cells.find(Names::cellNode(ch, mix)); if (it == m_cells.end()) return;
+    it->mute = muted;
+    m_graph.setVolume(it->id, it->volume, muted);
+    Q_EMIT cellChanged(ch, mix);
+}
+
+void Mixer::addChannel(const QString &displayName) {
+    const QString slug = Names::slugify(displayName);
+    if (channelSlugs().contains(slug)) return;
+    m_graph.createNullSink(Names::channelNode(slug), displayName, /*passive*/ true);
+    for (const auto &m : m_mixes)
+        m_graph.createLoopback(Names::cellNode(slug, m.slug), QStringLiteral("%1 → %2").arg(displayName, m.name),
+                               Names::channelNode(slug), Names::mixNode(m.slug));
+}
+void Mixer::addMix(const QString &displayName) {
+    const QString slug = Names::slugify(displayName);
+    if (mixSlugs().contains(slug)) return;
+    m_graph.createNullSink(Names::mixNode(slug), QStringLiteral("Mix: ") + displayName, /*passive*/ false);
+    for (const auto &c : m_channels)
+        m_graph.createLoopback(Names::cellNode(c.slug, slug), QStringLiteral("%1 → %2").arg(c.name, displayName),
+                               Names::channelNode(c.slug), Names::mixNode(slug));
+}
+void Mixer::removeChannel(const QString &slug) {
+    for (auto it = m_cells.begin(); it != m_cells.end(); ++it) if (it.key().startsWith(Names::cellNode(slug, QString()))) m_graph.destroyObject(it->id);
+    if (auto n = m_graph.node(Names::channelNode(slug))) m_graph.destroyObject(n->id);
+}
+void Mixer::removeMix(const QString &slug) {
+    for (auto it = m_cells.begin(); it != m_cells.end(); ++it) if (it.key().endsWith(QLatin1Char('.') + slug)) m_graph.destroyObject(it->id);
+    if (auto n = m_graph.node(Names::mixNode(slug))) m_graph.destroyObject(n->id);
+}
+
+// Discover our objects from the live graph — the graph is the source of truth (DV-1).
+void Mixer::onNode(const pw::NodeInfo &n) {
+    m_idToName[n.id] = n.name;
+    static const QString chP = QStringLiteral("kmixdeck.channel."), mxP = QStringLiteral("kmixdeck.mix."), lkP = QStringLiteral("kmixdeck.link.");
+    bool layout = false;
+    if (n.name.startsWith(chP)) {
+        const QString slug = n.name.mid(chP.size());
+        bool found = false; for (auto &c : m_channels) if (c.slug == slug) { found = true; c.name = n.description; }
+        if (!found) { m_channels.push_back({slug, n.description, {}, true}); layout = true; }
+    } else if (n.name.startsWith(mxP)) {
+        const QString slug = n.name.mid(mxP.size());
+        QString disp = n.description; if (disp.startsWith(QLatin1String("Mix: "))) disp.remove(0, 5);
+        bool found = false; for (auto &m : m_mixes) if (m.slug == slug) { found = true; m.name = disp; }
+        if (!found) { m_mixes.push_back({slug, disp, {}, true, {}}); layout = true; }
+    } else if (n.name.startsWith(lkP) && !n.name.endsWith(QLatin1String(".in")) && n.mediaClass.startsWith(QLatin1String("Stream/Output"))) {
+        const bool isNew = !m_cells.contains(n.name);
+        m_cells[n.name] = n;
+        const QStringList parts = n.name.mid(lkP.size()).split(QLatin1Char('.'));
+        if (parts.size() == 2) Q_EMIT cellChanged(parts[0], parts[1]);
+        if (isNew) layout = true;
+    }
+    if (layout) Q_EMIT layoutChanged();
+}
+
+void Mixer::onNodeRemoved(uint32_t id) {
+    const QString name = m_idToName.take(id);
+    if (name.isEmpty()) return;
+    bool layout = false;
+    if (m_cells.remove(name)) layout = true;
+    for (int i = 0; i < m_channels.size(); ++i) if (Names::channelNode(m_channels[i].slug) == name) { m_channels.remove(i); layout = true; break; }
+    for (int i = 0; i < m_mixes.size(); ++i) if (Names::mixNode(m_mixes[i].slug) == name) { m_mixes.remove(i); layout = true; break; }
+    if (layout) Q_EMIT layoutChanged();
+}
+
+void Mixer::rebuildLayoutFromGraph() { for (const auto &n : m_graph.nodes()) onNode(n); }
+
+} // namespace kmixdeck

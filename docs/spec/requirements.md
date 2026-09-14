@@ -5,7 +5,7 @@ Each requirement carries a source: `[owner]` = project owner's stated need,
 `[wavelink #n]` = feature n in `docs/research/wavelink-feature-inventory.md` (Ln = documented limitation), `[users]` = recurring user feedback in `docs/research/user-feedback.md`,
 `[platform]` = required by PipeWire/KDE integration.
 
-Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
+Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automated test in this repo** (VF-2; "agreed" alone is not a status — either it is tested or it is a draft)
 
 ---
 
@@ -29,9 +29,10 @@ Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
 
 | ID | Requirement | Source | Status |
 |---|---|---|---|
-| MX-1 | The app MUST support **any number of output mixes** (1…n), added with a `+` action and removed individually. There MUST NOT be a hard-coded maximum. | owner | ✅ |
-| MX-2 | Every mix MUST have its own fader (and mute) **per channel**. Changing *Game* in mix *Monitor* MUST NOT change *Game* in mix *Stream*. | owner | ✅ |
-| MX-3 | A mix MUST be routable to (a) a physical output device (headphones, speakers), (b) a virtual capture device that other software (OBS, Discord, a recorder) can pick as its input, or (c) both. | owner, wavelink | 📝 |
+| MX-1 | The app MUST support **any number of output mixes** (1…n), added with a `+` action and removed individually. There MUST NOT be a hard-coded maximum. | owner | 📝 (design decision; test lands with runtime add/remove of mixes, issue #2) |
+| MX-2a | Mute MUST be per cell (channel × mix): muting *Game* in *Stream* MUST NOT affect *Game* in *Monitor* nor *System* in *Stream*. | owner; test `test_ch4_mute_is_per_cell` | ✅ |
+| MX-2 | Every mix MUST have its own fader (and mute) **per channel**. Changing *Game* in mix *Monitor* MUST NOT change *Game* in mix *Stream*. | owner; test `test_mx2_per_mix_level_is_independent`, `test_mx2_other_direction` (−12.0 dB / +6.0 dB measured) | ✅ |
+| MX-3 | A mix MUST be routable to (a) a physical output device (headphones, speakers), (b) a virtual capture device that other software (OBS, Discord, a recorder) can pick as its input, or (c) both. | owner, wavelink; (b) covered by `test_graph_comes_up_from_config_alone` (`kmixdeck.source.stream`), (a)/(c) open | 🔶 |
 | MX-4 | Default setup on first run SHOULD create two mixes: *Monitor* → default output device, *Stream* → virtual capture device. | owner | 📝 |
 | MX-5 | Mixes MUST be nameable, reorderable, colour-coded; the UI MUST scale to ≥ 8 mixes without hiding faders. | owner | 📝 |
 | MX-6 | Each mix MUST have a master fader, mute and meter. | wavelink | 📝 |
@@ -68,13 +69,13 @@ Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
 
 | ID | Requirement | Source | Status |
 |---|---|---|---|
-| DV-1 | The app MUST NOT sit in the audio path as a process. Audio MUST keep flowing when the UI is closed or crashes. | owner | ✅ |
+| DV-1 | The app MUST NOT sit in the audio path as a process. Audio MUST keep flowing when the UI is closed or crashes. | owner; test `test_graph_comes_up_from_config_alone` (graph from config, no app process) | ✅ |
 | DV-2 | Added latency per hop (channel → mix → device) MUST be ≤ one PipeWire quantum at the session's rate; the design MUST avoid unnecessary resampling. | owner | 📝 |
 | DV-3 | Hot-plug: when the monitor output device disappears (headset unplugged, Bluetooth drops), the mix MUST fall back to a user-defined device and return automatically when it reappears. | users | 📝 |
 | DV-4 | Sample rate and quantum SHOULD follow the PipeWire session; the app MUST NOT force its own rate. | platform | 📝 |
 | DV-5 | Configuration MUST be plain files under `$XDG_CONFIG_HOME`, human-readable, diff-able, and MUST restore the full graph on login without user action. | owner | 📝 |
 | DV-6 | Sleep/wake and device re-enumeration MUST NOT lose routing or require a restart (Wave Link 3.x release notes list repeated fixes here; VoiceMeeter forum: crackling after updates). | wavelink #44, users | 📝 |
-| DV-7 | Virtual device identity (node.name) MUST stay stable across app updates so OBS/Discord keep their device selection (Wave Link L7: driver update changed device IDs). | wavelink L7 | 📝 |
+| DV-7 | Virtual device identity (node.name) MUST stay stable across app updates so OBS/Discord keep their device selection (Wave Link L7: driver update changed device IDs). | wavelink L7; tests `test_dv7_levels_and_mute_survive_daemon_restart`, `test_dv7_state_is_keyed_by_stable_name_not_display_name` | ✅ |
 
 ## 6. UX
 
@@ -88,7 +89,17 @@ Status legend: 📝 draft · ✅ agreed · 🔧 implemented · 🧪 verified
 | UX-6 | Level meters (VU) on every channel and every mix (top Linux wish: Sonusmix #20; Pulsemeeter has them). | users | 📝 |
 | UX-7 | Volume sliders MUST use a logarithmic curve and show dB and percent. | wavelink #19, #20 | 📝 |
 
-## 7. Non-goals (for now)
+## 7. Verification (binding)
+
+| ID | Requirement | Source | Status |
+|---|---|---|---|
+| VF-1 | Every acoustic requirement (levels, mute, routing, persistence) MUST be asserted by an automated test that plays and records audio against a **private** PipeWire daemon — never the user's session. Method and rules: `docs/spec/testing.md`. | owner; pattern from PipeWire `pwtest` and plasma-pa | ✅ |
+| VF-2 | A requirement is marked ✅ only when a test in this repository asserts it; the test names the requirement ID, the requirement names the test. | owner | ✅ |
+| VF-3 | Measurements that justify an architecture decision MUST live in the ADR with a reproducible script/test, not in prose. | owner | ✅ (ADR 0002) |
+| VF-4 | `ctest` (unit + integration) MUST pass before merge; no sound card may be required to run it. | owner | ✅ |
+| VF-5 | Audio measurements MUST use explicit port linking (`pw-link` by port name). `--target` auto-connect is forbidden in tests — it attached to the wrong port once and hid a real result. | lesson 2026-09-14 | ✅ |
+
+## 8. Non-goals (for now)
 
 - Windows/macOS ports.
 - Being a DAW: no recording, no timeline.

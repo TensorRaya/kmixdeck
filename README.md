@@ -52,3 +52,29 @@ docs/research/    source material: competitor feature inventories, user feedback
 ## License
 
 GPL-3.0-or-later (KDE ecosystem standard). See [LICENSE](LICENSE).
+
+## Status
+
+- **Architecture validated** (ADR 0002): channel × mix matrix as PipeWire null sinks + loopbacks, one
+  fader per cell, persisted by WirePlumber — proven acoustically (−12.0 dB / +6.0 dB / −∞ measured).
+- **Stack decided** (ADR 0004): C++20, Qt 6, Kirigami, KDE Frameworks 6, `libpipewire` directly.
+- **Builds and runs**: matrix UI with per-cell faders/mute, add channel / add mix at runtime.
+- **Tested**: QTest units + acoustic integration tests against a private PipeWire daemon
+  (`docs/spec/testing.md`). `ctest` is the merge gate; CI runs it on every push.
+
+## Build
+
+```sh
+# Ubuntu 26.04 / Debian: see .github/workflows/ci.yml for the package list
+cmake -S . -B build -G Ninja && ninja -C build
+ctest --test-dir build --output-on-failure
+./build/bin/kmixdeck
+```
+
+Try the audio graph **without the app** — it is plain PipeWire config:
+
+```sh
+cp prototype/kmixdeck-prototype.conf ~/.config/pipewire/pipewire.conf.d/
+systemctl --user restart pipewire wireplumber
+pactl list short sinks | grep kmixdeck     # 3 channels, 2 mixes; "kmixdeck.source.stream" for OBS
+```
