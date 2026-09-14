@@ -75,6 +75,13 @@ void Mixer::reconcile() {
         for (const auto &m : m_layout.mixes)
             if (!m_graph.node(Names::cellNode(c.slug, m.slug)))
                 m_graph.createLoopback(Names::cellNode(c.slug, m.slug), c.name + QStringLiteral(" → ") + m.name, Names::channelNode(c.slug), Names::mixNode(m.slug));
+    // Capture sides are plumbing, not faders. WirePlumber restores whatever volume it last saw on them (it did:
+    // a test left kmixdeck.link.game.stream.in at 0.0156 → the stream mix was 36 dB down with the fader at 0 dB).
+    for (const auto &n : m_graph.nodes())
+        if (n.name.startsWith(QLatin1String("kmixdeck.")) && n.name.endsWith(QLatin1String(".in")) && (n.volume != 1.0f || n.mute)) {
+            qInfo() << "resetting capture side" << n.name << "to 1.0/unmuted (was" << n.volume << n.mute << ")";
+            m_graph.setVolume(n.id, 1.0f, false);
+        }
     for (const auto &m : m_layout.mixes) {
         if (!m_graph.node(QStringLiteral("kmixdeck.out.") + m.slug)) m_graph.createMixOutput(m.slug, QStringLiteral("Mix: ") + m.name + QStringLiteral(" → output"), m.outputDevice);
         if (!m_graph.node(QStringLiteral("kmixdeck.source.") + m.slug)) m_graph.createMixSource(m.slug, QStringLiteral("kmixdeck ") + m.name + QStringLiteral(" Mix"));

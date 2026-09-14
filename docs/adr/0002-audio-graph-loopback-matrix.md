@@ -158,3 +158,21 @@ non-existent `node.target`. Solution: a hidden parking sink `kmixdeck.null` (`pr
 retargeted from there by metadata. Also: mix outputs must NOT carry `node.dont-reconnect` — WirePlumber
 ignores every later target change for such streams (`linking/prepare-link.lua`). Cells keep it (a cell
 must never wander). Tests `test_mx3a_*`.
+
+**Trap 5 — WirePlumber restores volumes on the capture side too.** `state.restore-props` keys by node
+name and applies to every stream node, including `kmixdeck.link.<c>.<m>.in` (the capture half of a cell).
+A stray volume there is invisible in the UI (the fader is the playback half) and cuts the whole cell. Seen
+on the laptop: capture side at 0.0156 → stream mix 36 dB down with all faders at 0 dB. The daemon now
+heals every `kmixdeck.*.in` node to 1.0/unmuted on reconcile (test `test_vf7_capture_side_volume_is_healed_on_start`).
+
+## Field notes 2026-09-15 (first real install, CachyOS / Plasma 6.7 / PipeWire 1.6.8)
+
+- Built unmodified with Qt 6.11 / KF 6.29; runs as `systemd --user` unit from a `$HOME` prefix.
+- OBS on Linux had **no** audio source at all before; `kmixdeck.source.stream` as a `pulse_input_capture`
+  input shows the injected tone at exactly its file level (−41.1 dBFS in, −41.1 dBFS on the OBS meter).
+- KGlobalAccel accepted the component (5 actions in `kglobalshortcutsrc`), tray registered with
+  `StatusNotifierWatcher`, `invokeShortcut` on the component mutes/unmutes through the daemon.
+- **Do not assign keys via raw `busctl` calls to `org.kde.KGlobalAccel`.** A malformed
+  `setForeignShortcutKeys` argument made `QDBusArgument >> QKeySequence` abort — inside **kwin_wayland**,
+  where kglobalacceld lives in Plasma 6.7 — and took the whole Wayland session down. Keys are the user's
+  business (System Settings → Shortcuts → kmixdeck); tests use `invokeShortcut`, never key assignment.

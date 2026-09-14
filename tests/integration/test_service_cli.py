@@ -40,6 +40,13 @@ class Stack:
     def busctl(self, *args):
         return subprocess.run(["busctl", "--user"] + list(args), env=self.env, capture_output=True, text=True)
 
+    def restart_daemon(self):
+        self.daemon.terminate(); self.daemon.wait(timeout=5)
+        self.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        for _ in range(50):
+            if self.cli("status", check=False).returncode == 0: break
+            time.sleep(0.1)
+
     def close(self):
         for p in (self.daemon, self.dbus):
             p.terminate()
@@ -386,3 +393,18 @@ def test_ct1_kde_frontend_registers_global_shortcuts(stack):
     for name in ("mute-channel-game", "mute-channel-system", "mute-channel-voice", "mute-mix-monitor", "mute-mix-stream"):
         assert f'"{name}"' in out, f"shortcut action {name} not registered"
     assert "doRegister" in out and "setShortcutKeys" in out
+
+
+# ---------------------------------------------------------------- capture sides are plumbing (found on the laptop 2026-09-15)
+def test_vf7_capture_side_volume_is_healed_on_start(stack):
+    """WirePlumber restores volumes per node name — including the *capture* side of a cell loopback, which
+    is never a fader. A stale 0.0156 there silently cut the stream mix by 36 dB. The daemon must heal it."""
+    stack.pw.set_volume("kmixdeck.link.game.stream.in", 0.0156)
+    assert abs(stack.pw.props("kmixdeck.link.game.stream.in")["volume"] - 0.0156) < 1e-3
+    stack.restart_daemon()
+    for _ in range(40):
+        if stack.pw.props("kmixdeck.link.game.stream.in")["volume"] > 0.99: break
+        time.sleep(0.1)
+    assert stack.pw.props("kmixdeck.link.game.stream.in")["volume"] > 0.99
+    # and the fader itself was not touched
+    assert stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"] == 1.0

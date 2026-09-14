@@ -57,12 +57,12 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 
 | ID | Requirement | Source | Status |
 |---|---|---|---|
-| CT-1 | Global shortcuts (mute mic, mute channel X in mix Y, volume up/down, switch monitoring mix) MUST work on Wayland, via KGlobalAccel. | owner, platform; KGlobalAccel actions per channel (`mute-channel-<slug>`) and per mix (`mute-mix-<slug>`), component `kmixdeck`, assignable in System Settings → Shortcuts; `Cell.ToggleMute`/`Channel.ToggleMute` on the bus; tests `test_ct1_toggle_mute_is_atomic_on_the_bus`, `test_ct1_kde_frontend_registers_global_shortcuts` — volume up/down and 'switch monitoring mix' actions still missing; real keypress on Plasma/Wayland not yet verified | 🔶 |
+| CT-1 | Global shortcuts (mute mic, mute channel X in mix Y, volume up/down, switch monitoring mix) MUST work on Wayland, via KGlobalAccel. | owner, platform; KGlobalAccel actions per channel (`mute-channel-<slug>`) and per mix (`mute-mix-<slug>`), component `kmixdeck`, assignable in System Settings → Shortcuts; `Cell.ToggleMute`/`Channel.ToggleMute` on the bus; tests `test_ct1_toggle_mute_is_atomic_on_the_bus`, `test_ct1_kde_frontend_registers_global_shortcuts` — volume up/down and 'switch monitoring mix' actions still missing; on Plasma 6.7/Wayland: component registered, `invokeShortcut` via kglobalacceld mutes through the daemon (2026-09-15); a physical keypress still to be confirmed by the user | 🔶 |
 | CT-2 | A documented local control API (D-Bus and/or a small IPC protocol) MUST expose every fader, mute and mix switch so external controllers can drive the app. | owner, wavelink; = the D-Bus API (ADR 0005), 100 % covered by `kmixdeck` CLI; `test_ar2_third_party_client_needs_none_of_our_code` | ✅ |
 | CT-3 | Stream Deck support MUST be provided on top of CT-2 — via an existing Linux Stream Deck host (OpenDeck / streamdeck-ui plugin) rather than our own HID stack. | owner | 📝 |
-| CT-4 | The app MUST integrate with the Plasma system tray (StatusNotifierItem): quick mute, mix switch, level indication. | owner; KStatusNotifierItem with per-channel mute toggles, per-mix mute, icon reflects mute state, closing the window keeps the tray; level indication still missing; verified only as bus traffic (no Plasma in CI) | 🔶 |
+| CT-4 | The app MUST integrate with the Plasma system tray (StatusNotifierItem): quick mute, mix switch, level indication. | owner; KStatusNotifierItem with per-channel mute toggles, per-mix mute, icon reflects mute state, closing the window keeps the tray; level indication still missing; registered with the real `StatusNotifierWatcher` on Plasma 6.7 (2026-09-15); level indication still missing | 🔶 |
 | CT-5 | Volumes shown in kmixdeck and in the Plasma volume applet MUST agree (no two truths). | platform | 📝 |
-| CT-6 | OBS SHOULD see each mix as a cleanly named capture device, and MAY additionally see each channel separately (for multi-track recording). | owner; `kmixdeck.source.<mix>` Audio/Source per mix, description 'kmixdeck <Mix> Mix' (generated conf + reconcile); test `test_mx3a_output_device_persists_in_generated_conf`; per-channel capture (MAY) not done | ✅ |
+| CT-6 | OBS SHOULD see each mix as a cleanly named capture device, and MAY additionally see each channel separately (for multi-track recording). | owner; `kmixdeck.source.<mix>` Audio/Source per mix, description 'kmixdeck <Mix> Mix' (generated conf + reconcile); test `test_mx3a_output_device_persists_in_generated_conf`; per-channel capture (MAY) not done ; OBS 'Stream Mix (kmixdeck)' input on the laptop, tone level in == OBS meter level | ✅ |
 | CT-7 | Settings backup/restore and export MUST be available; a corrupt entry MUST NOT invalidate the whole config (Wave Link 3.3 fixed exactly this). | wavelink #24, L9 | 📝 |
 
 ## 5. Devices & audio behaviour
@@ -112,6 +112,7 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 | VF-4 | `ctest` (unit + integration) MUST pass before merge; no sound card may be required to run it. | owner | ✅ |
 | VF-5 | Audio measurements MUST use explicit port linking (`pw-link` by port name). `--target` auto-connect is forbidden in tests — it attached to the wrong port once and hid a real result. | lesson 2026-09-14 | ✅ |
 
+| VF-7 | Capture sides of all kmixdeck loopbacks MUST be 1.0/unmuted after reconcile regardless of persisted state. | trap 5; test `test_vf7_capture_side_volume_is_healed_on_start` | ✅ |
 | VF-6 | No kmixdeck output may ever be linked to a kmixdeck channel (feedback). Enforced by test on every graph change. | trap found 2026-09-14; test `test_no_feedback_loop_mix_outputs_never_target_a_channel` | ✅ |
 
 ## 8. Non-goals (for now)
