@@ -41,6 +41,7 @@ ecm_add_qml_module(kmixdeck-kde
         qml/MixerPage.qml
         qml/CellFader.qml
         qml/AddDialog.qml
+        qml/AppsPage.qml
 )
 target_include_directories(kmixdeck-kde PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/.. frontend)
 target_link_libraries(kmixdeck-kde PRIVATE

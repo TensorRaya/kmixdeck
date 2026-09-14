@@ -25,6 +25,7 @@ class MixerClient : public QObject {
     Q_PROPERTY(bool serviceAvailable READ serviceAvailable NOTIFY serviceAvailableChanged)
     Q_PROPERTY(QStringList channelSlugs READ channelSlugs NOTIFY layoutChanged)
     Q_PROPERTY(QStringList mixSlugs READ mixSlugs NOTIFY layoutChanged)
+    Q_PROPERTY(QVariantList apps READ apps NOTIFY appsChanged)   // [{path,name,binary,mediaName,channel}] for QML
 public:
     explicit MixerClient(QObject *parent = nullptr);
 
@@ -45,12 +46,15 @@ public:
     Q_INVOKABLE void   addMix(const QString &name);
     Q_INVOKABLE void   removeChannel(const QString &slug);
     Q_INVOKABLE void   removeMix(const QString &slug);
+    QVariantList apps() const;
+    Q_INVOKABLE void   moveApp(const QString &appPath, const QString &channelSlug);
 
 Q_SIGNALS:
     void connectedChanged();
     void serviceAvailableChanged();
     void layoutChanged();
     void cellChanged(const QString &ch, const QString &mix);
+    void appsChanged();
 
 private Q_SLOTS:
     void onPropertiesChanged(const QDBusMessage &msg);
@@ -66,6 +70,7 @@ private:
 
     bool m_available = false, m_pwConnected = false;
     QMap<QString, QVariantMap> m_channels, m_mixes, m_cells;   // keyed by slug / slug / "ch/mix"
+    QMap<QString, QVariantMap> m_apps;                          // keyed by object path
     QStringList m_channelOrder, m_mixOrder;
 };
 

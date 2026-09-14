@@ -29,6 +29,19 @@ Kirigami.ApplicationWindow {
             },
             Kirigami.Action { separator: true },
             Kirigami.Action {
+                text: i18n("Mixer")
+                icon.name: "view-media-equalizer"
+                checked: root.pageStack.currentItem === mixerPage
+                onTriggered: { root.pageStack.clear(); root.pageStack.push(mixerPage) }
+            },
+            Kirigami.Action {
+                text: i18n("Applications")
+                icon.name: "applications-multimedia"
+                checked: root.pageStack.currentItem === appsPage
+                onTriggered: { root.pageStack.clear(); root.pageStack.push(appsPage) }
+            },
+            Kirigami.Action { separator: true },
+            Kirigami.Action {
                 text: i18n("About kmixdeck")
                 icon.name: "help-about"
                 onTriggered: root.pageStack.pushDialogLayer(Qt.createComponent("org.kde.kirigami", "AboutPage"))
@@ -36,7 +49,10 @@ Kirigami.ApplicationWindow {
         ]
     }
 
-    pageStack.initialPage: MixerPage {}
+    // Pages are kept alive so switching does not lose scroll/fader state.
+    MixerPage { id: mixerPage; visible: false }
+    AppsPage  { id: appsPage;  visible: false }
+    pageStack.initialPage: mixerPage
 
     AddDialog { id: addDialog }
     function addDialogOpen(kind) { addDialog.open(kind) }

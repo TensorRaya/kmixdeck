@@ -8,8 +8,8 @@ import org.kmixdeck
 
 Kirigami.AbstractCard {
     id: cell
-    required property string channel
-    required property string mix
+    property string channel
+    property string mix
     readonly property bool present: Mixer.cellPresent(channel, mix)
     property double value: Mixer.cellVolume(channel, mix)     // cubic 0..1
     property bool muted: Mixer.cellMuted(channel, mix)
@@ -28,12 +28,14 @@ Kirigami.AbstractCard {
     function toDb(v) { return v <= 0 ? -Infinity : 60 * Math.log10(v) }
 
     enabled: present
+    implicitWidth: Kirigami.Units.gridUnit * 9
     contentItem: ColumnLayout {
         spacing: Kirigami.Units.smallSpacing
 
         QQC2.Slider {
             id: slider
-            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignHCenter        // a vertical fader is as wide as its handle; center it
+            Layout.fillWidth: false
             Layout.preferredHeight: Kirigami.Units.gridUnit * 8
             orientation: Qt.Vertical
             from: 0; to: 1; stepSize: 0.01

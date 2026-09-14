@@ -30,52 +30,65 @@ Kirigami.ScrollablePage {
         helpfulAction: Kirigami.Action { text: i18n("Add channel"); icon.name: "list-add"; onTriggered: applicationWindow().addDialogOpen("channel") }
     }
 
-    ColumnLayout {
+    // One GridLayout for header + rows so columns line up by construction (UX-1).
+    GridLayout {
         visible: page.channels.length > 0 && page.mixes.length > 0
-        spacing: Kirigami.Units.smallSpacing
+        columns: page.mixes.length + 1
+        rowSpacing: Kirigami.Units.smallSpacing
+        columnSpacing: Kirigami.Units.smallSpacing
 
-        // header row: mix names
-        RowLayout {
-            spacing: Kirigami.Units.smallSpacing
-            Item { Layout.preferredWidth: page.labelW }
-            Repeater {
-                model: page.mixes
-                delegate: Kirigami.Heading {
-                    required property string modelData
-                    Layout.preferredWidth: page.cellW
-                    level: 4
-                    horizontalAlignment: Text.AlignHCenter
-                    text: Mixer.mixName(modelData)
-                    elide: Text.ElideRight
-                }
+        // header row
+        Item { Layout.preferredWidth: page.labelW; Layout.fillWidth: false }
+        Repeater {
+            model: page.mixes
+            delegate: Kirigami.Heading {
+                required property string modelData
+                Layout.preferredWidth: page.cellW
+                Layout.minimumWidth: page.cellW
+                Layout.fillWidth: false
+                level: 4
+                horizontalAlignment: Text.AlignHCenter
+                text: Mixer.mixName(modelData)
+                elide: Text.ElideRight
             }
         }
 
+        // one row per channel: label + one cell per mix. Repeater children are flattened into the grid.
         Repeater {
             model: page.channels
-            delegate: RowLayout {
+            delegate: Repeater {
                 id: row
                 required property string modelData
-                spacing: Kirigami.Units.smallSpacing
-                Layout.fillWidth: true
-
-                Kirigami.Heading {
-                    Layout.preferredWidth: page.labelW
-                    Layout.alignment: Qt.AlignVCenter
-                    level: 3
-                    text: Mixer.channelName(row.modelData)
-                    elide: Text.ElideRight
-                }
-                Repeater {
-                    model: page.mixes
-                    delegate: CellFader {
-                        required property string modelData
-                        Layout.preferredWidth: page.cellW
-                        channel: row.modelData
-                        mix: modelData
-                    }
+                model: [""].concat(page.mixes)          // "" = the label column
+                delegate: Loader {
+                    required property string modelData
+                    required property int index
+                    Layout.preferredWidth: index === 0 ? page.labelW : page.cellW
+                    Layout.minimumWidth: Layout.preferredWidth
+                    Layout.fillWidth: false
+                    Layout.fillHeight: true
+                    property string channel: row.modelData
+                    property string mix: modelData
+                    sourceComponent: index === 0 ? labelComp : cellComp
+                    onLoaded: { item.channel = channel; item.mix = mix }
                 }
             }
         }
+    }
+
+    Component {
+        id: labelComp
+        Kirigami.Heading {
+            property string channel
+            property string mix
+            level: 3
+            text: Mixer.channelName(channel)
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+        }
+    }
+    Component {
+        id: cellComp
+        CellFader { channel: ""; mix: "" }
     }
 }
