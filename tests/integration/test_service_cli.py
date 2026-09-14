@@ -150,6 +150,24 @@ def start_fake_app(stack):
     p.kill(); raise AssertionError("fake app never appeared on the bus")
 
 
+def wait_wireplumber_saved_target(stack, target, timeout=15.0):
+    """WirePlumber writes stream state with save_after_timeout; poll the file instead of guessing a sleep (CI is slow)."""
+    state = Path(stack.pw.runtime_dir) / "state" / "wireplumber" / "stream-properties"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if state.exists() and f'"target":"{target}"' in state.read_text(): return
+        time.sleep(0.2)
+    raise AssertionError(f"WirePlumber never persisted target={target}; state file: {state.read_text() if state.exists() else '<missing>'}")
+
+
+def wait_sink(stack, want, timeout=8.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if current_sink_of(stack) == want: return want
+        time.sleep(0.1)
+    return current_sink_of(stack)
+
+
 def current_sink_of(stack, node_name="fakegame-out"):
     links = subprocess.run(["pw-link", "-l"], env=stack.pw.env, capture_output=True, text=True).stdout.splitlines()
     for i, l in enumerate(links):
@@ -171,10 +189,7 @@ def test_ch4_move_app_to_channel_is_immediate_and_audible(stack):
     p, app = start_fake_app(stack)
     try:
         stack.cli("app", "move", "FakeGame", "voice")
-        for _ in range(30):
-            if current_sink_of(stack) == "kmixdeck.channel.voice": break
-            time.sleep(0.1)
-        assert current_sink_of(stack) == "kmixdeck.channel.voice"
+        assert wait_sink(stack, "kmixdeck.channel.voice") == "kmixdeck.channel.voice"
         assert stack.cli("app", "list", json_out=True)[0]["Channel"] == "/org/kmixdeck1/channel/voice"
         # audible: voice→stream at 1.0, voice→monitor muted → tone only in Stream mix
         stack.cli("cell", "set", "voice", "stream", "1.0"); stack.cli("cell", "mute", "voice", "monitor", "on")
@@ -188,14 +203,13 @@ def test_ch4_move_app_to_channel_is_immediate_and_audible(stack):
 def test_ch4_routing_survives_app_restart(stack):
     """Sonusmix #38: 'I have to re-add app nodes after a reboot'. Here: WirePlumber remembers the target for us."""
     p, _ = start_fake_app(stack)
-    stack.cli("app", "move", "FakeGame", "system"); time.sleep(3.0)   # WirePlumber save_after_timeout
+    stack.cli("app", "move", "FakeGame", "system")
+    assert wait_sink(stack, "kmixdeck.channel.system") == "kmixdeck.channel.system"
+    wait_wireplumber_saved_target(stack, "kmixdeck.channel.system")
     p.kill(); p.wait(); time.sleep(0.5)
     p, app = start_fake_app(stack)
     try:
-        for _ in range(30):
-            if current_sink_of(stack) == "kmixdeck.channel.system": break
-            time.sleep(0.1)
-        assert current_sink_of(stack) == "kmixdeck.channel.system"
+        assert wait_sink(stack, "kmixdeck.channel.system") == "kmixdeck.channel.system"
         assert app["Channel"] == "/org/kmixdeck1/channel/system" or stack.cli("app", "list", json_out=True)[0]["Channel"] == "/org/kmixdeck1/channel/system"
     finally:
         p.kill(); p.wait()
@@ -204,7 +218,9 @@ def test_ch4_routing_survives_app_restart(stack):
 def test_ch4_routing_survives_pipewire_restart(stack):
     """Same, across a pipewire+wireplumber restart (serials change; WirePlumber stores the target by node.name)."""
     p, _ = start_fake_app(stack)
-    stack.cli("app", "move", "FakeGame", "system"); time.sleep(3.0)
+    stack.cli("app", "move", "FakeGame", "system")
+    assert wait_sink(stack, "kmixdeck.channel.system") == "kmixdeck.channel.system"
+    wait_wireplumber_saved_target(stack, "kmixdeck.channel.system")
     p.kill(); p.wait()
     stack.pw.restart()
     for _ in range(50):   # daemon reconnects? (AR-4) — at minimum the CLI must work again
@@ -212,10 +228,7 @@ def test_ch4_routing_survives_pipewire_restart(stack):
         time.sleep(0.2)
     p, _ = start_fake_app(stack)
     try:
-        for _ in range(30):
-            if current_sink_of(stack) == "kmixdeck.channel.system": break
-            time.sleep(0.1)
-        assert current_sink_of(stack) == "kmixdeck.channel.system"
+        assert wait_sink(stack, "kmixdeck.channel.system") == "kmixdeck.channel.system"
     finally:
         p.kill(); p.wait()
 
