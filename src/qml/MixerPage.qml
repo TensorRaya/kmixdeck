@@ -41,15 +41,12 @@ Kirigami.ScrollablePage {
         Item { Layout.preferredWidth: page.labelW; Layout.fillWidth: false }
         Repeater {
             model: page.mixes
-            delegate: Kirigami.Heading {
+            delegate: MixHeader {
                 required property string modelData
                 Layout.preferredWidth: page.cellW
                 Layout.minimumWidth: page.cellW
                 Layout.fillWidth: false
-                level: 4
-                horizontalAlignment: Text.AlignHCenter
-                text: Mixer.mixName(modelData)
-                elide: Text.ElideRight
+                mix: modelData
             }
         }
 

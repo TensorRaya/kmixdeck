@@ -14,6 +14,8 @@
 
 using InterfaceMap = QMap<QString, QVariantMap>;
 using ManagedObjects = QMap<QDBusObjectPath, InterfaceMap>;
+using StringMap = QMap<QString, QString>;
+Q_DECLARE_METATYPE(StringMap)
 Q_DECLARE_METATYPE(InterfaceMap)
 Q_DECLARE_METATYPE(ManagedObjects)
 
@@ -26,6 +28,7 @@ class MixerClient : public QObject {
     Q_PROPERTY(QStringList channelSlugs READ channelSlugs NOTIFY layoutChanged)
     Q_PROPERTY(QStringList mixSlugs READ mixSlugs NOTIFY layoutChanged)
     Q_PROPERTY(QVariantList apps READ apps NOTIFY appsChanged)   // [{path,name,binary,mediaName,channel}] for QML
+    Q_PROPERTY(QVariantList outputDevices READ outputDevices NOTIFY outputDevicesChanged)   // [{nodeName, description}]
 public:
     explicit MixerClient(QObject *parent = nullptr);
 
@@ -47,6 +50,12 @@ public:
     Q_INVOKABLE void   removeChannel(const QString &slug);
     Q_INVOKABLE void   removeMix(const QString &slug);
     QVariantList apps() const;
+    QVariantList outputDevices() const;
+    Q_INVOKABLE QString mixOutputDevice(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("OutputDevice")).toString(); }
+    Q_INVOKABLE QString mixCaptureSource(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("CaptureSource")).toString(); }
+    Q_INVOKABLE void    setMixOutputDevice(const QString &slug, const QString &nodeName);
+    Q_INVOKABLE void    renameChannel(const QString &slug, const QString &name);
+    Q_INVOKABLE void    renameMix(const QString &slug, const QString &name);
     Q_INVOKABLE void   moveApp(const QString &appPath, const QString &channelSlug);
 
 Q_SIGNALS:
@@ -55,6 +64,8 @@ Q_SIGNALS:
     void layoutChanged();
     void cellChanged(const QString &ch, const QString &mix);
     void appsChanged();
+    void outputDevicesChanged();
+    void mixChanged(const QString &slug);
 
 private Q_SLOTS:
     void onPropertiesChanged(const QDBusMessage &msg);
@@ -71,6 +82,7 @@ private:
     bool m_available = false, m_pwConnected = false;
     QMap<QString, QVariantMap> m_channels, m_mixes, m_cells;   // keyed by slug / slug / "ch/mix"
     QMap<QString, QVariantMap> m_apps;                          // keyed by object path
+    QMap<QString, QString> m_devices;                           // node.name → description
     QStringList m_channelOrder, m_mixOrder;
 };
 

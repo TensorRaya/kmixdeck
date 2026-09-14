@@ -150,3 +150,11 @@ stream node *links* correctly (the linking hooks read metadata) but is *not reme
 store-stream-target hook looks the node up in its own object manager at metadata-changed time and
 returns silently if it is absent. Seen on the CI runner (slower than a desktop). Frontends should offer
 "move" only for streams that already have a link — the bus exposes `App.Channel` for exactly that.
+
+**Trap 4 — a loopback with a missing target dies.** `module-loopback` treats "defined target not found"
+as a fatal stream error and unloads itself. So "this mix has no output" cannot be expressed as a
+non-existent `node.target`. Solution: a hidden parking sink `kmixdeck.null` (`priority.session = 0`,
+`node.passive`, so WirePlumber never makes it the default); unrouted mix outputs play into it and are
+retargeted from there by metadata. Also: mix outputs must NOT carry `node.dont-reconnect` — WirePlumber
+ignores every later target change for such streams (`linking/prepare-link.lua`). Cells keep it (a cell
+must never wander). Tests `test_mx3a_*`.

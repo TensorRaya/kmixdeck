@@ -330,6 +330,40 @@ void Graph::createLoopback(const QString &name, const QString &description, cons
     pw_thread_loop_unlock(d->loop);
 }
 
+void Graph::createParkingSink() {
+    pw_thread_loop_lock(d->loop);
+    pw_properties *props = pw_properties_new(
+        PW_KEY_FACTORY_NAME, "support.null-audio-sink", PW_KEY_NODE_NAME, "kmixdeck.null", PW_KEY_MEDIA_NAME, "kmixdeck.null",
+        PW_KEY_NODE_DESCRIPTION, "kmixdeck (unrouted)", PW_KEY_MEDIA_CLASS, "Audio/Sink", "audio.position", "[ FL FR ]",
+        PW_KEY_OBJECT_LINGER, "true", PW_KEY_PRIORITY_SESSION, "0", PW_KEY_PRIORITY_DRIVER, "0", PW_KEY_NODE_PASSIVE, "true", nullptr);
+    pw_proxy *p = static_cast<pw_proxy *>(pw_core_create_object(d->core, "adapter", PW_TYPE_INTERFACE_Node, PW_VERSION_NODE, &props->dict, 0));
+    pw_properties_free(props);
+    if (p) pw_proxy_destroy(p);
+    pw_thread_loop_unlock(d->loop);
+}
+void Graph::createMixOutput(const QString &mixSlug, const QString &description, const QString &device) {
+    pw_thread_loop_lock(d->loop);
+    const QString out = QStringLiteral("kmixdeck.out.") + mixSlug;
+    const QString args = QStringLiteral(
+        "{ node.description = \"%1\" "
+        "capture.props = { node.name = \"%2.in\" media.name = \"%2.in\" node.target = \"kmixdeck.mix.%3\" stream.capture.sink = true node.passive = true node.dont-reconnect = true node.dont-fallback = true } "
+        "playback.props = { node.name = \"%2\" media.name = \"%2\" node.target = \"%4\" node.dont-fallback = true } }")
+        .arg(description, out, mixSlug, device.isEmpty() ? QStringLiteral("kmixdeck.null") : device);
+    pw_context_load_module(d->context, "libpipewire-module-loopback", args.toUtf8().constData(), nullptr);
+    pw_thread_loop_unlock(d->loop);
+}
+void Graph::createMixSource(const QString &mixSlug, const QString &description) {
+    pw_thread_loop_lock(d->loop);
+    const QString src = QStringLiteral("kmixdeck.source.") + mixSlug;
+    const QString args = QStringLiteral(
+        "{ node.description = \"%1\" "
+        "capture.props = { node.name = \"%2.in\" media.name = \"%2.in\" node.target = \"kmixdeck.mix.%3\" stream.capture.sink = true node.passive = true node.dont-reconnect = true node.dont-fallback = true } "
+        "playback.props = { node.name = \"%2\" media.name = \"%2\" node.description = \"%1\" media.class = Audio/Source audio.position = [ FL FR ] } }")
+        .arg(description, src, mixSlug);
+    pw_context_load_module(d->context, "libpipewire-module-loopback", args.toUtf8().constData(), nullptr);
+    pw_thread_loop_unlock(d->loop);
+}
+
 uint32_t Graph::streamSink(uint32_t streamId) const {
     std::lock_guard<std::mutex> g(d->snapshotMutex);
     return d->routes.value(streamId, 0);
@@ -343,6 +377,12 @@ void Graph::setStreamTarget(uint32_t streamId, uint32_t sinkSerial) {
     } else {
         qWarning() << "no 'default' metadata object yet; cannot route stream" << streamId;
     }
+    pw_thread_loop_unlock(d->loop);
+}
+
+void Graph::clearStreamTarget(uint32_t streamId) {
+    pw_thread_loop_lock(d->loop);
+    if (d->metadata) pw_metadata_set_property(d->metadata, streamId, "target.object", nullptr, nullptr);
     pw_thread_loop_unlock(d->loop);
 }
 

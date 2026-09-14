@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "mixer.h"
 #include <QTimer>
+#include <QFile>
 #include <QRegularExpression>
 #include <QDebug>
 #include <cmath>
@@ -30,7 +31,7 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     QObject::connect(&m_graph, &pw::Graph::disconnected, this, [this](const QString &why) {
         qWarning() << "PipeWire disconnected:" << why;
         m_graph.teardown();
-        m_channels.clear(); m_mixes.clear(); m_cells.clear(); m_sinks.clear(); m_idToName.clear();
+        m_channels.clear(); m_mixes.clear(); m_cells.clear(); m_sinks.clear(); m_devices.clear(); m_idToName.clear(); Q_EMIT outputDevicesChanged();
         for (auto id : m_apps.keys()) Q_EMIT appRemoved(id); m_apps.clear();
         m_connected = false; Q_EMIT connectedChanged(); Q_EMIT layoutChanged();
         m_reconnect.start(m_reconnectMs);
@@ -59,6 +60,7 @@ bool Mixer::saveLayout() const {
 void Mixer::reconcile() {
     if (!m_connected) return;
     // Layout → PipeWire: create what is declared but missing. Names carry the display strings.
+    if (!m_graph.node(QStringLiteral("kmixdeck.null"))) m_graph.createParkingSink();
     for (const auto &c : m_layout.channels) {
         if (!m_graph.node(Names::channelNode(c.slug))) m_graph.createNullSink(Names::channelNode(c.slug), c.name, true);
         bool found = false; for (auto &ch : m_channels) if (ch.slug == c.slug) { found = true; ch.name = c.name; }
@@ -73,6 +75,12 @@ void Mixer::reconcile() {
         for (const auto &m : m_layout.mixes)
             if (!m_graph.node(Names::cellNode(c.slug, m.slug)))
                 m_graph.createLoopback(Names::cellNode(c.slug, m.slug), c.name + QStringLiteral(" → ") + m.name, Names::channelNode(c.slug), Names::mixNode(m.slug));
+    for (const auto &m : m_layout.mixes) {
+        if (!m_graph.node(QStringLiteral("kmixdeck.out.") + m.slug)) m_graph.createMixOutput(m.slug, QStringLiteral("Mix: ") + m.name + QStringLiteral(" → output"), m.outputDevice);
+        if (!m_graph.node(QStringLiteral("kmixdeck.source.") + m.slug)) m_graph.createMixSource(m.slug, QStringLiteral("kmixdeck ") + m.name + QStringLiteral(" Mix"));
+    }
+    // First start without a config fragment on disk: write it now so the graph exists at next login without us.
+    if (!m_pwConfPath.isEmpty() && !QFile::exists(m_pwConfPath)) saveLayout();
     m_reconciled = true;
     Q_EMIT layoutChanged();
 }
@@ -119,16 +127,22 @@ QString Mixer::mixOutputDevice(const QString &slug) const { for (const auto &m :
 void Mixer::setMixOutputDevice(const QString &slug, const QString &nodeName) {
     for (auto &m : m_mixes) if (m.slug == slug) { m.outputDevice = nodeName; Q_EMIT mixChanged(slug); }
     if (auto *l = m_layout.mix(slug)) { l->outputDevice = nodeName; saveLayout(); }
-    // live retarget of kmixdeck.out.<slug>: metadata target.object on its playback stream
+    // live retarget of kmixdeck.out.<slug>: metadata target.object on its playback stream (the loopback has
+    // dont-fallback but NOT dont-reconnect, so WirePlumber follows; clearing the key unlinks it).
     if (auto out = m_graph.node(QStringLiteral("kmixdeck.out.") + slug)) {
-        if (nodeName.isEmpty()) return;   // TODO: unlink; needs pw_metadata clear + node.dont-fallback semantics
-        if (!m_graph.moveStream(out->id, nodeName)) qWarning() << "output device not found:" << nodeName;
+        if (!m_graph.moveStream(out->id, nodeName.isEmpty() ? QStringLiteral("kmixdeck.null") : nodeName)) qWarning() << "output device not found:" << nodeName;
     }
 }
 QString Mixer::mixCaptureSource(const QString &slug) const {
     return m_graph.node(QStringLiteral("kmixdeck.source.") + slug) ? QStringLiteral("kmixdeck.source.") + slug : QString();
 }
 
+QList<QPair<QString, QString>> Mixer::outputDevices() const {
+    QList<QPair<QString, QString>> out;
+    for (auto it = m_devices.cbegin(); it != m_devices.cend(); ++it) out.append(qMakePair(it.key(), it->description.isEmpty() ? it.key() : it->description));
+    std::sort(out.begin(), out.end(), [](const auto &a, const auto &b) { return a.second.localeAwareCompare(b.second) < 0; });
+    return out;
+}
 QList<uint32_t> Mixer::appIds() const { auto l = m_apps.keys(); std::sort(l.begin(), l.end()); return l; }
 std::optional<App> Mixer::app(uint32_t id) const { auto it = m_apps.constFind(id); return it == m_apps.constEnd() ? std::nullopt : std::optional<App>(*it); }
 bool Mixer::moveApp(uint32_t id, const QString &channelSlug) {
@@ -198,6 +212,9 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         if (parts.size() == 2) Q_EMIT cellChanged(parts[0], parts[1]);
         if (isNew) layout = true;
     }
+    else if (n.mediaClass == QLatin1String("Audio/Sink") && !n.name.startsWith(QLatin1String("kmixdeck."))) {
+        m_devices[n.name] = n; Q_EMIT outputDevicesChanged();
+    }
     else if (n.mediaClass == QLatin1String("Stream/Output/Audio") && !n.name.startsWith(QLatin1String("kmixdeck."))) {
         const bool isNew = !m_apps.contains(n.id);
         App &a = m_apps[n.id];
@@ -212,6 +229,7 @@ void Mixer::onNodeRemoved(uint32_t id) {
     const QString name = m_idToName.take(id);
     if (m_apps.remove(id)) Q_EMIT appRemoved(id);
     if (name.isEmpty()) return;
+    if (m_devices.remove(name)) Q_EMIT outputDevicesChanged();
     bool layout = false;
     if (m_cells.remove(name)) layout = true;
     m_sinks.remove(name);

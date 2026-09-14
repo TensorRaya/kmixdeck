@@ -131,10 +131,12 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_CLASSINFO("D-Bus Interface", "org.kmixdeck1.Mixer")
     Q_PROPERTY(QString Version READ version CONSTANT)
     Q_PROPERTY(bool Connected READ connected)
+    Q_PROPERTY(StringMap OutputDevices READ outputDevices)     // a{ss}: node.name → description
 public:
     MixerAdaptor(Mixer *mixer, QObject *parent);
     QString version() const;
     bool connected() const;
+    StringMap outputDevices() const;
 public Q_SLOTS:
     QDBusObjectPath AddChannel(const QString &name);
     QDBusObjectPath AddMix(const QString &name);

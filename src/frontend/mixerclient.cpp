@@ -21,7 +21,7 @@ static QVariant unwrap(const QVariant &v) {
 static QVariantMap plain(const QVariantMap &m) { QVariantMap r; for (auto it = m.cbegin(); it != m.cend(); ++it) r[it.key()] = unwrap(it.value()); return r; }
 
 MixerClient::MixerClient(QObject *parent) : QObject(parent) {
-    qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
+    qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
     auto bus = QDBusConnection::sessionBus();
     bus.connect(BUS, QString(), QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"), this, SLOT(onPropertiesChanged(QDBusMessage)));
     bus.connect(BUS, ROOT, QStringLiteral("org.freedesktop.DBus.ObjectManager"), QStringLiteral("InterfacesAdded"), this, SLOT(onInterfacesAdded(QDBusObjectPath,InterfaceMap)));
@@ -53,12 +53,21 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
     const QStringList parts = rel.split(QLatin1Char('/'));
     if (iface == QLatin1String("org.kmixdeck1.Mixer")) {
         if (props.contains(QStringLiteral("Connected"))) { m_pwConnected = props.value(QStringLiteral("Connected")).toBool(); Q_EMIT connectedChanged(); }
+        if (rawProps.contains(QStringLiteral("OutputDevices"))) {
+            m_devices.clear();
+            QVariant v = rawProps.value(QStringLiteral("OutputDevices"));
+            if (v.userType() == qMetaTypeId<QDBusVariant>()) v = v.value<QDBusVariant>().variant();
+            const StringMap d = qdbus_cast<StringMap>(v);
+            for (auto it = d.cbegin(); it != d.cend(); ++it) m_devices.insert(it.key(), it.value());
+            Q_EMIT outputDevicesChanged();
+        }
     } else if (iface == QLatin1String("org.kmixdeck1.Channel") && parts.size() == 2) {
         auto &m = m_channels[parts[1]]; for (auto it = props.cbegin(); it != props.cend(); ++it) m[it.key()] = it.value();
         if (!m_channelOrder.contains(parts[1])) { m_channelOrder << parts[1]; *layout = true; } else Q_EMIT layoutChanged();  // name change
     } else if (iface == QLatin1String("org.kmixdeck1.Mix") && parts.size() == 2) {
         auto &m = m_mixes[parts[1]]; for (auto it = props.cbegin(); it != props.cend(); ++it) m[it.key()] = it.value();
         if (!m_mixOrder.contains(parts[1])) { m_mixOrder << parts[1]; *layout = true; } else Q_EMIT layoutChanged();
+        Q_EMIT mixChanged(parts[1]);
     } else if (iface == QLatin1String("org.kmixdeck1.App") && parts.size() == 2) {
         auto &m = m_apps[path]; for (auto it = props.cbegin(); it != props.cend(); ++it) m[it.key()] = it.value();
         Q_EMIT appsChanged();
@@ -119,6 +128,18 @@ QVariantList MixerClient::apps() const {
     }
     return out;
 }
+QVariantList MixerClient::outputDevices() const {
+    QVariantList out;
+    for (auto it = m_devices.cbegin(); it != m_devices.cend(); ++it) out.push_back(QVariantMap{{QStringLiteral("nodeName"), it.key()}, {QStringLiteral("description"), it.value()}});
+    std::sort(out.begin(), out.end(), [](const QVariant &a, const QVariant &b) { return a.toMap().value(QStringLiteral("description")).toString().localeAwareCompare(b.toMap().value(QStringLiteral("description")).toString()) < 0; });
+    return out;
+}
+void MixerClient::setMixOutputDevice(const QString &slug, const QString &nodeName) {
+    m_mixes[slug][QStringLiteral("OutputDevice")] = nodeName;
+    setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("OutputDevice"), nodeName);
+}
+void MixerClient::renameChannel(const QString &slug, const QString &name) { setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Name"), name); }
+void MixerClient::renameMix(const QString &slug, const QString &name)     { setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Name"), name); }
 void MixerClient::moveApp(const QString &appPath, const QString &channelSlug) {
     QDBusInterface(BUS, appPath, QStringLiteral("org.kmixdeck1.App"), QDBusConnection::sessionBus())
         .asyncCall(QStringLiteral("MoveTo"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/channel/%2").arg(ROOT, channelSlug))));

@@ -19,6 +19,8 @@
 
 using InterfaceMap = QMap<QString, QVariantMap>;
 using ManagedObjects = QMap<QDBusObjectPath, InterfaceMap>;
+using StringMap = QMap<QString, QString>;
+Q_DECLARE_METATYPE(StringMap)
 Q_DECLARE_METATYPE(InterfaceMap)
 Q_DECLARE_METATYPE(ManagedObjects)
 
@@ -131,14 +133,15 @@ public Q_SLOTS:
 
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
-    qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
+    qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
     QCommandLineParser p;
     p.setApplicationDescription(QStringLiteral(
         "kmixdeck — control the kmixdeck service (org.kmixdeck1) from the shell.\n\n"
         "Commands:\n"
         "  status                                     matrix overview\n"
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|trim <slug> <level>|mute <slug> [on|off]\n"
-        "  mix     list|add <name>|remove <slug>|rename <slug> <name>|output <slug> <node.name>\n"
+        "  mix     list|add <name>|remove <slug>|rename <slug> <name>|output <slug> <node.name|none>\n"
+        "  devices                                    hardware outputs a mix can play to\n"
         "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
         "  app     list|move <id|name> <channel>          running application streams\n"
         "  watch                                      print property changes as they happen\n\n"
@@ -167,6 +170,12 @@ int main(int argc, char *argv[]) {
     QDBusInterface mixer(BUS, ROOT, "org.kmixdeck1.Mixer", QDBusConnection::sessionBus());
 
     if (cmd == "status") return cmdStatus(o);
+    if (cmd == "devices") {
+        const StringMap devs = qdbus_cast<StringMap>(o.mixer.value("OutputDevices"));
+        if (g_json) { QJsonObject j; for (auto it = devs.cbegin(); it != devs.cend(); ++it) j[it.key()] = it.value(); out << QJsonDocument(j).toJson(); return Ok; }
+        for (auto it = devs.cbegin(); it != devs.cend(); ++it) out << QStringLiteral("%1  %2\n").arg(it.key(), -48).arg(it.value());
+        return Ok;
+    }
     if (cmd == "channel" || cmd == "mix") {
         const bool ch = cmd == "channel"; const auto &objs = ch ? o.channels : o.mixes; const QString iface = ch ? "org.kmixdeck1.Channel" : "org.kmixdeck1.Mix";
         auto pathOf = [&](const QString &slug) { return QStringLiteral("%1/%2/%3").arg(ROOT, ch ? "channel" : "mix", slug); };
@@ -178,7 +187,13 @@ int main(int argc, char *argv[]) {
         if (sub == "rename") { if (!need(4)) return Usage; return setProp(pathOf(a[2]), iface, "Name", a[3], &e) ? Ok : fail(Rejected, e); }
         if (sub == "trim" && ch) { if (!need(4)) return Usage; double l; if (!parseLevel(a[3], &l)) return fail(Usage, "bad level"); return setProp(pathOf(a[2]), iface, "Trim", l, &e) ? Ok : fail(Rejected, e); }
         if (sub == "mute" && ch) { bool b; if (!parseBool(a, 3, &b)) return fail(Usage, "on|off"); return setProp(pathOf(a[2]), iface, "Muted", b, &e) ? Ok : fail(Rejected, e); }
-        if (sub == "output" && !ch) { if (!need(4)) return Usage; return setProp(pathOf(a[2]), iface, "OutputDevice", a[3], &e) ? Ok : fail(Rejected, e); }
+        if (sub == "output" && !ch) {   // mix output <slug> <node.name|none>
+            if (!need(4)) return Usage;
+            const QString dev = a[3] == "none" ? QString() : a[3];
+            const StringMap devs = qdbus_cast<StringMap>(o.mixer.value("OutputDevices"));
+            if (!dev.isEmpty() && !devs.contains(dev)) return fail(NotFound, "no output device '" + dev + "' (see `kmixdeck devices`)");
+            return setProp(pathOf(a[2]), iface, "OutputDevice", dev, &e) ? Ok : fail(Rejected, e);
+        }
         return fail(Usage, "unknown subcommand '" + sub + "'");
     }
     if (cmd == "cell") {

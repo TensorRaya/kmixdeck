@@ -62,6 +62,13 @@ public:
     void createNullSink(const QString &name, const QString &description, bool passive);
     /// Load a loopback module wiring `from` sink's monitor into `to` sink. Returns module id via callback.
     void createLoopback(const QString &name, const QString &description, const QString &from, const QString &to);
+    /// Loopback for a mix output: capture from the mix, play to `device` (node.name) or stay unlinked ("").
+    /// No dont-reconnect so it can be retargeted later; dont-fallback so it never hits the default sink.
+    /// The hidden parking sink unrouted mix outputs play to (never default: priority.session 0, passive).
+    void createParkingSink();
+    void createMixOutput(const QString &mixSlug, const QString &description, const QString &device);
+    /// Loopback exposing a mix as a virtual Audio/Source (for OBS/Discord).
+    void createMixSource(const QString &mixSlug, const QString &description);
     void destroyObject(uint32_t id);
     /// Current sink a stream's output ports are linked to (node id), or 0. Derived from Link globals.
     uint32_t streamSink(uint32_t streamId) const;
@@ -69,6 +76,8 @@ public:
     /// Route a stream to a sink: sets metadata target.object = <sink serial> on the stream node.
     /// This is exactly what wpctl set-default / pavucontrol do; WirePlumber persists it (restore-target).
     void setStreamTarget(uint32_t streamId, uint32_t sinkSerial);
+    /// Remove target.object from a stream; with node.dont-fallback the stream is then unlinked.
+    void clearStreamTarget(uint32_t streamId);
     /// Link a stream to a sink by name (looks up serial). Returns false if either is unknown.
     bool moveStream(uint32_t streamId, const QString &sinkNodeName);
 

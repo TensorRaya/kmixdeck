@@ -92,6 +92,9 @@ void AppObject::notifyChanged() { emitPropertiesChanged(m_path, interfaceName(),
 MixerAdaptor::MixerAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor(parent), m_mixer(mixer) {}
 QString MixerAdaptor::version() const { return QStringLiteral(KMIXDECK_VERSION_STRING); }
 bool MixerAdaptor::connected() const { return m_mixer->connected(); }
+StringMap MixerAdaptor::outputDevices() const {
+    StringMap m; for (const auto &d : m_mixer->outputDevices()) m.insert(d.first, d.second); return m;
+}
 QDBusObjectPath MixerAdaptor::AddChannel(const QString &name) { m_mixer->addChannel(name); return QDBusObjectPath(Service::channelPath(Names::slugify(name))); }
 QDBusObjectPath MixerAdaptor::AddMix(const QString &name) { m_mixer->addMix(name); return QDBusObjectPath(Service::mixPath(Names::slugify(name))); }
 void MixerAdaptor::RemoveChannel(const QDBusObjectPath &p) { m_mixer->removeChannel(p.path().section(QLatin1Char('/'), -1)); }
@@ -108,6 +111,7 @@ Service::Service(QObject *parent) : QObject(parent) {
     }
     qDBusRegisterMetaType<InterfaceMap>();
     qDBusRegisterMetaType<ManagedObjects>();
+    qDBusRegisterMetaType<StringMap>();
     connect(&m_mixer, &Mixer::layoutChanged, this, &Service::syncObjects);
     connect(&m_mixer, &Mixer::connectedChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("Connected"), m_mixer.connected()}});
@@ -117,6 +121,9 @@ Service::Service(QObject *parent) : QObject(parent) {
     });
     connect(&m_mixer, &Mixer::channelChanged, this, [this](const QString &slug) {
         if (auto *o = m_objects.value(channelPath(slug))) emitPropertiesChanged(o->path(), o->interfaceName(), o->properties());
+    });
+    connect(&m_mixer, &Mixer::outputDevicesChanged, this, [this] {
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->outputDevices() : StringMap{})}});
     });
     connect(&m_mixer, &Mixer::appAdded, this, [this](uint32_t id) { if (!m_objects.contains(appPath(id))) exportObject(new AppObject(&m_mixer, id, this)); });
     connect(&m_mixer, &Mixer::appRemoved, this, [this](uint32_t id) { unexportObject(appPath(id)); });
@@ -166,7 +173,7 @@ void Service::syncObjects() {
 ManagedObjects Service::managedObjects() const {
     ManagedObjects out;
     out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
-        {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()}}}});
+        {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()}, {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)
         out.insert(QDBusObjectPath(it.key()), InterfaceMap{{it.value()->interfaceName(), it.value()->properties()}});
     return out;

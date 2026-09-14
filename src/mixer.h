@@ -4,6 +4,7 @@
 
 #include <QObject>
 #include <QTimer>
+#include <QPair>
 #include <QAbstractListModel>
 #include <QVector>
 #include <QString>
@@ -69,6 +70,9 @@ public:
     Q_INVOKABLE void    setMixOutputDevice(const QString &slug, const QString &nodeName);
     Q_INVOKABLE QString mixCaptureSource(const QString &slug) const;
 
+    /// Hardware (non-kmixdeck) sinks a mix can be routed to: node.name → description (DV-2).
+    QList<QPair<QString, QString>> outputDevices() const;
+
     /// Running application streams (CH-4/CH-10).
     QList<uint32_t> appIds() const;
     std::optional<App> app(uint32_t id) const;
@@ -94,6 +98,7 @@ Q_SIGNALS:
     void appAdded(uint32_t id);
     void appChanged(uint32_t id);
     void appRemoved(uint32_t id);
+    void outputDevicesChanged();
 
 private:
     void onNode(const pw::NodeInfo &n);
@@ -108,6 +113,7 @@ private:
     QVector<Mix> m_mixes;
     QHash<QString, pw::NodeInfo> m_cells;      // key: cell node name
     QHash<QString, pw::NodeInfo> m_sinks;
+    QHash<QString, pw::NodeInfo> m_devices;    // foreign Audio/Sink nodes, key: node name
     QHash<uint32_t, App> m_apps;
     Layout m_layout;
     QString m_layoutPath, m_pwConfPath;

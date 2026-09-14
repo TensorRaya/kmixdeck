@@ -13,6 +13,8 @@
     <property name="Version" type="s" access="read"/>
     <!-- true while the service has a live PipeWire connection -->
     <property name="Connected" type="b" access="read"/>
+    <!-- hardware sinks a Mix.OutputDevice may point to: node.name → human description -->
+    <property name="OutputDevices" type="a{ss}" access="read"/>
     <!-- Create a channel (input group). Returns the new object path. Slug derived from name. -->
     <method name="AddChannel">
       <arg name="name" type="s" direction="in"/>

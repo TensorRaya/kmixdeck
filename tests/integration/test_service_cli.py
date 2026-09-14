@@ -286,3 +286,67 @@ def test_mx1_remove_mix(stack):
     assert {m["Slug"] for m in st["mixes"]} == {"monitor", "stream"}
     layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
     assert [m["slug"] for m in layout["mixes"]] == ["monitor", "stream"]
+
+
+# ---------------------------------------------------------------- mix output device (MX-3a, DV-2)
+def make_fake_sink(stack, name, desc):
+    subprocess.run(["pw-cli", "create-node", "adapter",
+                    f'{{ factory.name=support.null-audio-sink node.name={name} node.description="{desc}" media.class=Audio/Sink audio.position=[FL FR] object.linger=true }}'],
+                   env=stack.pw.env, capture_output=True)
+    stack.pw.wait_node(name)
+
+
+def out_link_target(stack, mix):
+    links = subprocess.run(["pw-link", "-l"], env=stack.pw.env, capture_output=True, text=True).stdout.splitlines()
+    for i, l in enumerate(links):
+        if l.startswith(f"kmixdeck.out.{mix}:output_FL") and i + 1 < len(links) and "|->" in links[i + 1]:
+            return links[i + 1].strip().replace("|-> ", "").split(":")[0]
+    return None
+
+
+def test_dv8_devices_lists_hardware_sinks_not_ours(stack):
+    make_fake_sink(stack, "fake.headphones", "Fake Headphones")
+    for _ in range(30):
+        devs = stack.cli("devices", json_out=True)
+        if "fake.headphones" in devs: break
+        time.sleep(0.1)
+    assert devs["fake.headphones"] == "Fake Headphones"
+    assert not any(k.startswith("kmixdeck.") for k in devs)   # incl. the parking sink kmixdeck.null
+
+
+def test_mx3a_mix_output_follows_device_and_is_audible(stack):
+    assert out_link_target(stack, "stream") == "kmixdeck.null", "mix output must start parked on kmixdeck.null (never the default sink)"
+    stack.cli("mix", "output", "stream", "fake.headphones")
+    for _ in range(40):
+        if out_link_target(stack, "stream") == "fake.headphones": break
+        time.sleep(0.1)
+    assert out_link_target(stack, "stream") == "fake.headphones"
+    # audible on the device: game→stream at 0 dB, tone into game
+    stack.cli("cell", "set", "game", "stream", "1.0")
+    play = stack.pw.play_into("kmixdeck.channel.game")
+    try:
+        assert stack.pw.level_at("fake.headphones") > -30
+    finally:
+        play.kill(); play.wait()
+    assert stack.cli("mix", "list", json_out=True)[1]["OutputDevice"] == "fake.headphones" or \
+           any(m["OutputDevice"] == "fake.headphones" for m in stack.cli("mix", "list", json_out=True))
+
+
+def test_mx3a_output_none_unlinks_and_unknown_device_is_rejected(stack):
+    r = stack.cli("mix", "output", "stream", "does.not.exist", check=False)
+    assert r.returncode == 3
+    stack.cli("mix", "output", "stream", "none")
+    for _ in range(40):
+        if out_link_target(stack, "stream") == "kmixdeck.null": break
+        time.sleep(0.1)
+    assert out_link_target(stack, "stream") == "kmixdeck.null"
+
+
+def test_mx3a_output_device_persists_in_generated_conf(stack):
+    stack.cli("mix", "output", "monitor", "fake.headphones")
+    time.sleep(0.5)
+    conf = (Path(stack.pw.runtime_dir) / "pipewire.conf.d" / "90-kmixdeck.conf").read_text()
+    assert 'node.name = "kmixdeck.out.monitor"' in conf and 'node.target = "fake.headphones"' in conf
+    layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
+    assert next(m for m in layout["mixes"] if m["slug"] == "monitor")["outputDevice"] == "fake.headphones"
+    stack.cli("mix", "output", "monitor", "none")
