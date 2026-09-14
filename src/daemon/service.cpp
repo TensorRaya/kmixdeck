@@ -33,6 +33,7 @@ void CellObject::setVolume(double linear) {
     m_mixer->setCellVolume(m_ch, m_mix, Mixer::linearToCubic(static_cast<float>(linear)));
 }
 void CellObject::setMuted(bool m) { m_mixer->setCellMuted(m_ch, m_mix, m); }
+void CellObject::ToggleMute() { m_mixer->setCellMuted(m_ch, m_mix, !m_mixer->cellMuted(m_ch, m_mix)); }
 void CellObject::SetVolumeDb(double db) {
     if (db > 0.0) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("dB must be <= 0")); return; }
     setVolume(db < -200.0 ? 0.0 : std::pow(10.0, db / 20.0));
@@ -52,6 +53,7 @@ double ChannelObject::trim() const { return m_mixer->channelTrim(m_slug); }
 void ChannelObject::setTrim(double v) { if (v < 0 || v > 1) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("Trim must be 0..1")); return; } m_mixer->setChannelTrim(m_slug, v); }
 bool ChannelObject::muted() const { return m_mixer->channelMuted(m_slug); }
 void ChannelObject::setMuted(bool m) { m_mixer->setChannelMuted(m_slug, m); }
+void ChannelObject::ToggleMute() { m_mixer->setChannelMuted(m_slug, !m_mixer->channelMuted(m_slug)); }
 QVariantMap ChannelObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), m_icon},
             {QStringLiteral("Trim"), trim()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("NodeName"), nodeName()}};

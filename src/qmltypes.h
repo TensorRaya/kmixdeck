@@ -10,5 +10,11 @@ struct MixerForeign {
     QML_NAMED_ELEMENT(Mixer)
     QML_SINGLETON
 public:
-    static kmixdeck::frontend::MixerClient *create(QQmlEngine *, QJSEngine *) { return new kmixdeck::frontend::MixerClient; }
+    // The instance is created in main() and shared with the KDE integration; QML must not own it.
+    static void setInstance(kmixdeck::frontend::MixerClient *c) { s_instance = c; }
+    static kmixdeck::frontend::MixerClient *create(QQmlEngine *, QJSEngine *engine) {
+        QJSEngine::setObjectOwnership(s_instance, QJSEngine::CppOwnership); return s_instance;
+    }
+private:
+    static inline kmixdeck::frontend::MixerClient *s_instance = nullptr;
 };

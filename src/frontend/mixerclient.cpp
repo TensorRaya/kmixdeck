@@ -64,6 +64,7 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
     } else if (iface == QLatin1String("org.kmixdeck1.Channel") && parts.size() == 2) {
         auto &m = m_channels[parts[1]]; for (auto it = props.cbegin(); it != props.cend(); ++it) m[it.key()] = it.value();
         if (!m_channelOrder.contains(parts[1])) { m_channelOrder << parts[1]; *layout = true; } else Q_EMIT layoutChanged();  // name change
+        Q_EMIT channelChanged(parts[1]);
     } else if (iface == QLatin1String("org.kmixdeck1.Mix") && parts.size() == 2) {
         auto &m = m_mixes[parts[1]]; for (auto it = props.cbegin(); it != props.cend(); ++it) m[it.key()] = it.value();
         if (!m_mixOrder.contains(parts[1])) { m_mixOrder << parts[1]; *layout = true; } else Q_EMIT layoutChanged();
@@ -111,6 +112,12 @@ void MixerClient::setCellVolume(const QString &ch, const QString &mix, double cu
 void MixerClient::setCellMuted(const QString &ch, const QString &mix, bool muted) {
     m_cells[cellKey(ch, mix)][QStringLiteral("Muted")] = muted;
     setProperty(QStringLiteral("%1/cell/%2/%3").arg(ROOT, ch, mix), QStringLiteral("org.kmixdeck1.Cell"), QStringLiteral("Muted"), muted);
+}
+void MixerClient::toggleCellMute(const QString &ch, const QString &mix) {
+    QDBusInterface(BUS, QStringLiteral("%1/cell/%2/%3").arg(ROOT, ch, mix), QStringLiteral("org.kmixdeck1.Cell"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("ToggleMute"));
+}
+void MixerClient::toggleChannelMute(const QString &slug) {
+    QDBusInterface(BUS, QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("ToggleMute"));
 }
 void MixerClient::addChannel(const QString &name) { QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("AddChannel"), name); }
 void MixerClient::addMix(const QString &name)     { QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("AddMix"), name); }

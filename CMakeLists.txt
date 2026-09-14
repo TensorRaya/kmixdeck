@@ -21,7 +21,7 @@ ecm_setup_version(${PROJECT_VERSION}
     VARIABLE_PREFIX KMIXDECK
     VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/kmixdeck_version.h")
 
-find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Svg DBus)
+find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Gui Widgets Qml Quick QuickControls2 Svg DBus)
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS
     CoreAddons Config I18n Kirigami IconThemes
     GlobalAccel StatusNotifierItem Notifications DBusAddons Crash)

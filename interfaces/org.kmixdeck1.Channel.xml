@@ -11,5 +11,7 @@
     <property name="Muted" type="b" access="readwrite"/>
     <!-- PipeWire node.name, for tools that want to link things themselves -->
     <property name="NodeName" type="s" access="read"/>
+    <!-- atomic mute toggle: what a hotkey or a Stream Deck key calls (no read-modify-write race) -->
+    <method name="ToggleMute"/>
   </interface>
 </node>

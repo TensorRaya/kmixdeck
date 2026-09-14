@@ -10,5 +10,7 @@
     <property name="Muted" type="b" access="readwrite"/>
     <!-- convenience for CLIs/scripts: set in dB (<= 0). -inf allowed as -1e9. -->
     <method name="SetVolumeDb"><arg name="db" type="d" direction="in"/></method>
+    <!-- atomic mute toggle: what a hotkey or a Stream Deck key calls (no read-modify-write race) -->
+    <method name="ToggleMute"/>
   </interface>
 </node>

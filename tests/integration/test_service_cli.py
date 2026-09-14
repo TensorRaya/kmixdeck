@@ -350,3 +350,39 @@ def test_mx3a_output_device_persists_in_generated_conf(stack):
     layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
     assert next(m for m in layout["mixes"] if m["slug"] == "monitor")["outputDevice"] == "fake.headphones"
     stack.cli("mix", "output", "monitor", "none")
+
+
+# ---------------------------------------------------------------- atomic toggles (CT-1 backend)
+def test_ct1_toggle_mute_is_atomic_on_the_bus(stack):
+    """Hotkeys call ToggleMute() — one round trip, no read-modify-write from the frontend."""
+    stack.cli("cell", "mute", "game", "stream", "off")
+    for _ in range(2):
+        r = stack.busctl("call", "org.kmixdeck1", "/org/kmixdeck1/cell/game/stream", "org.kmixdeck1.Cell", "ToggleMute"); assert r.returncode == 0, r.stderr
+    assert stack.cli("cell", "get", "game", "stream", json_out=True)["Muted"] is False
+    stack.busctl("call", "org.kmixdeck1", "/org/kmixdeck1/cell/game/stream", "org.kmixdeck1.Cell", "ToggleMute")
+    assert stack.cli("cell", "get", "game", "stream", json_out=True)["Muted"] is True
+    assert stack.pw.props("kmixdeck.link.game.stream")["mute"] is True
+    stack.cli("cell", "mute", "game", "stream", "off")
+    # channel-wide toggle mutes the channel null sink (every mix)
+    stack.busctl("call", "org.kmixdeck1", "/org/kmixdeck1/channel/voice", "org.kmixdeck1.Channel", "ToggleMute")
+    time.sleep(0.3)
+    assert stack.pw.props("kmixdeck.channel.voice")["mute"] is True
+    stack.busctl("call", "org.kmixdeck1", "/org/kmixdeck1/channel/voice", "org.kmixdeck1.Channel", "ToggleMute")
+
+
+def test_ct1_kde_frontend_registers_global_shortcuts(stack):
+    """The KDE frontend must register one KGlobalAccel action per channel and per mix under component 'kmixdeck'.
+    No kglobalacceld here — we watch the registration calls on the private bus (the contract with Plasma)."""
+    kde = BIN / "kmixdeck-kde"
+    if not kde.exists(): pytest.skip("kmixdeck-kde not built")
+    mon = subprocess.Popen(["busctl", "--user", "monitor", "--match", "type=method_call,interface=org.kde.KGlobalAccel"],
+                           env=stack.env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    time.sleep(0.5)
+    env = dict(stack.env); env["QT_QPA_PLATFORM"] = "offscreen"
+    ui = subprocess.Popen([str(kde)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(4.0)
+    ui.terminate(); ui.wait(timeout=5)
+    mon.terminate(); out = mon.communicate(timeout=5)[0]
+    for name in ("mute-channel-game", "mute-channel-system", "mute-channel-voice", "mute-mix-monitor", "mute-mix-stream"):
+        assert f'"{name}"' in out, f"shortcut action {name} not registered"
+    assert "doRegister" in out and "setShortcutKeys" in out

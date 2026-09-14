@@ -1,0 +1,9 @@
+[Global]
+IconName=audio-card
+Comment=kmixdeck
+Name=kmixdeck
+
+[Event/muteToggled]
+Name=Mute toggled by shortcut
+Comment=A channel or mix was muted or unmuted with a global shortcut
+Action=Popup

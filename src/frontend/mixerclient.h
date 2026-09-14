@@ -45,6 +45,9 @@ public:
     Q_INVOKABLE bool   cellMuted(const QString &ch, const QString &mix) const { return m_cells.value(cellKey(ch, mix)).value(QStringLiteral("Muted"), true).toBool(); }
     Q_INVOKABLE void   setCellVolume(const QString &ch, const QString &mix, double cubic);
     Q_INVOKABLE void   setCellMuted(const QString &ch, const QString &mix, bool muted);
+    Q_INVOKABLE void   toggleCellMute(const QString &ch, const QString &mix);
+    Q_INVOKABLE void   toggleChannelMute(const QString &slug);
+    Q_INVOKABLE bool   channelMuted(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Muted")).toBool(); }
     Q_INVOKABLE void   addChannel(const QString &name);
     Q_INVOKABLE void   addMix(const QString &name);
     Q_INVOKABLE void   removeChannel(const QString &slug);
@@ -63,6 +66,7 @@ Q_SIGNALS:
     void serviceAvailableChanged();
     void layoutChanged();
     void cellChanged(const QString &ch, const QString &mix);
+    void channelChanged(const QString &slug);
     void appsChanged();
     void outputDevicesChanged();
     void mixChanged(const QString &slug);

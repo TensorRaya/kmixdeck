@@ -31,7 +31,7 @@ set_property(TARGET kmixdeck-cli PROPERTY COMPILE_DEFINITIONS "")
 install(TARGETS kmixdeck-cli ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
 
 # --- kmixdeck-kde: the Kirigami frontend. Pure D-Bus client, no PipeWire (AR-2/AR-6 enforced by the linker).
-add_executable(kmixdeck-kde main.cpp frontend/mixerclient.cpp frontend/mixerclient.h qmltypes.h)
+add_executable(kmixdeck-kde main.cpp frontend/mixerclient.cpp frontend/mixerclient.h frontend/kdeintegration.cpp frontend/kdeintegration.h qmltypes.h)
 ecm_add_qml_module(kmixdeck-kde
     URI org.kmixdeck
     VERSION 1.0
@@ -46,7 +46,7 @@ ecm_add_qml_module(kmixdeck-kde
 )
 target_include_directories(kmixdeck-kde PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/.. frontend)
 target_link_libraries(kmixdeck-kde PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Svg Qt6::DBus
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Svg Qt6::DBus
     KF6::CoreAddons KF6::ConfigCore KF6::I18n KF6::IconThemes
     KF6::GlobalAccel KF6::StatusNotifierItem KF6::Notifications KF6::DBusAddons KF6::Crash
 )

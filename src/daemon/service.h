@@ -49,6 +49,7 @@ public:
     void notifyChanged();   // called by the daemon when Mixer says the cell changed
 public Q_SLOTS:
     void SetVolumeDb(double db);
+    void ToggleMute();
 private:
     Mixer *m_mixer; QString m_ch, m_mix;
 };
@@ -73,6 +74,8 @@ public:
     double trim() const; void setTrim(double);
     bool muted() const; void setMuted(bool);
     QString nodeName() const { return Names::channelNode(m_slug); }
+public Q_SLOTS:
+    void ToggleMute();
 private:
     Mixer *m_mixer; QString m_slug, m_icon;
 };

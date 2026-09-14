@@ -15,6 +15,10 @@
 #include <KIconTheme>
 
 #include "kmixdeck_version.h"
+#include "frontend/mixerclient.h"
+#include "frontend/kdeintegration.h"
+#include "qmltypes.h"
+#include <QQuickWindow>
 
 int main(int argc, char *argv[])
 {
@@ -46,13 +50,21 @@ int main(int argc, char *argv[])
 
     KDBusService service(KDBusService::Unique);   // one instance; second launch raises the window
 
+    // One client shared by QML (as the "Mixer" singleton) and by the KDE integration (tray, shortcuts).
+    auto *client = new kmixdeck::frontend::MixerClient(&app);
+    MixerForeign::setInstance(client);
+    kmixdeck::frontend::KdeIntegration kde(client);
+
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextObject(new KLocalizedContext(&engine));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.loadFromModule("org.kmixdeck", "Main");
+    if (!engine.rootObjects().isEmpty()) kde.setMainWindow(qobject_cast<QQuickWindow *>(engine.rootObjects().first()));
 
+    // Closing the window keeps the tray item (and the shortcuts) alive; quit via the tray menu (CT-4).
+    app.setQuitOnLastWindowClosed(false);
     QObject::connect(&service, &KDBusService::activateRequested, &engine, [&engine] {
-        for (auto *o : engine.rootObjects()) QMetaObject::invokeMethod(o, "raise");
+        for (auto *o : engine.rootObjects()) { QMetaObject::invokeMethod(o, "show"); QMetaObject::invokeMethod(o, "raise"); }
     });
     return app.exec();
 }
