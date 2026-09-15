@@ -7,6 +7,7 @@
 #include <QPair>
 #include <QAbstractListModel>
 #include <QVector>
+#include <QSet>
 #include <QString>
 #include <optional>
 #include <QJsonArray>
@@ -192,6 +193,7 @@ private:
     void onNode(const pw::NodeInfo &n);
     void onNodeRemoved(uint32_t id);
     void onStreamRouted(uint32_t streamId, uint32_t sinkId);
+    void finishAutoRoute(uint32_t id);
     QString slugForSinkId(uint32_t sinkId) const;
     void rebuildLayoutFromGraph();
 
@@ -220,6 +222,7 @@ private:
     void destroyOurNodes(const std::function<bool(const QString &)> &match);
     QList<Device> devicesFor(const QString &mediaClass) const;
     QHash<uint32_t, App> m_apps;
+    QSet<uint32_t> m_pendingAutoRoute;   // CH-5: apps waiting for WirePlumber's first link before we decide
     Layout m_layout;
     QString m_layoutPath, m_pwConfPath;
     bool m_reconciled = false;

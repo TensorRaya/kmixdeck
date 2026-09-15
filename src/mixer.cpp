@@ -577,8 +577,20 @@ void Mixer::autoRouteNewApp(const App &a) {
     if (m_layout.defaultChannel.isEmpty() || !channelSlugs().contains(m_layout.defaultChannel)) return;
     const QString key = appKey(a);
     if (key.isEmpty() || m_layout.knownApps.contains(key)) return;
-    if (!a.channelSlug.isEmpty()) { m_layout.knownApps << key; saveLayout(); return; }   // already on one of ours (e.g. restored)
-    if (m_graph.moveStream(a.id, m_layout.channelEntry(m_layout.defaultChannel))) {
+    // Decide only once WirePlumber has linked the stream (its first onStreamRouted). Before that we cannot
+    // tell a restored target from "nowhere yet", and moving a node WirePlumber has not registered is
+    // linked but never remembered (state-stream.lua returns early) — broke CH-4 on 2026-09-15.
+    m_pendingAutoRoute.insert(a.id);
+}
+
+void Mixer::finishAutoRoute(uint32_t id) {
+    if (!m_pendingAutoRoute.remove(id)) return;
+    auto it = m_apps.find(id); if (it == m_apps.end()) return;
+    const QString key = appKey(*it);
+    if (key.isEmpty() || m_layout.knownApps.contains(key)) return;
+    if (!it->channelSlug.isEmpty()) { m_layout.knownApps << key; saveLayout(); return; }   // already on one of ours (e.g. restored)
+    if (m_layout.defaultChannel.isEmpty() || !channelSlugs().contains(m_layout.defaultChannel)) return;
+    if (m_graph.moveStream(id, m_layout.channelEntry(m_layout.defaultChannel))) {
         m_layout.knownApps << key; saveLayout();
         qInfo() << "new application" << key << "→ default channel" << m_layout.defaultChannel;
     }
@@ -597,6 +609,7 @@ void Mixer::onStreamRouted(uint32_t streamId, uint32_t sinkId) {
     auto it = m_apps.find(streamId); if (it == m_apps.end()) return;
     const QString slug = slugForSinkId(sinkId);
     if (it->channelSlug != slug) { it->channelSlug = slug; Q_EMIT appChanged(streamId); }
+    finishAutoRoute(streamId);
 }
 
 QString Mixer::addChannel(const QString &displayName, QString *error) {
@@ -791,6 +804,7 @@ void Mixer::onNode(const pw::NodeInfo &n) {
 
 void Mixer::onNodeRemoved(uint32_t id) {
     const QString name = m_idToName.take(id);
+    m_pendingAutoRoute.remove(id);
     if (m_apps.remove(id)) Q_EMIT appRemoved(id);
     if (name.isEmpty()) return;
     if (m_edges.remove(name)) for (const auto &m : m_mixes) if (name == EdgeNames::outputNode(m.slug, 0) || name == EdgeNames::sourceNode(m.slug)) { Q_EMIT mixChanged(m.slug); break; }
