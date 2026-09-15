@@ -101,13 +101,15 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 
 | ID | Requirement | Source | Status |
 |---|---|---|---|
-| UX-1 | Main view: channels as rows/columns against mixes as the other axis — one fader per (channel, mix) cell, visible at once. | owner | ✅ MixerPage: one GridLayout, channels × mixes, one fader per cell; header pinned to cell width; screenshot-verified |
+| UX-1 | Main view: channels as rows against mixes as panels — one fader per (channel, mix) cell, visible at once. | owner; Wave Link 3 layout (channel list left, one panel per mix right, horizontal faders that double as meters) | ✅ MixerPage (2026-09-15 redesign): ChannelHeader rows + one panel per mix, CellFader `[mute][fader/meter][link]`, MixHeader card (icon, name, output, master, meter); UI smoke test test_ct1_kde_frontend_registers_global_shortcuts starts it; screenshot-verified in Plasma (Breeze Dark) |
 | UX-2 | A "what am I hearing" indicator MUST show which mix is currently routed to the user's headphones; switching MUST be one click. | wavelink | 📝 |
 | UX-3 | First-run wizard SHOULD create default channels and mixes, detect the microphone and the default output, and assign running apps. | wavelink | 📝 |
 | UX-4 | Full keyboard operability and screen-reader labels per KDE HIG. | platform | 📝 |
 | UX-5 | Languages: English first; German second; translatable via KDE's i18n. | owner | 📝 |
 | UX-6 | Level meters (VU) on every channel and every mix (top Linux wish: Sonusmix #20; Pulsemeeter has them). | users; ADR 0006: daemon peak streams (25 Hz, `resample.peaks`), `org.kmixdeck1.Levels` Subscribe/Peaks, on demand only; CLI `kmixdeck levels`; UI meters per cell (channel peak × gain) and per mix; tests `test_ux6_levels_signal_carries_peaks_of_the_tone`, `test_ux6_subscriber_that_dies_is_forgotten` | ✅ |
 | UX-7 | Volume sliders MUST use a logarithmic curve and show dB and percent. | wavelink #19, #20 | ✅ CellFader/MixHeader: cubic slider (WirePlumber curve), tooltip/readout in dB, CLI accepts dB/%/linear (test_cli_level_syntax) |
+| UX-8 | Every channel and every mix MUST have a user-chosen icon: a short curated set one click away, the full icon theme, or any image file. Presentation only — stored in the layout, never in PipeWire. | wavelink (channel/mix icons), owner | ✅ `Channel.Icon` / `Mix.Icon` (icon name or absolute path, "" = frontend default), persisted in `layout.json`, survives daemon restart; CLI `channel|mix icon <slug> <icon|none>`; UI: click the icon tile or "Icon…" in the menu → IconDialog (curated Breeze set, KIconDialog for the whole theme, file dialog). test_presentation::test_ux8_* (3) |
+| UX-9 | Channels and mixes MUST be reorderable; the order is part of the layout and survives restarts. Moving MUST NOT touch any fader, link or node. | wavelink (drag to reorder), owner | ✅ `Mixer.ChannelOrder` / `MixOrder` (as) + `MoveChannel/MoveMix(path, index)` (index clamped); CLI `channel|mix move <slug> <index|up|down|top|bottom>`; UI "Move up/down" (channels) and "Move left/right" (mixes) in the header menus. test_presentation::test_ux9_* (5) |
 
 ## 7. Verification (binding)
 

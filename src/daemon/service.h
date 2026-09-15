@@ -85,7 +85,7 @@ public:
     QVariantMap properties() const override;
     QString slug() const { return m_slug; }
     QString name() const; void setName(const QString &);
-    QString icon() const { return m_icon; } void setIcon(const QString &i);
+    QString icon() const; void setIcon(const QString &i);
     double trim() const; void setTrim(double);
     bool muted() const; void setMuted(bool);
     QString nodeName() const { return Names::channelNode(m_slug); }
@@ -97,7 +97,7 @@ public Q_SLOTS:
     bool SetFx(const QString &chainJson);           // FX-1: replace the chain (validated; false = refused)
     bool SetFxControl(const QString &control, double value);   // FX-3 live
 private:
-    Mixer *m_mixer; QString m_slug, m_icon;
+    Mixer *m_mixer; QString m_slug;
 };
 
 // ---- org.kmixdeck1.Mix -----------------------------------------------------------------
@@ -123,7 +123,7 @@ public:
     QVariantMap properties() const override;
     QString slug() const { return m_slug; }
     QString name() const; void setName(const QString &);
-    QString icon() const { return m_icon; } void setIcon(const QString &i);
+    QString icon() const; void setIcon(const QString &i);
     QString outputDevice() const; void setOutputDevice(const QString &);
     QString captureSource() const;
     QString nodeName() const { return Names::mixNode(m_slug); }
@@ -141,7 +141,7 @@ public Q_SLOTS:
     bool SetFx(const QString &chainJson);
     bool SetFxControl(const QString &control, double value);
 private:
-    Mixer *m_mixer; QString m_slug, m_icon;
+    Mixer *m_mixer; QString m_slug;
 };
 
 // ---- org.kmixdeck1.App ------------------------------------------------------------------
@@ -213,6 +213,8 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_PROPERTY(StringMap InputDevices READ inputDevices)
     Q_PROPERTY(QDBusObjectPath DefaultChannel READ defaultChannel WRITE setDefaultChannel)   // CH-5; "/" = off
     Q_PROPERTY(QString UndoDescription READ undoDescription)   // CH-9: "" = nothing to undo, else e.g. channel “Music”
+    Q_PROPERTY(QStringList ChannelOrder READ channelOrder)     // UX-9: display order, slugs
+    Q_PROPERTY(QStringList MixOrder READ mixOrder)
     Q_PROPERTY(QString FxTypes READ fxTypes CONSTANT)          // FX-4: built-in catalog as JSON [{type,label,params:[…]}]
     Q_PROPERTY(QString FxPresets READ fxPresets CONSTANT)      // FX-4: name → chain JSON
 public:
@@ -226,8 +228,12 @@ public:
     QString undoDescription() const { return m_mixer->undoDescription(); }
     QString fxTypes() const;
     QString fxPresets() const;
+    QStringList channelOrder() const;
+    QStringList mixOrder() const;
 public Q_SLOTS:
     void Undo();                                      // CH-9: restore the last removed channel/mix
+    void MoveChannel(const QDBusObjectPath &path, int index);   // UX-9
+    void MoveMix(const QDBusObjectPath &path, int index);
     QDBusObjectPath AddChannel(const QString &name);
     QDBusObjectPath AddMix(const QString &name);
     void RemoveChannel(const QDBusObjectPath &path);

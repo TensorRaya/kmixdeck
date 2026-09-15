@@ -78,6 +78,10 @@ public:
     Q_INVOKABLE void    setMixOutputDevice(const QString &slug, const QString &nodeName);
     Q_INVOKABLE void    renameChannel(const QString &slug, const QString &name);
     Q_INVOKABLE void    renameMix(const QString &slug, const QString &name);
+    Q_INVOKABLE void    setChannelIcon(const QString &slug, const QString &icon);   // UX-8
+    Q_INVOKABLE void    setMixIcon(const QString &slug, const QString &icon);
+    Q_INVOKABLE void    moveChannel(const QString &slug, int index);              // UX-9
+    Q_INVOKABLE void    moveMix(const QString &slug, int index);
     Q_INVOKABLE void   moveApp(const QString &appPath, const QString &channelSlug);
     Q_INVOKABLE void   setChannelDevice(const QString &slug, const QString &deviceNode);
     Q_INVOKABLE QString channelDevice(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("InputDevice")).toString(); }
@@ -103,6 +107,8 @@ public:
 
     // ---- effects (ADR 0008): kind is "channel" or "mix"
     Q_INVOKABLE QString channelIcon(const QString &slug) const { const auto i = m_channels.value(slug).value(QStringLiteral("Icon")).toString(); return i.isEmpty() ? QStringLiteral("audio-card") : i; }
+    Q_INVOKABLE QString channelIconRaw(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Icon")).toString(); }   // "" = default
+    Q_INVOKABLE QString mixIconRaw(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("Icon")).toString(); }
     Q_INVOKABLE QString mixIcon(const QString &slug) const { const auto i = m_mixes.value(slug).value(QStringLiteral("Icon")).toString(); return i.isEmpty() ? QStringLiteral("audio-headphones") : i; }
     /// True when a non-empty, enabled effect chain sits on that channel/mix (ADR 0008) — for the highlighted FX button.
     Q_INVOKABLE bool    fxEnabled(const QString &kind, const QString &slug) const;
@@ -137,7 +143,7 @@ private Q_SLOTS:
     void onNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
 
 private:
-    void callReportingErrors(const QString &method, const QVariant &arg);
+    void callReportingErrors(const QString &method, const QVariant &arg, const QVariant &arg2 = QVariant());
     static QString cellKey(const QString &ch, const QString &mix) { return ch + QLatin1Char('/') + mix; }
     void refresh();                    // GetManagedObjects → rebuild mirror
     void absorb(const QString &path, const QString &iface, const QVariantMap &props, bool *layout);

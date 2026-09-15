@@ -16,6 +16,7 @@ Item {
     property bool inputPresent: Mixer.channelInputPresent(channel)
     property bool muted: Mixer.channelMuted(channel)
     property bool hasFx: Mixer.fxEnabled("channel", channel)
+    property string iconName: Mixer.channelIcon(channel)
 
     Connections {
         target: Mixer
@@ -25,6 +26,7 @@ Item {
             header.inputPresent = Mixer.channelInputPresent(slug)
             header.muted = Mixer.channelMuted(slug)
             header.hasFx = Mixer.fxEnabled("channel", slug)
+            header.iconName = Mixer.channelIcon(slug)
         }
     }
 
@@ -47,7 +49,13 @@ Item {
             Kirigami.Icon {
                 anchors.centerIn: parent
                 width: parent.width * 0.6; height: width
-                source: Mixer.channelIcon(header.channel)
+                source: header.iconName
+            }
+            TapHandler { onTapped: applicationWindow().iconDialogOpen("channel", header.channel) }
+            QQC2.ToolTip.text: i18n("Change icon")
+            QQC2.ToolTip.visible: tileHover.hovered
+            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+            HoverHandler { id: tileHover; cursorShape: Qt.PointingHandCursor
             }
         }
 
@@ -120,6 +128,17 @@ Item {
     QQC2.Menu {
         id: ctxMenu
         QQC2.MenuItem { text: i18n("Rename…"); icon.name: "edit-rename"; onTriggered: applicationWindow().renameDialogOpen("channel", header.channel) }
+        QQC2.MenuItem { text: i18n("Icon…"); icon.name: "preferences-desktop-icons"; onTriggered: applicationWindow().iconDialogOpen("channel", header.channel) }
+        QQC2.MenuItem {   // UX-9
+            readonly property int idx: Mixer.channelSlugs.indexOf(header.channel)
+            text: i18n("Move up"); icon.name: "go-up"; enabled: idx > 0
+            onTriggered: Mixer.moveChannel(header.channel, idx - 1)
+        }
+        QQC2.MenuItem {
+            readonly property int idx: Mixer.channelSlugs.indexOf(header.channel)
+            text: i18n("Move down"); icon.name: "go-down"; enabled: idx >= 0 && idx < Mixer.channelSlugs.length - 1
+            onTriggered: Mixer.moveChannel(header.channel, idx + 1)
+        }
         QQC2.MenuItem { text: i18n("Hardware input…"); icon.name: "audio-input-microphone"; onTriggered: inMenu.popup() }
         QQC2.MenuItem { text: i18n("Effects…"); icon.name: "view-media-equalizer"; onTriggered: applicationWindow().fxPanelOpen("channel", header.channel) }
         QQC2.MenuItem {

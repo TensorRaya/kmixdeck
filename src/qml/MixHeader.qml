@@ -18,6 +18,7 @@ QQC2.Control {
     property var outputs: Mixer.mixOutputs(mix)              // MX-9
     property string fallbackOutput: Mixer.mixFallbackOutput(mix)   // DV-15
     property bool hasFx: Mixer.fxEnabled("mix", mix)
+    property string iconName: Mixer.mixIcon(mix)
     padding: 0
 
     Connections {
@@ -31,6 +32,7 @@ QQC2.Control {
             header.outputs = Mixer.mixOutputs(slug)
             header.fallbackOutput = Mixer.mixFallbackOutput(slug)
             header.hasFx = Mixer.fxEnabled("mix", slug)
+            header.iconName = Mixer.mixIcon(slug)
         }
     }
 
@@ -59,9 +61,14 @@ QQC2.Control {
             Kirigami.Icon {
                 anchors.centerIn: parent
                 width: parent.width * 0.6; height: width
-                source: Mixer.mixIcon(header.mix)
+                source: header.iconName
                 color: header.outputPresent || header.outputs.length === 0 ? Kirigami.Theme.textColor : Kirigami.Theme.neutralTextColor
             }
+            TapHandler { onTapped: applicationWindow().iconDialogOpen("mix", header.mix) }
+            QQC2.ToolTip.text: i18n("Change icon")
+            QQC2.ToolTip.visible: tileHover.hovered
+            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+            HoverHandler { id: tileHover; cursorShape: Qt.PointingHandCursor }
         }
         ColumnLayout {
             Layout.fillWidth: true
@@ -145,6 +152,17 @@ QQC2.Control {
     QQC2.Menu {
         id: mixCtxMenu
         QQC2.MenuItem { text: i18n("Rename…"); icon.name: "edit-rename"; onTriggered: applicationWindow().renameDialogOpen("mix", header.mix) }
+        QQC2.MenuItem { text: i18n("Icon…"); icon.name: "preferences-desktop-icons"; onTriggered: applicationWindow().iconDialogOpen("mix", header.mix) }
+        QQC2.MenuItem {   // UX-9
+            readonly property int idx: Mixer.mixSlugs.indexOf(header.mix)
+            text: i18n("Move left"); icon.name: "go-previous"; enabled: idx > 0
+            onTriggered: Mixer.moveMix(header.mix, idx - 1)
+        }
+        QQC2.MenuItem {
+            readonly property int idx: Mixer.mixSlugs.indexOf(header.mix)
+            text: i18n("Move right"); icon.name: "go-next"; enabled: idx >= 0 && idx < Mixer.mixSlugs.length - 1
+            onTriggered: Mixer.moveMix(header.mix, idx + 1)
+        }
         QQC2.MenuItem { text: i18n("Outputs…"); icon.name: "audio-headphones"; onTriggered: outMenu.popup() }
         QQC2.MenuItem { text: i18n("Effects…"); icon.name: "view-media-equalizer"; onTriggered: applicationWindow().fxPanelOpen("mix", header.mix) }
         QQC2.MenuSeparator {}

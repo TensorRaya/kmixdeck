@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "mixer.h"
+#include <climits>
+#include <algorithm>
 #include <QTimer>
 #include <QFile>
 #include <QRegularExpression>
@@ -69,13 +71,25 @@ void Mixer::reconcile() {
     if (!m_graph.node(QStringLiteral("kmixdeck.null"))) m_graph.createParkingSink();
     for (const auto &c : m_layout.channels) {
         if (!m_graph.node(Names::channelNode(c.slug))) m_graph.createNullSink(Names::channelNode(c.slug), c.name, true);
-        bool found = false; for (auto &ch : m_channels) if (ch.slug == c.slug) { found = true; ch.name = c.name; }
+        bool found = false; for (auto &ch : m_channels) if (ch.slug == c.slug) { found = true; if (ch.name != c.name || ch.icon != c.icon) { ch.name = c.name; ch.icon = c.icon; Q_EMIT channelChanged(c.slug); } }
         if (!found) m_channels.push_back({c.slug, c.name, c.icon, true});
     }
     for (const auto &m : m_layout.mixes) {
         if (!m_graph.node(Names::mixNode(m.slug))) m_graph.createNullSink(Names::mixNode(m.slug), QStringLiteral("Mix: ") + m.name, false);
-        bool found = false; for (auto &mx : m_mixes) if (mx.slug == m.slug) { found = true; mx.name = m.name; }
+        bool found = false; for (auto &mx : m_mixes) if (mx.slug == m.slug) { found = true; if (mx.name != m.name || mx.icon != m.icon) { mx.name = m.name; mx.icon = m.icon; Q_EMIT mixChanged(m.slug); } }
         if (!found) m_mixes.push_back({m.slug, m.name, m.icon, true});
+    }
+    // The registry replays nodes in id order; the layout owns the display order (UX-9). Reorder the runtime
+    // lists to match — entries the layout does not know (adopted nodes) keep their relative order at the end.
+    {
+        QStringList want; for (const auto &c : m_layout.channels) want << c.slug;
+        std::stable_sort(m_channels.begin(), m_channels.end(), [&](const Channel &a, const Channel &b) {
+            const int ia = want.indexOf(a.slug), ib = want.indexOf(b.slug);
+            return (ia < 0 ? INT_MAX : ia) < (ib < 0 ? INT_MAX : ib); });
+        want.clear(); for (const auto &m : m_layout.mixes) want << m.slug;
+        std::stable_sort(m_mixes.begin(), m_mixes.end(), [&](const Mix &a, const Mix &b) {
+            const int ia = want.indexOf(a.slug), ib = want.indexOf(b.slug);
+            return (ia < 0 ? INT_MAX : ia) < (ib < 0 ? INT_MAX : ib); });
     }
     // chains on top of the sinks (ADR 0008): cheap, idempotent, and the fragment renders the same shape
     for (const auto &c : m_layout.channels) if (!c.fx.effects.isEmpty() && c.fx.enabled) applyFx(c.slug);
@@ -295,6 +309,28 @@ void Mixer::setMixMuted(const QString &slug, bool muted) {
 }
 void Mixer::renameChannel(const QString &slug, const QString &name) { for (auto &c : m_channels) if (c.slug == slug) { c.name = name; Q_EMIT channelChanged(slug); } if (auto *l = m_layout.channel(slug)) { l->name = name; saveLayout(); } }
 void Mixer::renameMix(const QString &slug, const QString &name)     { for (auto &m : m_mixes) if (m.slug == slug) { m.name = name; Q_EMIT mixChanged(slug); } if (auto *l = m_layout.mix(slug)) { l->name = name; saveLayout(); } }
+void Mixer::setChannelIcon(const QString &slug, const QString &icon) { for (auto &c : m_channels) if (c.slug == slug) { c.icon = icon; Q_EMIT channelChanged(slug); } if (auto *l = m_layout.channel(slug)) { l->icon = icon; saveLayout(); } }
+void Mixer::setMixIcon(const QString &slug, const QString &icon)     { for (auto &m : m_mixes) if (m.slug == slug) { m.icon = icon; Q_EMIT mixChanged(slug); } if (auto *l = m_layout.mix(slug)) { l->icon = icon; saveLayout(); } }
+QString Mixer::channelIcon(const QString &slug) const { for (const auto &c : m_channels) if (c.slug == slug) return c.icon; return {}; }
+QString Mixer::mixIcon(const QString &slug) const     { for (const auto &m : m_mixes) if (m.slug == slug) return m.icon; return {}; }
+
+// UX-9: order lives in the layout (and in the runtime lists, which mirror it). Slugs, nodes and volumes are untouched —
+// a move is a pure presentation change, so nothing in the graph has to be rebuilt.
+template <class T> static bool moveBySlug(QVector<T> &v, const QString &slug, int index) {
+    int from = -1; for (int i = 0; i < v.size(); ++i) if (v[i].slug == slug) { from = i; break; }
+    if (from < 0) return false;
+    index = qBound(0, index, v.size() - 1);
+    if (index == from) return true;
+    v.move(from, index); return true;
+}
+bool Mixer::moveChannel(const QString &slug, int index) {
+    if (!moveBySlug(m_layout.channels, slug, index)) return false;
+    moveBySlug(m_channels, slug, index); saveLayout(); Q_EMIT layoutChanged(); return true;
+}
+bool Mixer::moveMix(const QString &slug, int index) {
+    if (!moveBySlug(m_layout.mixes, slug, index)) return false;
+    moveBySlug(m_mixes, slug, index); saveLayout(); Q_EMIT layoutChanged(); return true;
+}
 
 // ---- device edges (ADR 0007) -----------------------------------------------------------------------
 // Mix outputs are a list (MX-9); the bus-facing view stays a single node name for now: the first entry.

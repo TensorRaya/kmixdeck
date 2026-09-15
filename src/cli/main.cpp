@@ -153,9 +153,9 @@ int main(int argc, char *argv[]) {
         "Commands:\n"
         "  status                                     matrix overview\n"
         "  undo                                    restore the last removed channel or mix (CH-9)\n"
-        "  channel list|add <name>|remove <slug>|rename <slug> <name>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
+        "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
         "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
-        "  mix     list|add <name>|remove <slug>|rename <slug> <name>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
+        "  mix     list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|move <slug> <index|up|down|top|bottom>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
         "  mix     outputs <slug>                 list all hardware outputs of a mix (MX-9)\n"
         "  mix     output-add|output-remove <slug> <node.name>\n"
         "  mix     fallback <slug> <node.name|none>   played while every output is unplugged (DV-15)\n"
@@ -223,6 +223,17 @@ int main(int argc, char *argv[]) {
         if (!objs.contains(pathOf(a[2]))) return fail(NotFound, QStringLiteral("no %1 '%2'").arg(cmd, a[2]));
         if (sub == "remove") { QDBusMessage r = mixer.call(ch ? "RemoveChannel" : "RemoveMix", QVariant::fromValue(QDBusObjectPath(pathOf(a[2])))); return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok; }
         if (sub == "rename") { if (!need(4)) return Usage; return setProp(pathOf(a[2]), iface, "Name", a[3], &e) ? Ok : fail(Rejected, e); }
+        if (sub == "icon") { if (!need(4)) return Usage; return setProp(pathOf(a[2]), iface, "Icon", a[3] == "none" ? QString() : a[3], &e) ? Ok : fail(Rejected, e); }   // UX-8
+        if (sub == "move") {   // UX-9: channel|mix move <slug> <index|up|down|top|bottom>
+            if (!need(4)) return Usage;
+            const QStringList order = unwrap(o.mixer.value(ch ? "ChannelOrder" : "MixOrder")).toStringList();
+            const int cur = order.indexOf(a[2]); if (cur < 0) return fail(NotFound, QStringLiteral("no %1 '%2'").arg(ch ? "channel" : "mix", a[2]));
+            int idx; bool okNum;
+            if (a[3] == "up") idx = cur - 1; else if (a[3] == "down") idx = cur + 1; else if (a[3] == "top") idx = 0; else if (a[3] == "bottom") idx = order.size() - 1;
+            else { idx = a[3].toInt(&okNum); if (!okNum) return fail(Usage, "index|up|down|top|bottom"); }
+            const QDBusMessage r = mixer.call(ch ? "MoveChannel" : "MoveMix", QVariant::fromValue(QDBusObjectPath(pathOf(a[2]))), idx);
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
         if (sub == "trim" && ch) { if (!need(4)) return Usage; double l; if (!parseLevel(a[3], &l)) return fail(Usage, "bad level"); return setProp(pathOf(a[2]), iface, "Trim", l, &e) ? Ok : fail(Rejected, e); }
         if (sub == "mute" && ch) { bool b; if (!parseBool(a, 3, &b)) return fail(Usage, "on|off"); return setProp(pathOf(a[2]), iface, "Muted", b, &e) ? Ok : fail(Rejected, e); }
         if (sub == "input" && ch) {   // channel input <slug> <node.name|none>

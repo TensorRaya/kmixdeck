@@ -81,6 +81,13 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
             if (!pr.isEmpty()) m_fxPresets = QJsonDocument::fromJson(pr.toUtf8()).object().toVariantMap();
             Q_EMIT fxTypesReady();
         }
+        if (props.contains(QStringLiteral("ChannelOrder")) || props.contains(QStringLiteral("MixOrder"))) {   // UX-9
+            const QStringList co = props.value(QStringLiteral("ChannelOrder")).toStringList(), mo = props.value(QStringLiteral("MixOrder")).toStringList();
+            bool changed = false;
+            if (!co.isEmpty() && co != m_channelOrder) { m_channelOrder = co; changed = true; }
+            if (!mo.isEmpty() && mo != m_mixOrder) { m_mixOrder = mo; changed = true; }
+            if (changed) { if (layout) *layout = true; else Q_EMIT layoutChanged(); }
+        }
         if (props.contains(QStringLiteral("UndoDescription"))) {
             const QString u = props.value(QStringLiteral("UndoDescription")).toString();
             if (u != m_undoDescription) { m_undoDescription = u; Q_EMIT undoChanged(); }
@@ -159,9 +166,9 @@ void MixerClient::toggleChannelMute(const QString &slug) {
 }
 // Creation can be refused (duplicate, unusable name). The daemon answers with a D-Bus error; surface it
 // instead of leaving the user staring at a dialog that closed and a matrix that did not change.
-void MixerClient::callReportingErrors(const QString &method, const QVariant &arg) {
+void MixerClient::callReportingErrors(const QString &method, const QVariant &arg, const QVariant &arg2) {
     QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
-    auto *w = new QDBusPendingCallWatcher(arg.isValid() ? iface.asyncCall(method, arg) : iface.asyncCall(method), this);
+    auto *w = new QDBusPendingCallWatcher(arg2.isValid() ? iface.asyncCall(method, arg, arg2) : arg.isValid() ? iface.asyncCall(method, arg) : iface.asyncCall(method), this);
     connect(w, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w) {
         QDBusPendingReply<> r = *w;
         if (r.isError()) { qWarning() << "kmixdeck: request refused:" << r.error().message(); Q_EMIT errorOccurred(r.error().message()); }
@@ -249,6 +256,10 @@ void MixerClient::setMixVolume(const QString &slug, double cubic) {
 void MixerClient::toggleMixMute(const QString &slug) {
     QDBusInterface(BUS, QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("ToggleMute"));
 }
+void MixerClient::setChannelIcon(const QString &slug, const QString &icon) { setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Icon"), icon); }
+void MixerClient::setMixIcon(const QString &slug, const QString &icon) { setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Icon"), icon); }
+void MixerClient::moveChannel(const QString &slug, int index) { callReportingErrors(QStringLiteral("MoveChannel"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/channel/%2").arg(ROOT, slug))), index); }
+void MixerClient::moveMix(const QString &slug, int index) { callReportingErrors(QStringLiteral("MoveMix"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/mix/%2").arg(ROOT, slug))), index); }
 void MixerClient::renameChannel(const QString &slug, const QString &name) { setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Name"), name); }
 void MixerClient::renameMix(const QString &slug, const QString &name) { setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Name"), name); }
 void MixerClient::moveApp(const QString &appPath, const QString &channelSlug) {

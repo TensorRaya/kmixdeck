@@ -27,6 +27,18 @@
     <!-- FX-4: one-click chains as JSON {name: chain}; a preset is just a starting point, editable afterwards -->
     <property name="FxPresets" type="s" access="read"/>
     <method name="Undo"/>
+    <!-- UX-9: display order of channels and mixes (slugs). Moving is a presentation change: slugs, nodes and
+         volumes stay; the order is part of the layout and survives restarts. index is clamped to the list. -->
+    <property name="ChannelOrder" type="as" access="read"/>
+    <property name="MixOrder" type="as" access="read"/>
+    <method name="MoveChannel">
+      <arg name="path" type="o" direction="in"/>
+      <arg name="index" type="i" direction="in"/>
+    </method>
+    <method name="MoveMix">
+      <arg name="path" type="o" direction="in"/>
+      <arg name="index" type="i" direction="in"/>
+    </method>
     <!-- Create a channel (input group). Returns the new object path. Slug derived from name. -->
     <method name="AddChannel">
       <arg name="name" type="s" direction="in"/>

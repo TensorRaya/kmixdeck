@@ -5,6 +5,7 @@
   <interface name="org.kmixdeck1.Channel">
     <property name="Slug" type="s" access="read"/>
     <property name="Name" type="s" access="readwrite"/>
+    <!-- UX-8: freedesktop icon name (theme lookup) or an absolute file path; persisted in the layout. "" = frontend default -->
     <property name="Icon" type="s" access="readwrite"/>
     <!-- channel-wide trim before all mixes, linear 0..1 (CH-7); NOT the per-mix fader -->
     <property name="Trim" type="d" access="readwrite"/>

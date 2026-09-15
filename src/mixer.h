@@ -81,6 +81,12 @@ public:
     Q_INVOKABLE void   setMixMuted(const QString &slug, bool muted);
     Q_INVOKABLE void   renameChannel(const QString &slug, const QString &name);
     Q_INVOKABLE void   renameMix(const QString &slug, const QString &name);
+    Q_INVOKABLE void   setChannelIcon(const QString &slug, const QString &icon);   // UX-8: persisted in the layout
+    Q_INVOKABLE void   setMixIcon(const QString &slug, const QString &icon);
+    Q_INVOKABLE bool   moveChannel(const QString &slug, int index);               // UX-9: reorder, index clamped
+    Q_INVOKABLE bool   moveMix(const QString &slug, int index);
+    QString channelIcon(const QString &slug) const;
+    QString mixIcon(const QString &slug) const;
     Q_INVOKABLE QString mixCaptureSource(const QString &slug) const;
     // ---- effects per channel/mix (ADR 0008) --------------------------------------------------------
     /// The chain of a channel or mix as JSON ({enabled, chain:[{type,params,…}]}). {} when none.
