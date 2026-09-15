@@ -62,6 +62,10 @@ public:
     Q_INVOKABLE bool   cellPresent(const QString &ch, const QString &mix) const;
     Q_INVOKABLE void   setCellVolume(const QString &ch, const QString &mix, double cubic);
     Q_INVOKABLE void   setCellMuted (const QString &ch, const QString &mix, bool muted);
+    /// MX-7: (ch, mix) follows (ch, follows): volume+mute mirrored; "" = unlinked. Any direct write to the
+    /// follower breaks the link (Wave Link semantics: "can be broken at any time").
+    Q_INVOKABLE QString cellFollows(const QString &ch, const QString &mix) const;
+    bool setCellFollows(const QString &ch, const QString &mix, const QString &follows);
 
     /// Channel-wide trim (CH-7) = channelVolumes on the channel null sink → affects every mix.
     Q_INVOKABLE double channelTrim(const QString &slug) const;
@@ -177,6 +181,8 @@ private:
     void ensureEdgeLoopbacks();
     void ensureEdgeLoopbackForInput(const QString &slug);
     void notifyPresence();
+    void propagateLinks(const QString &ch, const QString &sourceMix);   // source cell changed → push to followers
+    void breakLink(const QString &ch, const QString &mix);
     void autoRouteNewApp(const App &a);
     static QString appKey(const App &a) { return a.name.isEmpty() ? a.nodeName : a.name; }
     void destroyOurNodes(const std::function<bool(const QString &)> &match);

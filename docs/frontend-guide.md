@@ -62,6 +62,13 @@ decoration. The introspection XML in [`interfaces/`](../interfaces/) is the auth
 signal per tick (~25 Hz), keyed `channel/<slug>` and `mix/<slug>`, linear 0..1. The service only runs
 the meter graph while somebody is subscribed — call `Unsubscribe()` when your window hides.
 
+## Linked cells (MX-7)
+
+`Cell.Follows` (`o`, read/write) — object path of another **mix**; the cell then mirrors volume and mute of
+the same channel's cell in that mix ("Stream follows Monitor for Game"). `/` = independent. Semantics are
+Wave Link's: **writing `Volume` or `Muted` on a following cell breaks the link** — the daemon does that, you
+only have to re-read `Follows` (it arrives in the same `PropertiesChanged`). Self and A↔B loops are refused.
+
 ## Several outputs per mix (MX-9) and the fallback (DV-15)
 
 `Mix.Outputs` (`as`) lists every hardware sink the mix plays to; `Mix.AddOutput(s)` / `Mix.RemoveOutput(s)`

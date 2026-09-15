@@ -13,6 +13,7 @@ Kirigami.AbstractCard {
     readonly property bool present: Mixer.cellPresent(channel, mix)
     property double value: Mixer.cellVolume(channel, mix)     // cubic 0..1
     property bool muted: Mixer.cellMuted(channel, mix)
+    property string follows: Mixer.cellFollows(channel, mix)      // MX-7: "" = independent
 
     Connections {
         target: Mixer
@@ -20,6 +21,7 @@ Kirigami.AbstractCard {
             if (ch === cell.channel && mx === cell.mix) {
                 if (!slider.pressed) cell.value = Mixer.cellVolume(ch, mx)
                 cell.muted = Mixer.cellMuted(ch, mx)
+                cell.follows = Mixer.cellFollows(ch, mx)
             }
         }
     }
@@ -65,16 +67,49 @@ Kirigami.AbstractCard {
             font: Kirigami.Theme.smallFont
         }
 
-        QQC2.ToolButton {
+        RowLayout {
             Layout.alignment: Qt.AlignHCenter
-            icon.name: cell.muted ? "audio-volume-muted" : "audio-volume-high"
-            checkable: true
-            checked: cell.muted
-            display: QQC2.AbstractButton.IconOnly
-            text: cell.muted ? i18n("Unmute") : i18n("Mute")
-            onToggled: Mixer.setCellMuted(cell.channel, cell.mix, checked)
-            QQC2.ToolTip.text: text
-            QQC2.ToolTip.visible: hovered
+            spacing: 0
+            QQC2.ToolButton {
+                icon.name: cell.muted ? "audio-volume-muted" : "audio-volume-high"
+                checkable: true
+                checked: cell.muted
+                display: QQC2.AbstractButton.IconOnly
+                text: cell.muted ? i18n("Unmute") : i18n("Mute")
+                onToggled: Mixer.setCellMuted(cell.channel, cell.mix, checked)
+                QQC2.ToolTip.text: text
+                QQC2.ToolTip.visible: hovered
+            }
+            // MX-7: follow another mix's cell for this channel ("Stream follows Monitor"). Highlighted while linked;
+            // any move of this fader breaks the link, exactly like Wave Link.
+            QQC2.ToolButton {
+                id: linkButton
+                icon.name: cell.follows.length > 0 ? "link" : "remove-link"
+                checkable: true
+                checked: cell.follows.length > 0
+                display: QQC2.AbstractButton.IconOnly
+                visible: Mixer.mixSlugs.length > 1
+                text: cell.follows.length > 0 ? i18n("Follows %1 — click to unlink", Mixer.mixName(cell.follows)) : i18n("Follow another mix…")
+                onToggled: {
+                    checked = Qt.binding(() => cell.follows.length > 0)
+                    if (cell.follows.length > 0) Mixer.setCellFollows(cell.channel, cell.mix, "")
+                    else if (Mixer.mixSlugs.length === 2) Mixer.setCellFollows(cell.channel, cell.mix, Mixer.mixSlugs.find(m => m !== cell.mix))
+                    else linkMenu.popup()
+                }
+                QQC2.ToolTip.text: text
+                QQC2.ToolTip.visible: hovered
+                QQC2.Menu {
+                    id: linkMenu
+                    Repeater {
+                        model: Mixer.mixSlugs.filter(m => m !== cell.mix)
+                        delegate: QQC2.MenuItem {
+                            required property string modelData
+                            text: i18n("Follow %1", Mixer.mixName(modelData))
+                            onTriggered: Mixer.setCellFollows(cell.channel, cell.mix, modelData)
+                        }
+                    }
+                }
+            }
         }
     }
 }

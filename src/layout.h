@@ -32,7 +32,11 @@ struct LayoutMix     {
     DeviceRef fallbackOutput;     // DV-15: used while outputs[0] is absent; empty node = none
 };
 
+/// MX-7: cell (channel, mix) mirrors volume+mute of cell (channel, follows). Broken by touching the follower.
+struct LayoutLink    { QString channel, mix, follows; };
+
 struct Layout {
+    QVector<LayoutLink> links;
     QVector<LayoutChannel> channels;
     QVector<LayoutMix> mixes;
     QVector<LayoutInput> inputs;

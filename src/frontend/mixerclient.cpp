@@ -210,6 +210,12 @@ void MixerClient::setDefaultChannel(const QString &slug) {
     const QString path = slug.isEmpty() ? QStringLiteral("/") : QStringLiteral("%1/channel/%2").arg(ROOT, slug);
     setProperty(ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QStringLiteral("DefaultChannel"), QVariant::fromValue(QDBusObjectPath(path)));
 }
+void MixerClient::setCellFollows(const QString &ch, const QString &mix, const QString &followsSlug) {
+    const QString path = followsSlug.isEmpty() ? QStringLiteral("/") : QStringLiteral("%1/mix/%2").arg(ROOT, followsSlug);
+    m_cells[cellKey(ch, mix)][QStringLiteral("Follows")] = path;
+    setProperty(QStringLiteral("%1/cell/%2/%3").arg(ROOT, ch, mix), QStringLiteral("org.kmixdeck1.Cell"), QStringLiteral("Follows"), QVariant::fromValue(QDBusObjectPath(path)));
+    Q_EMIT cellChanged(ch, mix);
+}
 void MixerClient::setMixFallbackOutput(const QString &slug, const QString &node) {
     m_mixes[slug][QStringLiteral("FallbackOutput")] = node;
     setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("FallbackOutput"), node);

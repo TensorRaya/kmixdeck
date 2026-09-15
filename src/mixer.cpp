@@ -113,16 +113,50 @@ bool Mixer::cellMuted(const QString &ch, const QString &mix) const {
 }
 void Mixer::setCellVolume(const QString &ch, const QString &mix, double cubic) {
     auto it = m_cells.find(Names::cellNode(ch, mix)); if (it == m_cells.end()) return;
+    breakLink(ch, mix);                       // MX-7: a direct write to a follower unlinks it
     const float lin = cubicToLinear(std::clamp(cubic, 0.0, 1.0));
     it->volume = lin;                         // optimistic; PipeWire echoes via nodeChanged
     m_graph.setVolume(it->id, lin, it->mute);
     Q_EMIT cellChanged(ch, mix);
+    propagateLinks(ch, mix);
+}
+QString Mixer::cellFollows(const QString &ch, const QString &mix) const {
+    for (const auto &l : m_layout.links) if (l.channel == ch && l.mix == mix) return l.follows;
+    return {};
+}
+bool Mixer::setCellFollows(const QString &ch, const QString &mix, const QString &follows) {
+    if (follows == mix) return false;
+    if (!follows.isEmpty() && (!mixSlugs().contains(follows) || !channelSlugs().contains(ch) || !mixSlugs().contains(mix))) return false;
+    if (!follows.isEmpty() && cellFollows(ch, follows) == mix) return false;   // no A↔B loops
+    m_layout.links.removeIf([&](const LayoutLink &l) { return l.channel == ch && l.mix == mix; });
+    if (!follows.isEmpty()) m_layout.links.push_back({ch, mix, follows});
+    saveLayout();
+    Q_EMIT cellChanged(ch, mix);
+    if (!follows.isEmpty()) propagateLinks(ch, follows);   // snap to the source right away
+    return true;
+}
+void Mixer::breakLink(const QString &ch, const QString &mix) {
+    const int n = m_layout.links.removeIf([&](const LayoutLink &l) { return l.channel == ch && l.mix == mix; });
+    if (n) { saveLayout(); qInfo() << "cell" << ch << mix << "unlinked (touched directly)"; }
+}
+void Mixer::propagateLinks(const QString &ch, const QString &sourceMix) {
+    const auto src = m_cells.constFind(Names::cellNode(ch, sourceMix)); if (src == m_cells.constEnd()) return;
+    for (const auto &l : m_layout.links) {
+        if (l.channel != ch || l.follows != sourceMix) continue;
+        auto it = m_cells.find(Names::cellNode(ch, l.mix)); if (it == m_cells.end()) continue;
+        if (it->volume == src->volume && it->mute == src->mute) continue;
+        it->volume = src->volume; it->mute = src->mute;
+        m_graph.setVolume(it->id, it->volume, it->mute);
+        Q_EMIT cellChanged(ch, l.mix);
+    }
 }
 void Mixer::setCellMuted(const QString &ch, const QString &mix, bool muted) {
     auto it = m_cells.find(Names::cellNode(ch, mix)); if (it == m_cells.end()) return;
+    breakLink(ch, mix);
     it->mute = muted;
     m_graph.setVolume(it->id, it->volume, muted);
     Q_EMIT cellChanged(ch, mix);
+    propagateLinks(ch, mix);
 }
 
 double Mixer::channelTrim(const QString &slug) const { auto it = m_sinks.constFind(Names::channelNode(slug)); return it == m_sinks.constEnd() ? 1.0 : it->volume; }
@@ -435,6 +469,7 @@ void Mixer::removeChannel(const QString &slug) {
     m_layout.channels.removeIf([&](const LayoutChannel &c) { return c.slug == slug; });
     m_layout.inputs.removeIf([&](const LayoutInput &i) { return i.channel == slug || i.slug == slug; });   // no orphan inputs
     if (m_layout.defaultChannel == slug) { m_layout.defaultChannel.clear(); Q_EMIT defaultChannelChanged(); }
+    m_layout.links.removeIf([&](const LayoutLink &l) { return l.channel == slug; });
     saveLayout();
     destroyOurNodes([&](const QString &n) {
         return n.startsWith(Names::cellNode(slug, QString())) || n == Names::channelNode(slug)
@@ -445,6 +480,7 @@ void Mixer::removeChannel(const QString &slug) {
 }
 void Mixer::removeMix(const QString &slug) {
     m_layout.mixes.removeIf([&](const LayoutMix &m) { return m.slug == slug; });
+    m_layout.links.removeIf([&](const LayoutLink &l) { return l.mix == slug || l.follows == slug; });
     saveLayout();
     const QString out = QStringLiteral("kmixdeck.out.") + slug, src = EdgeNames::sourceNode(slug);
     destroyOurNodes([&](const QString &n) {
@@ -484,7 +520,7 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         const bool isNew = !m_cells.contains(n.name);
         m_cells[n.name] = n;
         const QStringList parts = n.name.mid(lkP.size()).split(QLatin1Char('.'));
-        if (parts.size() == 2) Q_EMIT cellChanged(parts[0], parts[1]);
+        if (parts.size() == 2) { Q_EMIT cellChanged(parts[0], parts[1]); if (!isNew) propagateLinks(parts[0], parts[1]); }
         if (isNew) layout = true;
     }
     else if (n.name.startsWith(QLatin1String("kmixdeck.in.")) || n.name.startsWith(QLatin1String("kmixdeck.out.")) || n.name.startsWith(QLatin1String("kmixdeck.source."))) {

@@ -49,6 +49,7 @@ class CellObject : public ExportedObject {
     Q_PROPERTY(QDBusObjectPath Mix READ mix CONSTANT)
     Q_PROPERTY(double Volume READ volume WRITE setVolume)
     Q_PROPERTY(bool Muted READ muted WRITE setMuted)
+    Q_PROPERTY(QDBusObjectPath Follows READ follows WRITE setFollows)   // MX-7: mix path this cell mirrors; "/" = none
 public:
     CellObject(Mixer *mixer, const QString &ch, const QString &mix, QObject *parent);
     QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.Cell"); }
@@ -56,6 +57,7 @@ public:
     QDBusObjectPath channel() const; QDBusObjectPath mix() const;
     double volume() const; void setVolume(double linear);
     bool muted() const; void setMuted(bool m);
+    QDBusObjectPath follows() const; void setFollows(const QDBusObjectPath &p);
     void notifyChanged();   // called by the daemon when Mixer says the cell changed
 public Q_SLOTS:
     void SetVolumeDb(double db);

@@ -269,3 +269,37 @@ def test_mx9_mix_plays_to_several_outputs_and_dv15_fallback_takes_over(stack, to
     assert stack.cli("mix", "outputs", "monitor", json_out=True) == []
     _wait_targets(stack, "monitor", {"kmixdeck.null"})
     tone2.kill(); tone2.wait()
+
+
+def test_mx7_cell_link_stream_follows_monitor_and_breaks_when_touched(stack, tone):
+    """MX-7: game/stream follows game/monitor — volume AND mute mirror, measured; touching stream unlinks."""
+    def follows(): return stack.cli("cell", "get", "game", "stream", json_out=True)["Follows"]
+    stack.cli("cell", "link", "game", "stream", "monitor")
+    assert follows() == "/org/kmixdeck1/mix/monitor"
+    stack.cli("cell", "set", "game", "monitor", "-20dB"); settle()
+    s, m = stack.pw.level_at("kmixdeck.mix.stream"), stack.pw.level_at("kmixdeck.mix.monitor")
+    assert abs(s - m) < 1.0 and m < -25, f"stream must mirror monitor's −20 dB: stream={s:.1f} monitor={m:.1f}"
+    assert stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"] == pytest.approx(0.1, abs=0.003)
+    stack.cli("cell", "mute", "game", "monitor", "on"); settle()
+    assert stack.pw.level_at("kmixdeck.mix.stream") < SILENT, "mute mirrors too"
+    stack.cli("cell", "mute", "game", "monitor", "off"); settle()
+    assert abs(stack.pw.level_at("kmixdeck.mix.stream") - s) < 1.0, "unmute restores the mirrored −20 dB, not unity"
+    # the link survives a daemon restart (it is layout, not graph state)
+    stack.restart_daemon()
+    assert follows() == "/org/kmixdeck1/mix/monitor"
+    stack.cli("cell", "set", "game", "monitor", "0dB"); settle()
+    assert stack.pw.level_at("kmixdeck.mix.stream") > HOT
+    # touching the follower breaks the link — and monitor is untouched
+    stack.cli("cell", "set", "game", "stream", "-40dB"); settle()
+    assert follows() == "/"
+    assert stack.pw.level_at("kmixdeck.mix.monitor") > HOT and stack.pw.level_at("kmixdeck.mix.stream") < -45
+    stack.cli("cell", "set", "game", "monitor", "-6dB"); settle()
+    assert stack.pw.level_at("kmixdeck.mix.stream") < -45, "unlinked: stream no longer follows"
+    # guards
+    assert stack.cli("cell", "link", "game", "stream", "stream", check=False).returncode == 1
+    stack.cli("cell", "link", "game", "stream", "monitor")
+    stack.busctl("set-property", "org.kmixdeck1", "/org/kmixdeck1/cell/game/monitor", "org.kmixdeck1.Cell", "Follows", "o", "/org/kmixdeck1/mix/stream")
+    assert stack.cli("cell", "get", "game", "monitor", json_out=True)["Follows"] == "/", "A↔B loop must be refused"
+    stack.cli("cell", "link", "game", "stream", "none")
+    assert follows() == "/"
+    stack.cli("cell", "set", "game", "monitor", "1.0")

@@ -26,6 +26,15 @@ CellObject::CellObject(Mixer *mixer, const QString &ch, const QString &mix, QObj
     : ExportedObject(Service::cellPath(ch, mix), parent), m_mixer(mixer), m_ch(ch), m_mix(mix) {}
 QDBusObjectPath CellObject::channel() const { return QDBusObjectPath(Service::channelPath(m_ch)); }
 QDBusObjectPath CellObject::mix() const { return QDBusObjectPath(Service::mixPath(m_mix)); }
+QDBusObjectPath CellObject::follows() const { const QString f = m_mixer->cellFollows(m_ch, m_mix); return QDBusObjectPath(f.isEmpty() ? QStringLiteral("/") : Service::mixPath(f)); }
+void CellObject::setFollows(const QDBusObjectPath &p) {
+    const QString prefix = Service::mixPath(QString());
+    QString slug;
+    if (p.path() == QLatin1String("/")) slug.clear();
+    else if (p.path().startsWith(prefix)) slug = p.path().mid(prefix.size());
+    else { rejectProperty(QStringLiteral("Follows"), QStringLiteral("not a mix path")); return; }
+    if (!m_mixer->setCellFollows(m_ch, m_mix, slug)) rejectProperty(QStringLiteral("Follows"), QStringLiteral("unknown mix, self, or would form a loop"));
+}
 double CellObject::volume() const { return Mixer::cubicToLinear(m_mixer->cellVolume(m_ch, m_mix)); }
 bool CellObject::muted() const { return m_mixer->cellMuted(m_ch, m_mix); }
 void CellObject::setVolume(double linear) {
@@ -40,9 +49,9 @@ void CellObject::SetVolumeDb(double db) {
 }
 QVariantMap CellObject::properties() const {
     return {{QStringLiteral("Channel"), QVariant::fromValue(channel())}, {QStringLiteral("Mix"), QVariant::fromValue(mix())},
-            {QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()}};
+            {QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("Follows"), QVariant::fromValue(follows())}};
 }
-void CellObject::notifyChanged() { emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()}}); }
+void CellObject::notifyChanged() { emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("Follows"), QVariant::fromValue(follows())}}); }
 
 // ---- Channel
 ChannelObject::ChannelObject(Mixer *mixer, const QString &slug, QObject *parent) : ExportedObject(Service::channelPath(slug), parent), m_mixer(mixer), m_slug(slug) {}

@@ -51,6 +51,12 @@ public:
     Q_INVOKABLE void   setCellVolume(const QString &ch, const QString &mix, double cubic);
     Q_INVOKABLE void   setCellMuted(const QString &ch, const QString &mix, bool muted);
     Q_INVOKABLE void   toggleCellMute(const QString &ch, const QString &mix);
+    /// MX-7: slug of the mix this cell follows, "" when independent
+    Q_INVOKABLE QString cellFollows(const QString &ch, const QString &mix) const {
+        const QString p = m_cells.value(cellKey(ch, mix)).value(QStringLiteral("Follows")).toString();
+        return p == QLatin1String("/") || p.isEmpty() ? QString() : p.section(QLatin1Char('/'), -1);
+    }
+    Q_INVOKABLE void   setCellFollows(const QString &ch, const QString &mix, const QString &followsSlug);
     Q_INVOKABLE void   toggleChannelMute(const QString &slug);
     Q_INVOKABLE bool   channelMuted(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Muted")).toBool(); }
     Q_INVOKABLE void   addChannel(const QString &name);

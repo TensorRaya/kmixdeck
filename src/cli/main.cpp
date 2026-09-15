@@ -161,6 +161,7 @@ int main(int argc, char *argv[]) {
         "  devices [in]                               hardware outputs a mix can play to (in: sources a channel can be fed by)\n"
         "  levels                                     live peak meters (Ctrl-C to stop)\n"
         "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
+        "  cell    link <ch> <mix> <other-mix|none>   MX-7: this cell follows the other mix's cell (volume+mute)\n"
         "  app     list|move <id|name> <channel>          running application streams\n"
         "  watch                                      print property changes as they happen\n\n"
         "Levels: linear 0..1, or NdB (e.g. -12dB), or N% (UI/cubic scale). Exit codes: 0 ok, 1 usage, 2 no service, 3 not found, 4 rejected."));
@@ -251,6 +252,13 @@ int main(int argc, char *argv[]) {
         if (sub == "get") { const auto c = o.cells[path]; if (g_json) out << QJsonDocument(QJsonObject::fromVariantMap(c)).toJson(); else out << (c.value("Muted").toBool() ? "muted " : "") << db(c.value("Volume").toDouble()).trimmed() << " dB  (linear " << c.value("Volume").toDouble() << ")\n"; return Ok; }
         if (sub == "set") { if (!need(5)) return Usage; double l; if (!parseLevel(a[4], &l)) return fail(Usage, "bad level '" + a[4] + "'"); return setProp(path, "org.kmixdeck1.Cell", "Volume", l, &e) ? Ok : fail(Rejected, e); }
         if (sub == "mute") { bool b; if (!parseBool(a, 4, &b)) return fail(Usage, "on|off"); return setProp(path, "org.kmixdeck1.Cell", "Muted", b, &e) ? Ok : fail(Rejected, e); }
+        if (sub == "link") {
+            if (!need(5)) return Usage;
+            if (a[4] != "none" && !o.mixes.contains(QStringLiteral("%1/mix/%2").arg(ROOT, a[4]))) return fail(NotFound, QStringLiteral("no mix '%1'").arg(a[4]));
+            if (a[4] == a[3]) return fail(Usage, "a cell cannot follow its own mix");
+            const QDBusObjectPath p(a[4] == "none" ? QStringLiteral("/") : QStringLiteral("%1/mix/%2").arg(ROOT, a[4]));
+            return setProp(path, "org.kmixdeck1.Cell", "Follows", QVariant::fromValue(p), &e) ? Ok : fail(Rejected, e);
+        }
         return fail(Usage, "unknown subcommand '" + sub + "'");
     }
     if (cmd == "app") {
