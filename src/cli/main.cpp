@@ -169,6 +169,8 @@ int main(int argc, char *argv[]) {
         "  fx      copy <channel|mix> <from> <kind> <to>          copy the chain to another object\n"
         "  fx      control <channel|mix> <slug> <node:Control> <value>   live tweak, no reload\n"
         "  app     list|move <id|name> <channel>          running application streams\n"
+        "  app     assign <id|name> <ch>[,<ch>...]   CH-12: several channels at once (first = primary)\n"
+        "  audition <channel|mix> <slug>|none    UX-12: solo one entity on the main output; none restores\n"
         "  watch                                      print property changes as they happen\n\n"
         "Levels: linear 0..1, or NdB (e.g. -12dB), or N% (UI/cubic scale). Exit codes: 0 ok, 1 usage, 2 no service, 3 not found, 4 rejected."));
     p.addHelpOption(); p.addVersionOption();
@@ -340,24 +342,58 @@ int main(int argc, char *argv[]) {
             if (g_json) { QJsonArray arr; for (auto it = o.apps.cbegin(); it != o.apps.cend(); ++it) { auto v = it.value(); v["Path"] = it.key(); arr.append(QJsonObject::fromVariantMap(v)); } out << QJsonDocument(arr).toJson(); }
             else for (auto it = o.apps.cbegin(); it != o.apps.cend(); ++it) {
                 const QString chPath = it.value().value("Channel").toString();
-                out << QStringLiteral("%1  %2  %3  -> %4\n").arg(it.value().value("NodeId").toString(), 5).arg(it.value().value("Name").toString().left(24), -24)
-                       .arg(it.value().value("MediaName").toString().left(20), -20).arg(chPath == "/" ? QStringLiteral("(not on a channel)") : chPath.section('/', -1));
+                const QStringList all = it.value().value("Channels").toStringList();
+                out << QStringLiteral("%1  %2 %3 %4  -> %5\n")
+                       .arg(it.value().value("NodeId").toString(), 5)
+                       .arg(it.value().value("Running").toBool() ? QStringLiteral("*") : QStringLiteral(" "), -1)
+                       .arg(it.value().value("Name").toString().left(24), -24)
+                       .arg(it.value().value("MediaName").toString().left(20), -20)
+                       .arg(all.isEmpty() ? (chPath == "/" ? QStringLiteral("(not on a channel)") : chPath.section('/', -1)) : all.join(QStringLiteral(",")));
             }
             return Ok;
         }
-        if (sub == "move") {
-            if (!need(4)) return Usage;
+        auto findApp = [&](const QString &needle) {
             QString appPath;
             for (auto it = o.apps.cbegin(); it != o.apps.cend(); ++it)
-                if (it.value().value("NodeId").toString() == a[2] || it.value().value("Name").toString().compare(a[2], Qt::CaseInsensitive) == 0) appPath = it.key();
+                if (it.value().value("NodeId").toString() == needle || it.value().value("Name").toString().compare(needle, Qt::CaseInsensitive) == 0) appPath = it.key();
+            return appPath;
+        };
+        if (sub == "move" || sub == "assign") {   // app assign <id|name> <ch>[,<ch>…] — CH-12
+            if (!need(4)) return Usage;
+            const QString appPath = findApp(a[2]);
             if (appPath.isEmpty()) return fail(NotFound, "no app '" + a[2] + "'");
-            const QString chPath = QStringLiteral("%1/channel/%2").arg(ROOT, a[3]);
-            if (!o.channels.contains(chPath)) return fail(NotFound, "no channel '" + a[3] + "'");
             QDBusInterface appIf(BUS, appPath, "org.kmixdeck1.App", QDBusConnection::sessionBus());
-            QDBusMessage r = appIf.call("MoveTo", QVariant::fromValue(QDBusObjectPath(chPath)));
+            if (sub == "move") {
+                const QString chPath = QStringLiteral("%1/channel/%2").arg(ROOT, a[3]);
+                if (!o.channels.contains(chPath)) return fail(NotFound, "no channel '" + a[3] + "'");
+                QDBusMessage r = appIf.call("MoveTo", QVariant::fromValue(QDBusObjectPath(chPath)));
+                return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+            }
+            QStringList names = a[3].split(QLatin1Char(','), Qt::SkipEmptyParts);
+            if (names.isEmpty()) names << a[3];
+            QStringList paths;
+            for (const QString &n : names) {
+                const QString chPath = QStringLiteral("%1/channel/%2").arg(ROOT, n);
+                if (!o.channels.contains(chPath)) return fail(NotFound, "no channel '" + n + "'");
+                paths << chPath;
+            }
+            const QDBusMessage r = appIf.call("Assign", paths, false);
             return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
         }
-        return fail(Usage, "app list | app move <id|name> <channel>");
+        return fail(Usage, "app list | app move <id|name> <channel> | app assign <id|name> <ch>[,<ch>…]");
+    }
+    if (cmd == "audition") {   // UX-12: hold one entity on the main output; `none` restores
+        if (!need(2)) return Usage;
+        const QString target = (a[1] == QLatin1String("none"))
+            ? QStringLiteral("/")
+            : QStringLiteral("%1/%2/%3").arg(ROOT, a[1], a.value(2));
+        if (a[1] != QLatin1String("none")) {
+            const bool ok = (a[1] == QLatin1String("channel") && o.channels.contains(target))
+                         || (a[1] == QLatin1String("mix") && o.mixes.contains(target));
+            if (!ok) return fail(NotFound, "expected existing 'channel <slug>' or 'mix <slug>'");
+        }
+        const QDBusMessage r = mixer.call("Audition", QVariant::fromValue(QDBusObjectPath(target)));
+        return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
     }
     if (cmd == "levels") {   // live peaks, 25 Hz; Ctrl-C to stop. --json: one object per tick.
         QDBusInterface lv(BUS, ROOT, "org.kmixdeck1.Levels", QDBusConnection::sessionBus());

@@ -29,8 +29,9 @@ struct Names {
 };
 
 struct Channel { QString slug; QString name; QString icon; bool virt = true; };
-/// A running application audio stream (Stream/Output/Audio that is not one of ours).
-struct App { uint32_t id = 0; QString name, binary, mediaName, mediaRole, nodeName; QString channelSlug; /* empty = not on a kmixdeck channel */ };
+/// A running application audio stream (Stream/Output/Audio that is not one of ours). CH-12: channels holds every
+/// assigned channel; the first is the primary target (what WirePlumber restores), the rest are relayed to.
+struct App { uint32_t id = 0; QString name, binary, mediaName, mediaRole, nodeName, iconName; QStringList channels; bool running = false; };
 struct Mix     { QString slug; QString name; QString icon; bool capture = true; };
 /// A device the daemon can see right now (ADR 0007): node.name → face + channel layout.
 struct Device  { QString node, description; QStringList positions; bool isSource = false; };
@@ -155,9 +156,18 @@ public:
     /// Route an app stream to a channel. WirePlumber remembers it (restore-target) keyed by the stream's
     /// media.role → application.id → application.name → media.name → node.name (state-stream.lua formKey).
     Q_INVOKABLE bool moveApp(uint32_t id, const QString &channelSlug);
+    /// CH-12: assign an app to several channels at once — first = primary target, the rest get relay loopbacks.
+    /// Empty list = un-route everything. Cumulative=true adds the channel keeping the rest (UX-11 drop on a row).
+    Q_INVOKABLE bool assignApp(uint32_t id, const QStringList &channelSlugs, bool cumulative = false);
     /// CH-5: default channel for applications kmixdeck has never seen. Empty string = off.
     QString defaultChannel() const { return m_layout.defaultChannel; }
     bool    setDefaultChannel(const QString &slug);
+
+    /// UX-12 solo audition: while a channel or mix is auditioned, exactly that entity plays to the main output;
+    /// everything else returns to its previous routing on stopAudition(). Only one entity at a time.
+    Q_INVOKABLE void startAudition(const QString &kind, const QString &slug);   // kind: "channel" | "mix"
+    Q_INVOKABLE void stopAudition();
+    Q_INVOKABLE QString auditionTarget() const;   // "" when nothing is auditioned
 
     /// Layout edits (MX-1: any number of mixes; CH-2: any number of channels).
     /// Returns the new slug, or empty with *error set (empty slug, duplicate). Never invents a name.
@@ -209,6 +219,8 @@ private:
     void applyFallbacks();
     void ensureEdgeLoopbacks();
     void ensureEdgeLoopbackForInput(const QString &slug);
+    void ensureAppRelays(const LayoutApp &a);            // CH-12: relay loopbacks for extra channels
+    void removeAppRelays(const LayoutApp &a);
     void notifyPresence();
     void snapshotForUndo(const QString &kind, const QString &slug);
     void restorePendingCellStates();
@@ -223,6 +235,11 @@ private:
     QList<Device> devicesFor(const QString &mediaClass) const;
     QHash<uint32_t, App> m_apps;
     QSet<uint32_t> m_pendingAutoRoute;   // CH-5: apps waiting for WirePlumber's first link before we decide
+    struct Audition {                                            // UX-12 snapshot: slug → (volume/trim, mute)
+        QString kind, slug;
+        QHash<QString, QPair<float, bool>> channels, mixes;
+    };
+    Audition m_audition;
     Layout m_layout;
     QString m_layoutPath, m_pwConfPath;
     bool m_reconciled = false;

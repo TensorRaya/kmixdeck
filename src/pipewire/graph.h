@@ -30,6 +30,7 @@ struct NodeInfo {
     QString appName;       // application.name
     QString appBinary;     // application.process.binary
     QString mediaRole;     // media.role (WirePlumber keys stream state by this FIRST — see ADR 0006)
+    QString iconName;      // application.icon-name — XDG icon of the app, for UX-10 rows
     uint32_t serial = 0;   // object.serial (what target.object metadata takes)
     float volume = 1.0f;   // channelVolumes[0], linear
     bool mute = false;

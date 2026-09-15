@@ -565,11 +565,52 @@ QList<Device> Mixer::devicesFor(const QString &mediaClass) const {
 
 QList<uint32_t> Mixer::appIds() const { auto l = m_apps.keys(); std::sort(l.begin(), l.end()); return l; }
 std::optional<App> Mixer::app(uint32_t id) const { auto it = m_apps.constFind(id); return it == m_apps.constEnd() ? std::nullopt : std::optional<App>(*it); }
-bool Mixer::moveApp(uint32_t id, const QString &channelSlug) {
-    if (!m_apps.contains(id) || !channelSlugs().contains(channelSlug)) return false;
-    const QString key = appKey(m_apps[id]);
-    if (!key.isEmpty() && !m_layout.knownApps.contains(key)) { m_layout.knownApps << key; saveLayout(); }
-    return m_graph.moveStream(id, m_layout.channelEntry(channelSlug));
+bool Mixer::moveApp(uint32_t id, const QString &channelSlug) { return assignApp(id, {channelSlug}, false); }
+// CH-12: channels[0] is the primary target (WirePlumber restore-target makes it survive restarts, CH-4); every
+// further channel gets a relay loopback (capture ← primary sink, playback → its own channel). The assignment is
+// keyed by appKey — application.name, else node.name — so it survives node re-creation (CH-6) and lives in the
+// layout JSON, not in PipeWire state. Cumulative keeps the old channels and appends (UX-11: drop onto rows adds).
+bool Mixer::assignApp(uint32_t id, const QStringList &wantedIn, bool cumulative) {
+    auto it = m_apps.find(id);
+    if (it == m_apps.end()) return false;
+    QStringList want;
+    for (const QString &s : wantedIn) if (channelSlugs().contains(s) && !want.contains(s)) want << s;
+    const QString key = appKey(*it);
+    if (key.isEmpty()) return false;
+    LayoutApp *la = m_layout.app(key);
+    if (cumulative && la) { QStringList merged = la->channels; for (const QString &s : want) if (!merged.contains(s)) merged << s; want = merged; }
+    if (want.isEmpty()) {                                   // un-route: back to wherever WirePlumber puts it
+        if (la) { removeAppRelays(*la); m_layout.apps.removeIf([&](const LayoutApp &a) { return a.key == key; }); }
+        m_graph.clearStreamTarget(id);
+        it->channels.clear(); saveLayout(); Q_EMIT appChanged(id); return true;
+    }
+    if (!m_graph.moveStream(id, m_layout.channelEntry(want.first()))) return false;
+    if (la) { removeAppRelays(*la); la->channels = want; la->nodeName = it->nodeName; }
+    else { m_layout.apps.push_back({key, it->nodeName, want}); la = m_layout.app(key); }
+    if (!m_layout.knownApps.contains(key)) m_layout.knownApps << key;   // CH-5: this app has an explicit home now
+    saveLayout();
+    ensureAppRelays(*la);
+    it->channels = want;
+    Q_EMIT appChanged(id);
+    return true;
+}
+// Relay per extra channel, same loopbackArgs shape as the config renderer (ADR 0002) so runtime and fragment
+// stay identical. Capture side sits on the primary channel sink — processed audio arrives there (FX-3).
+void Mixer::ensureAppRelays(const LayoutApp &a) {
+    if (a.channels.size() < 2) return;
+    const QString from = Names::channelNode(a.channels.first());
+    for (int n = 1; n < a.channels.size(); ++n) {
+        const QString node = EdgeNames::relayNode(a.key, a.channels[n]);
+        if (m_graph.node(node)) continue;
+        m_graph.loadLoopback(loopbackArgs(QStringLiteral("App: ") + a.key, node + QStringLiteral(".in"), from, true, {}, false,
+                                          node, m_layout.channelEntry(a.channels[n]), {}, false, true));
+    }
+}
+void Mixer::removeAppRelays(const LayoutApp &a) {
+    for (int n = 1; n < a.channels.size(); ++n) {
+        const QString node = EdgeNames::relayNode(a.key, a.channels[n]);
+        if (const auto info = m_graph.node(node)) m_graph.destroyObject(info->id);
+    }
 }
 // CH-5. Only apps we have NEVER routed are touched: for everything else WirePlumber's restore-target has the
 // user's last choice (CH-4) and must win — even if that choice was "system default, not kmixdeck at all".
@@ -588,7 +629,7 @@ void Mixer::finishAutoRoute(uint32_t id) {
     auto it = m_apps.find(id); if (it == m_apps.end()) return;
     const QString key = appKey(*it);
     if (key.isEmpty() || m_layout.knownApps.contains(key)) return;
-    if (!it->channelSlug.isEmpty()) { m_layout.knownApps << key; saveLayout(); return; }   // already on one of ours (e.g. restored)
+    if (!it->channels.isEmpty()) { m_layout.knownApps << key; saveLayout(); return; }   // already on one of ours (e.g. restored)
     if (m_layout.defaultChannel.isEmpty() || !channelSlugs().contains(m_layout.defaultChannel)) return;
     if (m_graph.moveStream(id, m_layout.channelEntry(m_layout.defaultChannel))) {
         m_layout.knownApps << key; saveLayout();
@@ -600,6 +641,47 @@ bool Mixer::setDefaultChannel(const QString &slug) {
     if (m_layout.defaultChannel == slug) return true;
     m_layout.defaultChannel = slug; saveLayout(); Q_EMIT defaultChannelChanged(); return true;
 }
+// UX-12 solo audition. Press-and-hold on any entity (channel or mix): snapshot every sink's level state, mute
+// everything else, let exactly this one through at full level. Release restores the snapshot — the previous
+// routing returns exactly as it was. Works identically on one built-in speaker and on phones: it is all state
+// on the sinks, no extra streams, no dropped quants (DV-2).
+void Mixer::startAudition(const QString &kind, const QString &slug) {
+    if (!m_audition.slug.isEmpty() && m_audition.kind == kind && m_audition.slug == slug) return;   // already that one
+    stopAudition();
+    if (kind != QLatin1String("channel") && kind != QLatin1String("mix")) return;
+    const bool isCh = kind == QLatin1String("channel");
+    m_audition.kind = kind; m_audition.slug = slug;
+    auto snapAndSilence = [&](const QStringList &slugs, QHash<QString, QPair<float, bool>> &saved,
+                              QString (*nodeName)(const QString &)) {
+        for (const QString &s : slugs) {
+            const QString node = nodeName(s);
+            auto it = m_sinks.find(node); if (it == m_sinks.end()) continue;
+            saved.insert(s, {it->volume, it->mute});
+            const bool mine = (s == slug);
+            it->mute = !mine; if (mine) it->volume = 1.0f;
+            m_graph.setVolume(it->id, it->volume, it->mute);
+        }
+    };
+    snapAndSilence(channelSlugs(), m_audition.channels, &Names::channelNode);
+    snapAndSilence(mixSlugs(), m_audition.mixes, &Names::mixNode);
+    if (isCh) Q_EMIT channelChanged(slug); else Q_EMIT mixChanged(slug);
+}
+void Mixer::stopAudition() {
+    if (m_audition.slug.isEmpty()) return;
+    auto restore = [&](const QHash<QString, QPair<float, bool>> &saved, const QString &slugKind) {
+        for (auto it = saved.constBegin(); it != saved.constEnd(); ++it) {
+            const QString node = slugKind == QLatin1String("channel") ? Names::channelNode(it.key()) : Names::mixNode(it.key());
+            auto sink = m_sinks.find(node); if (sink == m_sinks.end()) continue;
+            sink->volume = it->first; sink->mute = it->second;
+            m_graph.setVolume(sink->id, sink->volume, sink->mute);
+            if (slugKind == QLatin1String("channel")) Q_EMIT channelChanged(it.key()); else Q_EMIT mixChanged(it.key());
+        }
+    };
+    restore(m_audition.channels, QStringLiteral("channel"));
+    restore(m_audition.mixes, QStringLiteral("mix"));
+    m_audition = {};
+}
+QString Mixer::auditionTarget() const { return m_audition.slug; }
 QString Mixer::slugForSinkId(uint32_t sinkId) const {
     for (auto it = m_sinks.cbegin(); it != m_sinks.cend(); ++it)
         if (it->id == sinkId && it.key().startsWith(QLatin1String("kmixdeck.channel."))) return it.key().mid(17);
@@ -608,7 +690,11 @@ QString Mixer::slugForSinkId(uint32_t sinkId) const {
 void Mixer::onStreamRouted(uint32_t streamId, uint32_t sinkId) {
     auto it = m_apps.find(streamId); if (it == m_apps.end()) return;
     const QString slug = slugForSinkId(sinkId);
-    if (it->channelSlug != slug) { it->channelSlug = slug; Q_EMIT appChanged(streamId); }
+    // CH-6: a recreated node (same appKey) re-reads its assignment from the layout; until WirePlumber links it,
+    // the layout list is what the UI shows. Only the PRIMARY follows live routing changes.
+    if (const LayoutApp *la = m_layout.app(appKey(*it)); la && !la->channels.isEmpty()) it->channels = la->channels;
+    else it->channels = slug.isEmpty() ? QStringList{} : QStringList{slug};
+    Q_EMIT appChanged(streamId);
     finishAutoRoute(streamId);
 }
 
@@ -800,7 +886,11 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         const bool isNew = !m_apps.contains(n.id);
         App &a = m_apps[n.id];
         a.id = n.id; a.name = n.appName.isEmpty() ? n.name : n.appName; a.binary = n.appBinary; a.mediaName = n.mediaName; a.mediaRole = n.mediaRole; a.nodeName = n.name;
-        a.channelSlug = slugForSinkId(m_graph.streamSink(n.id));
+        a.iconName = n.iconName; a.running = (n.state == QLatin1String("running"));   // UX-10: is it making sound right now
+        a.channels = slugForSinkId(m_graph.streamSink(n.id)) == QString()
+                         ? QStringList{} : QStringList{slugForSinkId(m_graph.streamSink(n.id))};
+        if (const LayoutApp *la = m_layout.app(appKey(a)); la && !la->channels.isEmpty() && a.channels.isEmpty())
+            a.channels = la->channels;   // CH-6: node was re-created, WirePlumber has not linked it yet
         if (isNew) { Q_EMIT appAdded(n.id); autoRouteNewApp(a); } else Q_EMIT appChanged(n.id);
     }
     if (layout) Q_EMIT layoutChanged();

@@ -188,6 +188,9 @@ QVariantList MixerClient::apps() const {
         out.push_back(QVariantMap{{QStringLiteral("path"), it.key()}, {QStringLiteral("name"), a.value(QStringLiteral("Name"))},
                                   {QStringLiteral("binary"), a.value(QStringLiteral("Binary"))},
                                   {QStringLiteral("mediaName"), a.value(QStringLiteral("MediaName"))},
+                                  {QStringLiteral("icon"), a.value(QStringLiteral("Icon"))},                       // UX-10
+                                  {QStringLiteral("running"), a.value(QStringLiteral("Running"))},                // UX-10
+                                  {QStringLiteral("allChannels"), a.value(QStringLiteral("Channels"))},           // CH-12
                                   {QStringLiteral("channel"), chPath.startsWith(QStringLiteral("%1/channel/").arg(ROOT)) ? chPath.section(QLatin1Char('/'), -1) : QString()}});
     }
     return out;
@@ -265,6 +268,22 @@ void MixerClient::renameMix(const QString &slug, const QString &name) { setPrope
 void MixerClient::moveApp(const QString &appPath, const QString &channelSlug) {
     QDBusInterface(BUS, appPath, QStringLiteral("org.kmixdeck1.App"), QDBusConnection::sessionBus())
         .asyncCall(QStringLiteral("MoveTo"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/channel/%2").arg(ROOT, channelSlug))));
+}
+// CH-12/UX-11: several channels at once; addOn=true accumulates (drop onto one more row).
+void MixerClient::assignApp(const QString &appPath, const QStringList &channelSlugs, bool addOn) {
+    QStringList paths;
+    for (const QString &s : channelSlugs) paths << QStringLiteral("%1/channel/%2").arg(ROOT, s);
+    QDBusInterface(BUS, appPath, QStringLiteral("org.kmixdeck1.App"), QDBusConnection::sessionBus())
+        .asyncCall(QStringLiteral("Assign"), paths, addOn);
+}
+// UX-12: press → Audition(<path>), release → Audition("/"). One round trip each, the daemon restores state.
+void MixerClient::audition(const QString &kind, const QString &slug) {
+    QDBusInterface(BUS, QString::fromLatin1(ROOT), QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus())
+        .asyncCall(QStringLiteral("Audition"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/%2/%3").arg(ROOT, kind, slug))));
+}
+void MixerClient::stopAudition() {
+    QDBusInterface(BUS, QString::fromLatin1(ROOT), QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus())
+        .asyncCall(QStringLiteral("Audition"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("/"))));
 }
 QString MixerClient::fxChain(const QString &kind, const QString &slug) const {
     return (kind == QLatin1String("mix") ? m_mixes : m_channels).value(slug).value(QStringLiteral("FxChain")).toString();

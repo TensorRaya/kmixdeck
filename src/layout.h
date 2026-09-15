@@ -38,11 +38,17 @@ struct LayoutMix     {
 /// MX-7: cell (channel, mix) mirrors volume+mute of cell (channel, follows). Broken by touching the follower.
 struct LayoutLink    { QString channel, mix, follows; };
 
+/// CH-4/CH-12: what we remembered about one application stream. Key = appKey (application.name, else node.name).
+/// channels[0] is the primary target (WirePlumber restore-target); the rest are carried by relay loopbacks so
+/// every assigned channel hears the app. nodeName = last seen node.name of the stream (relay capture side).
+struct LayoutApp     { QString key, nodeName; QStringList channels; };
+
 struct Layout {
     QVector<LayoutLink> links;
     QVector<LayoutChannel> channels;
     QVector<LayoutMix> mixes;
     QVector<LayoutInput> inputs;
+    QVector<LayoutApp> apps;                       // CH-12: remembered per-app channel assignments
     /// CH-5: where a never-seen application lands. Empty = leave it on the system default (no auto-routing).
     QString defaultChannel = QStringLiteral("system");
     /// Apps kmixdeck has routed at least once — keyed by application.name (falls back to node.name).
@@ -68,6 +74,9 @@ struct Layout {
     const LayoutChannel *channel(const QString &slug) const;
     const LayoutMix *mix(const QString &slug) const;
     const LayoutInput *input(const QString &slug) const;
+    /// CH-12 lookup by appKey (application.name / node.name), not by node id (CH-6).
+    LayoutApp *app(const QString &key);
+    const LayoutApp *app(const QString &key) const;
 
     /// Where streams should aim: the fx entry when a chain is active, the plain node otherwise (ADR 0008).
     QString channelEntry(const QString &slug) const;
@@ -84,6 +93,11 @@ inline QString outputNode(const QString &mixSlug, int index) {
                       : QStringLiteral("kmixdeck.out.%1.%2").arg(mixSlug).arg(index);
 }
 inline QString sourceNode(const QString &mixSlug) { return QStringLiteral("kmixdeck.source.") + mixSlug; }
+/// CH-12: one relay loopback per extra channel of a multi-assigned app — captures from the primary channel
+/// sink and plays into the next one, so every assigned channel hears the app. Key: <appKey>.<channelSlug>.
+inline QString relayNode(const QString &appKey, const QString &channelSlug) {
+    return QStringLiteral("kmixdeck.relay.%1.%2").arg(appKey, channelSlug);
+}
 }
 
 /// One loopback = one module-loopback args string. Shared by the config renderer and the runtime path so the

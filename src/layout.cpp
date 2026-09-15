@@ -42,6 +42,8 @@ LayoutInput *Layout::input(const QString &slug) { for (auto &i : inputs) if (i.s
 const LayoutChannel *Layout::channel(const QString &slug) const { for (const auto &c : channels) if (c.slug == slug) return &c; return nullptr; }
 const LayoutMix *Layout::mix(const QString &slug) const { for (const auto &m : mixes) if (m.slug == slug) return &m; return nullptr; }
 const LayoutInput *Layout::input(const QString &slug) const { for (const auto &i : inputs) if (i.slug == slug) return &i; return nullptr; }
+LayoutApp *Layout::app(const QString &key) { for (auto &a : apps) if (a.key == key) return &a; return nullptr; }
+const LayoutApp *Layout::app(const QString &key) const { for (const auto &a : apps) if (a.key == key) return &a; return nullptr; }
 
 QJsonObject DeviceRef::toJson() const {
     QJsonObject o{{QStringLiteral("node"), node}, {QStringLiteral("description"), description}};
@@ -72,7 +74,10 @@ QJsonObject Layout::toJson() const {
         mx.append(o);
     }
     for (const auto &i : inputs) in.append(QJsonObject{{QStringLiteral("slug"), i.slug}, {QStringLiteral("name"), i.name}, {QStringLiteral("device"), i.device.toJson()}, {QStringLiteral("channel"), i.channel}});
+    QJsonArray appArr;
+    for (const auto &a : apps) appArr.append(QJsonObject{{QStringLiteral("key"), a.key}, {QStringLiteral("nodeName"), a.nodeName}, {QStringLiteral("channels"), QJsonArray::fromStringList(a.channels)}});
     return {{QStringLiteral("version"), 2}, {QStringLiteral("channels"), ch}, {QStringLiteral("mixes"), mx}, {QStringLiteral("inputs"), in},
+            {QStringLiteral("apps"), appArr},
             {QStringLiteral("defaultChannel"), defaultChannel}, {QStringLiteral("knownApps"), QJsonArray::fromStringList(knownApps)},
             {QStringLiteral("links"), [this] { QJsonArray a; for (const auto &l : links) a.append(QJsonObject{{QStringLiteral("channel"), l.channel}, {QStringLiteral("mix"), l.mix}, {QStringLiteral("follows"), l.follows}}); return a; }()}};
 }
@@ -97,6 +102,12 @@ Layout Layout::fromJson(const QJsonObject &o) {
     for (const auto &v : o.value(QStringLiteral("inputs")).toArray()) {
         const auto i = v.toObject();
         l.inputs.push_back({i.value(QStringLiteral("slug")).toString(), i.value(QStringLiteral("name")).toString(), DeviceRef::fromJson(i.value(QStringLiteral("device")).toObject()), i.value(QStringLiteral("channel")).toString()});
+    }
+    for (const auto &v : o.value(QStringLiteral("apps")).toArray()) {
+        const auto a = v.toObject(); LayoutApp la;
+        la.key = a.value(QStringLiteral("key")).toString(); la.nodeName = a.value(QStringLiteral("nodeName")).toString();
+        for (const auto &c : a.value(QStringLiteral("channels")).toArray()) la.channels << c.toString();
+        if (!la.key.isEmpty() && !la.channels.isEmpty()) l.apps.push_back(la);
     }
     return l;
 }
@@ -178,6 +189,17 @@ QString Layout::toPipewireConf() const {
     for (const auto &i : inputs)   // physical input → channel (ADR 0007 D2); capture side waits for the device
         mod(loopbackArgs(QStringLiteral("Input: ") + i.name, EdgeNames::inputNode(i.slug) + QStringLiteral(".in"), i.device.node, false, i.device.positions, true,
                          EdgeNames::inputNode(i.slug), channelEntry(i.channel), {}, false, true));
+    for (const auto &a : apps) {   // CH-12: extra channels of a multi-assigned app hear it via relay loopbacks
+        const LayoutChannel *first = channel(a.channels.first());
+        if (!first) continue;
+        for (int n = 1; n < a.channels.size(); ++n) {
+            const LayoutChannel *to = channel(a.channels[n]);
+            if (!to) continue;
+            mod(loopbackArgs(QStringLiteral("App: ") + a.key, EdgeNames::relayNode(a.key, to->slug) + QStringLiteral(".in"),
+                             Names::channelNode(first->slug), true, {}, false,
+                             EdgeNames::relayNode(a.key, to->slug), channelEntry(to->slug), {}, false, true));
+        }
+    }
     for (const auto &m : mixes) {
         if (m.outputs.isEmpty())   // no output configured → park; linger anyway, the same node is retargeted onto devices later
             mod(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → output"), EdgeNames::outputNode(m.slug, 0) + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,

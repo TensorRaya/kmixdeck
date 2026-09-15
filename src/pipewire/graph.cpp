@@ -81,6 +81,7 @@ struct Graph::Impl {
             np->info.appName = prop(info->props, PW_KEY_APP_NAME);
             np->info.appBinary = prop(info->props, PW_KEY_APP_PROCESS_BINARY);
             np->info.mediaRole = prop(info->props, PW_KEY_MEDIA_ROLE);
+            np->info.iconName = prop(info->props, PW_KEY_APP_ICON_NAME);
             { const QString p = prop(info->props, "audio.position"); if (!p.isEmpty()) np->info.positions = parsePositions(p); }
             if (np->info.serial == 0) np->info.serial = prop(info->props, PW_KEY_OBJECT_SERIAL).toUInt();
         }
@@ -177,6 +178,7 @@ struct Graph::Impl {
         np->info.appName = prop(props, PW_KEY_APP_NAME);
         np->info.appBinary = prop(props, PW_KEY_APP_PROCESS_BINARY);
         np->info.mediaRole = prop(props, PW_KEY_MEDIA_ROLE);
+        np->info.iconName = prop(props, PW_KEY_APP_ICON_NAME);
         np->info.positions = parsePositions(prop(props, "audio.position"));
         np->info.serial = prop(props, PW_KEY_OBJECT_SERIAL).toUInt();
         np->proxy = static_cast<pw_proxy *>(pw_registry_bind(impl->registry, id, type, PW_VERSION_NODE, 0));

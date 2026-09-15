@@ -131,6 +131,16 @@ QQC2.Control {
             QQC2.ToolTip.text: { const lin = Math.pow(master.value, 3); return lin <= 0.0005 ? "−∞ dB" : (20 * Math.log10(lin)).toFixed(1) + " dB" }
             QQC2.ToolTip.visible: pressed
         }
+        // UX-12 listen: hold = only this mix reaches the headphones, release restores everything
+        QQC2.ToolButton {
+            icon.name: "audio-headphones"
+            display: QQC2.AbstractButton.IconOnly
+            text: i18n("Listen to this mix")
+            onPressed: Mixer.audition("mix", header.mix)
+            onReleased: Mixer.stopAudition()
+            onCanceled: Mixer.stopAudition()
+            QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+        }
         QQC2.ToolButton {
             icon.name: "view-media-equalizer"
             icon.color: header.hasFx ? Kirigami.Theme.positiveTextColor : undefined

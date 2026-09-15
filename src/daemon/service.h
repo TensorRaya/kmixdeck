@@ -154,16 +154,23 @@ class AppObject : public ExportedObject {
     Q_PROPERTY(QString MediaRole READ mediaRole CONSTANT)
     Q_PROPERTY(uint NodeId READ nodeId CONSTANT)
     Q_PROPERTY(QDBusObjectPath Channel READ channel)
+    // UX-10: the app's own icon (application.icon-name), whether it is producing sound, CH-12 full assignment
+    Q_PROPERTY(QString Icon READ icon CONSTANT)
+    Q_PROPERTY(bool Running READ running)
+    Q_PROPERTY(QStringList Channels READ channels)
 public:
     AppObject(Mixer *mixer, uint32_t id, QObject *parent);
     QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.App"); }
     QVariantMap properties() const override;
     QString name() const; QString binary() const; QString mediaName() const; QString mediaRole() const;
+    QString icon() const; bool running() const; QStringList channels() const;
     uint nodeId() const { return m_id; }
     QDBusObjectPath channel() const;
     void notifyChanged();
 public Q_SLOTS:
     void MoveTo(const QDBusObjectPath &channel);
+    /// CH-12: assign to several channels at once; AddOn=true keeps existing ones and appends (UX-11 drop).
+    void Assign(const QStringList &channelPaths, bool addOn);
 private:
     Mixer *m_mixer; uint32_t m_id;
 };
@@ -232,6 +239,8 @@ public:
     QStringList mixOrder() const;
 public Q_SLOTS:
     void Undo();                                      // CH-9: restore the last removed channel/mix
+    /// UX-12 solo audition: hold = exactly one entity reaches the main output, release restores previous state.
+    void Audition(const QDBusObjectPath &path);       // channel or mix path; empty path = stop
     void MoveChannel(const QDBusObjectPath &path, int index);   // UX-9
     void MoveMix(const QDBusObjectPath &path, int index);
     QDBusObjectPath AddChannel(const QString &name);

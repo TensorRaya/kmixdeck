@@ -17,6 +17,7 @@ Item {
     property bool muted: Mixer.channelMuted(channel)
     property bool hasFx: Mixer.fxEnabled("channel", channel)
     property string iconName: Mixer.channelIcon(channel)
+    property bool dropActive: false           // UX-11: a drag hovers this row
 
     Connections {
         target: Mixer
@@ -35,6 +36,22 @@ Item {
     QQC2.ToolTip.delay: 800
     Rectangle { visible: !header.first; anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: Kirigami.Units.largeSpacing; rightMargin: Kirigami.Units.largeSpacing } height: 1; color: Qt.alpha(Kirigami.Theme.textColor, 0.10) }
     TapHandler { acceptedButtons: Qt.RightButton; onTapped: ctxMenu.popup() }
+
+    // UX-11: drop an application row here to add this channel to its assignment (CH-12 keeps the others)
+    DropArea {
+        anchors.fill: parent
+        keys: ["x-kmixdeck-app"]
+        onEntered: header.dropActive = true
+        onExited: header.dropActive = false
+        onDropped: (drop) => { Mixer.assignApp(drop.text, [header.channel], true); header.dropActive = false }
+    }
+    // faint highlight while a drag hovers the row
+    Rectangle {
+        anchors.fill: parent
+        visible: header.dropActive
+        color: Qt.alpha(Kirigami.Theme.highlightColor, 0.18)
+        radius: Kirigami.Units.smallSpacing
+    }
 
     RowLayout {
         anchors { fill: parent; leftMargin: Kirigami.Units.smallSpacing * 1.5; rightMargin: Kirigami.Units.smallSpacing / 2 }
@@ -105,6 +122,17 @@ Item {
             horizontal: true
             opacity: peak > 0.001 ? 1 : 0.35
             Connections { target: Mixer; function onPeaksChanged() { chMeter.peak = header.muted ? 0 : Mixer.peak("channel/" + header.channel) } }
+        }
+
+        // UX-12 listen: hold = only this channel reaches the main output, release restores everything
+        QQC2.ToolButton {
+            icon.name: "audio-volume-high"
+            display: QQC2.AbstractButton.IconOnly
+            text: i18n("Listen to this channel")
+            onPressed: Mixer.audition("channel", header.channel)
+            onReleased: Mixer.stopAudition()
+            onCanceled: Mixer.stopAudition()
+            QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
         }
 
         // effects — highlighted when a chain is active (ADR 0008)

@@ -148,17 +148,37 @@ QString AppObject::name() const { auto a = m_mixer->app(m_id); return a ? a->nam
 QString AppObject::binary() const { auto a = m_mixer->app(m_id); return a ? a->binary : QString(); }
 QString AppObject::mediaName() const { auto a = m_mixer->app(m_id); return a ? a->mediaName : QString(); }
 QString AppObject::mediaRole() const { auto a = m_mixer->app(m_id); return a ? a->mediaRole : QString(); }
-QDBusObjectPath AppObject::channel() const { auto a = m_mixer->app(m_id); return QDBusObjectPath(a && !a->channelSlug.isEmpty() ? Service::channelPath(a->channelSlug) : QStringLiteral("/")); }
+QDBusObjectPath AppObject::channel() const { auto a = m_mixer->app(m_id); return QDBusObjectPath(a && !a->channels.isEmpty() ? Service::channelPath(a->channels.first()) : QStringLiteral("/")); }
+QString AppObject::icon() const { auto a = m_mixer->app(m_id); return a ? a->iconName : QString(); }
+bool AppObject::running() const { auto a = m_mixer->app(m_id); return a ? a->running : false; }
+QStringList AppObject::channels() const { auto a = m_mixer->app(m_id); return a ? a->channels : QStringList(); }
 void AppObject::MoveTo(const QDBusObjectPath &channel) {
     const QString prefix = Service::channelPath(QString());
     if (!channel.path().startsWith(prefix)) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("not a channel path")); return; }
     if (!m_mixer->moveApp(m_id, channel.path().mid(prefix.size()))) sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("unknown app or channel"));
 }
+// CH-12: several channels at once. Paths (not slugs) so third-party clients stay on object-path semantics.
+void AppObject::Assign(const QStringList &paths, bool addOn) {
+    QStringList slugs;
+    const QString prefix = Service::channelPath(QString());
+    for (const QString &p : paths) {
+        if (!p.startsWith(prefix)) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("not a channel path")); return; }
+        const QString s = p.mid(prefix.size());
+        if (!s.isEmpty() && !slugs.contains(s)) slugs << s;
+    }
+    if (!m_mixer->assignApp(m_id, slugs, addOn)) sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("unknown app or channel"));
+}
 QVariantMap AppObject::properties() const {
     return {{QStringLiteral("Name"), name()}, {QStringLiteral("Binary"), binary()}, {QStringLiteral("MediaName"), mediaName()}, {QStringLiteral("MediaRole"), mediaRole()},
-            {QStringLiteral("NodeId"), nodeId()}, {QStringLiteral("Channel"), QVariant::fromValue(channel())}};
+            {QStringLiteral("NodeId"), nodeId()}, {QStringLiteral("Icon"), icon()}, {QStringLiteral("Running"), running()},
+            {QStringLiteral("Channels"), channels()}, {QStringLiteral("Channel"), QVariant::fromValue(channel())}};
 }
-void AppObject::notifyChanged() { emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("Channel"), QVariant::fromValue(channel())}}); }
+void AppObject::notifyChanged() {
+    emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("Channel"), QVariant::fromValue(channel())},
+                                                    {QStringLiteral("Channels"), channels()},
+                                                    {QStringLiteral("Running"), running()},
+                                                    {QStringLiteral("Icon"), icon()}});
+}
 
 // ---- Levels (ADR 0006)
 LevelsAdaptor::LevelsAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor(parent), m_mixer(mixer) {
@@ -232,6 +252,19 @@ void MixerAdaptor::MoveMix(const QDBusObjectPath &p, int index) {
     const QString slug = p.path().section(QLatin1Char('/'), -1);
     if (!p.path().startsWith(Service::mixPath(QString())) || !m_mixer->moveMix(slug, index))
         static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no such mix"));
+}
+// UX-12: press-and-hold audition. An empty path stops it; any channel/mix path solos that entity.
+void MixerAdaptor::Audition(const QDBusObjectPath &p) {
+    const QString path = p.path();
+    if (path == QLatin1String("/") || path.isEmpty()) { m_mixer->stopAudition(); return; }
+    const bool isCh = path.startsWith(Service::channelPath(QString()));
+    const bool isMix = !isCh && path.startsWith(Service::mixPath(QString()));
+    const QString slug = path.section(QLatin1Char('/'), -1);
+    if ((!isCh && !isMix) || slug.isEmpty()) {
+        static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("expected a channel or mix path"));
+        return;
+    }
+    m_mixer->startAudition(isCh ? QStringLiteral("channel") : QStringLiteral("mix"), slug);
 }
 void MixerAdaptor::Undo() {
     if (!m_mixer->undo()) static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.Failed"), QStringLiteral("nothing to undo"));

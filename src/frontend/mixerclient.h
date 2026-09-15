@@ -83,6 +83,9 @@ public:
     Q_INVOKABLE void    moveChannel(const QString &slug, int index);              // UX-9
     Q_INVOKABLE void    moveMix(const QString &slug, int index);
     Q_INVOKABLE void   moveApp(const QString &appPath, const QString &channelSlug);
+    Q_INVOKABLE void   assignApp(const QString &appPath, const QStringList &channelSlugs, bool addOn);   // CH-12/UX-11
+    Q_INVOKABLE void   audition(const QString &kind, const QString &slug);   // UX-12 press
+    Q_INVOKABLE void   stopAudition();                                        // UX-12 release
     Q_INVOKABLE void   setChannelDevice(const QString &slug, const QString &deviceNode);
     Q_INVOKABLE QString channelDevice(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("InputDevice")).toString(); }
     Q_INVOKABLE bool    channelInputPresent(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("InputPresent"), true).toBool(); }

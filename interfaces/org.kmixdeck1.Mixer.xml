@@ -27,6 +27,12 @@
     <!-- FX-4: one-click chains as JSON {name: chain}; a preset is just a starting point, editable afterwards -->
     <property name="FxPresets" type="s" access="read"/>
     <method name="Undo"/>
+    <!-- UX-12 solo audition: pass a channel/mix path to hold exactly that entity on the main output,
+         "/" to stop and restore the previous state. Hold semantics = the frontend calls this on
+         press and again with "/" on release. -->
+    <method name="Audition">
+      <arg name="path" type="o" direction="in"/>
+    </method>
     <!-- UX-9: display order of channels and mixes (slugs). Moving is a presentation change: slugs, nodes and
          volumes stay; the order is part of the layout and survives restarts. index is clamped to the list. -->
     <property name="ChannelOrder" type="as" access="read"/>
