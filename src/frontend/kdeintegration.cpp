@@ -7,6 +7,8 @@
 #include <QQuickWindow>
 #include <QGuiApplication>
 #include <QProcess>
+#include <algorithm>
+#include <cmath>
 
 namespace kmixdeck::frontend {
 
@@ -22,6 +24,7 @@ KdeIntegration::KdeIntegration(MixerClient *client, QObject *parent)
     // left click: raise/hide the window (KSNI default when a window is associated)
     connect(m_client, &MixerClient::layoutChanged, this, [this] { rebuildActions(); rebuildTrayMenu(); updateTrayIcon(); });
     connect(m_client, &MixerClient::channelChanged, this, [this](const QString &) { rebuildTrayMenu(); updateTrayIcon(); });
+    connect(m_client, &MixerClient::mixChanged, this, [this](const QString &) { rebuildTrayMenu(); });   // mute state / listening mix
     connect(m_client, &MixerClient::cellChanged, this, [this](const QString &, const QString &) { updateTrayIcon(); });
     connect(m_client, &MixerClient::serviceAvailableChanged, this, [this] { updateTrayIcon(); });
     rebuildActions(); rebuildTrayMenu(); updateTrayIcon();
@@ -51,20 +54,67 @@ void KdeIntegration::rebuildActions() {
     const QStringList mixes = m_client->mixSlugs();
     for (const QString &slug : mixes) {
         if (m_mixMuteActions.contains(slug)) { m_mixMuteActions[slug]->setText(i18n("Mute all in mix: %1", m_client->mixName(slug))); continue; }
-        auto *a = new QAction(i18n("Mute all in mix: %1", m_client->mixName(slug)), this);
+        auto *a = new QAction(i18n("Mute mix: %1", m_client->mixName(slug)), this);
         a->setObjectName(QStringLiteral("mute-mix-") + slug);
         connect(a, &QAction::triggered, this, [this, slug] {
-            // "mute the mix" = mute every cell feeding it; unmute if all were muted
-            bool allMuted = true; for (const auto &ch : m_client->channelSlugs()) if (m_client->cellPresent(ch, slug) && !m_client->cellMuted(ch, slug)) allMuted = false;
-            for (const auto &ch : m_client->channelSlugs()) if (m_client->cellPresent(ch, slug)) m_client->setCellMuted(ch, slug, !allMuted);
-            notifyMute(i18n("mix %1", m_client->mixName(slug)), !allMuted);
+            const bool willMute = !m_client->mixMuted(slug);   // master mute (MX-6): outputs AND capture source
+            m_client->toggleMixMute(slug);
+            notifyMute(i18n("mix %1", m_client->mixName(slug)), willMute);
         });
         KGlobalAccel::self()->setGlobalShortcut(a, QList<QKeySequence>{});
         m_mixMuteActions.insert(slug, a);
+        // CT-1 volume up/down: master of the mix in 3 dB steps, cubic domain like the slider
+        auto step = [this, slug](double db) {
+            const double lin = std::pow(m_client->mixVolume(slug), 3.0);
+            const double next = std::clamp(lin * std::pow(10.0, db / 20.0), 0.0, 1.0);
+            m_client->setMixVolume(slug, std::cbrt(next));
+        };
+        auto *up = new QAction(i18n("Mix %1: volume up", m_client->mixName(slug)), this);
+        up->setObjectName(QStringLiteral("volume-up-mix-") + slug);
+        connect(up, &QAction::triggered, this, [step] { step(+3.0); });
+        KGlobalAccel::self()->setGlobalShortcut(up, QList<QKeySequence>{});
+        m_mixUpActions.insert(slug, up);
+        auto *down = new QAction(i18n("Mix %1: volume down", m_client->mixName(slug)), this);
+        down->setObjectName(QStringLiteral("volume-down-mix-") + slug);
+        connect(down, &QAction::triggered, this, [step] { step(-3.0); });
+        KGlobalAccel::self()->setGlobalShortcut(down, QList<QKeySequence>{});
+        m_mixDownActions.insert(slug, down);
     }
-    for (auto it = m_mixMuteActions.begin(); it != m_mixMuteActions.end();) {
-        if (!mixes.contains(it.key())) { KGlobalAccel::self()->removeAllShortcuts(it.value()); it.value()->deleteLater(); it = m_mixMuteActions.erase(it); } else ++it;
+    for (auto *map : {&m_mixMuteActions, &m_mixUpActions, &m_mixDownActions})
+        for (auto it = map->begin(); it != map->end();) {
+            if (!mixes.contains(it.key())) { KGlobalAccel::self()->removeAllShortcuts(it.value()); it.value()->deleteLater(); it = map->erase(it); } else ++it;
+        }
+    if (!m_listenNextAction) {
+        // UX-2 / CT-1 "switch monitoring mix": move the headphones (= the output the current mix plays to) to the next mix
+        m_listenNextAction = new QAction(i18n("Listen to next mix"), this);
+        m_listenNextAction->setObjectName(QStringLiteral("listen-next-mix"));
+        connect(m_listenNextAction, &QAction::triggered, this, &KdeIntegration::listenNext);
+        KGlobalAccel::self()->setGlobalShortcut(m_listenNextAction, QList<QKeySequence>{});
     }
+}
+
+QString KdeIntegration::listeningMix() const {
+    for (const auto &m : m_client->mixSlugs())
+        if (!m_client->mixOutputDevice(m).isEmpty() && m_client->mixOutputPresent(m)) return m;
+    return {};
+}
+
+void KdeIntegration::listenNext() {
+    const QStringList mixes = m_client->mixSlugs();
+    if (mixes.size() < 2) return;
+    const QString cur = listeningMix();
+    if (cur.isEmpty()) return;                                   // nothing on the headphones → nothing to move
+    const QString device = m_client->mixOutputDevice(cur);
+    const QString next = mixes.at((mixes.indexOf(cur) + 1) % mixes.size());
+    // hand the device over: the old mix keeps its OTHER outputs (MX-9), only the headphones travel
+    m_client->toggleMixOutput(cur, device);
+    if (!m_client->mixOutputs(next).contains(device)) m_client->toggleMixOutput(next, device);
+    auto *n = new KNotification(QStringLiteral("muteToggled"), KNotification::CloseOnTimeout, this);
+    n->setComponentName(QStringLiteral("kmixdeck"));
+    n->setTitle(i18n("Now listening to: %1", m_client->mixName(next)));
+    n->setText(m_client->deviceDescription(device));
+    n->setIconName(QStringLiteral("audio-headphones"));
+    n->sendEvent();
 }
 
 void KdeIntegration::rebuildTrayMenu() {
@@ -79,7 +129,26 @@ void KdeIntegration::rebuildTrayMenu() {
     }
     m_trayMenu->addSection(i18n("Mixes"));
     for (const QString &slug : m_client->mixSlugs()) {
-        if (auto *ga = m_mixMuteActions.value(slug)) m_trayMenu->addAction(ga);
+        if (auto *ga = m_mixMuteActions.value(slug)) {
+            ga->setCheckable(true); ga->setChecked(m_client->mixMuted(slug));
+            ga->setIcon(QIcon::fromTheme(m_client->mixMuted(slug) ? QStringLiteral("audio-volume-muted") : QStringLiteral("audio-volume-high")));
+            m_trayMenu->addAction(ga);
+        }
+    }
+    // UX-2: "what am I hearing" — the listening mix is checked; picking another one moves the headphones there
+    const QString cur = listeningMix();
+    if (!cur.isEmpty()) {
+        m_trayMenu->addSection(i18n("Listening to"));
+        const QString device = m_client->mixOutputDevice(cur);
+        for (const QString &slug : m_client->mixSlugs()) {
+            auto *a = m_trayMenu->addAction(QIcon::fromTheme(QStringLiteral("audio-headphones")), m_client->mixName(slug));
+            a->setCheckable(true); a->setChecked(slug == cur);
+            connect(a, &QAction::triggered, this, [this, slug, cur, device] {
+                if (slug == cur) return;
+                m_client->toggleMixOutput(cur, device);
+                if (!m_client->mixOutputs(slug).contains(device)) m_client->toggleMixOutput(slug, device);
+            });
+        }
     }
     m_trayMenu->addSeparator();
     auto *shortcuts = m_trayMenu->addAction(QIcon::fromTheme(QStringLiteral("configure-shortcuts")), i18n("Configure Shortcuts…"));

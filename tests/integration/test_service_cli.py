@@ -409,7 +409,8 @@ def test_ct1_kde_frontend_registers_global_shortcuts(stack):
     time.sleep(4.0)
     ui.terminate(); ui.wait(timeout=5)
     mon.terminate(); out = mon.communicate(timeout=5)[0]
-    for name in ("mute-channel-game", "mute-channel-system", "mute-channel-voice", "mute-mix-monitor", "mute-mix-stream"):
+    for name in ("mute-channel-game", "mute-channel-system", "mute-channel-voice", "mute-mix-monitor", "mute-mix-stream",
+                 "volume-up-mix-monitor", "volume-down-mix-stream", "listen-next-mix"):
         assert f'"{name}"' in out, f"shortcut action {name} not registered"
     assert "doRegister" in out and "setShortcutKeys" in out
 

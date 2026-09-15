@@ -32,7 +32,11 @@ private:
     KStatusNotifierItem *m_tray;
     QMenu *m_trayMenu;
     QHash<QString, QAction *> m_channelMuteActions;   // slug → action
-    QHash<QString, QAction *> m_mixMuteActions;       // mix slug → "mute everything in mix" (all cells of that mix)
+    QHash<QString, QAction *> m_mixMuteActions;       // mix slug → Mix.ToggleMute (master, MX-6)
+    QHash<QString, QAction *> m_mixUpActions, m_mixDownActions;   // mix slug → master ±3 dB (CT-1 "volume up/down")
+    QAction *m_listenNextAction = nullptr;            // UX-2/CT-1 "switch monitoring mix": the headphones follow
+    void listenNext();
+    QString listeningMix() const;                     // the mix currently on the user's headphones (first with a present output), "" if none
     QPointer<QQuickWindow> m_window;
 };
 
