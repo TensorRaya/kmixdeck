@@ -9,6 +9,11 @@ import json, time
 from test_service_cli import Stack
 from pw_sandbox import start_private_pipewire
 
+# gate/compressor/limiter come from the swh LADSPA set (ADR 0008); without it every fx test is meaningless
+import shutil, os, glob
+_SWH = any(glob.glob(d + "/gate_1410.so") for d in (os.environ.get("LADSPA_PATH", "").split(":") + ["/usr/lib/ladspa", "/usr/lib64/ladspa", "/usr/lib/x86_64-linux-gnu/ladspa", "/usr/local/lib/ladspa"]) if d)
+pytestmark = pytest.mark.skipif(not _SWH, reason="swh-plugins (LADSPA) not installed")
+
 CHAIN = '{"enabled":true,"chain":[{"type":"gate","enabled":true,"params":{"threshold":-30}}]}'
 
 

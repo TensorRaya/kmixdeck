@@ -22,7 +22,7 @@ jobs:
             libkf6statusnotifieritem-dev libkf6notifications-dev libkf6dbusaddons-dev libkf6crash-dev \
             libkf6iconthemes-dev libkf6qqc2desktopstyle-dev libkf6colorscheme-dev \
             libpipewire-0.3-dev pipewire pipewire-audio wireplumber pipewire-bin \
-            ffmpeg python3-pytest python3-gi appstream dbus dbus-daemon systemd
+            ffmpeg python3-pytest python3-gi appstream dbus dbus-daemon systemd swh-plugins
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
       - name: Build

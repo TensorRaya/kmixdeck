@@ -745,13 +745,17 @@ void Mixer::onNode(const pw::NodeInfo &n) {
     bool layout = false;
     if (n.name.startsWith(chP)) {
         const QString slug = n.name.mid(chP.size());
+        const bool isNew = !m_sinks.contains(n.name);
         m_sinks[n.name] = n;
+        if (isNew && !m_pendingCellState.isEmpty()) restorePendingCellStates();   // undo of a channel: trim/mute
         bool found = false; for (auto &c : m_channels) if (c.slug == slug) { found = true; if (c.name.isEmpty()) c.name = n.description; }
         if (!found) { m_channels.push_back({slug, n.description, {}, true}); layout = true; }
         Q_EMIT channelChanged(slug);
     } else if (n.name.startsWith(mxP)) {
         const QString slug = n.name.mid(mxP.size());
+        const bool isNew = !m_sinks.contains(n.name);
         m_sinks[n.name] = n;
+        if (isNew && !m_pendingCellState.isEmpty()) restorePendingCellStates();   // undo of a mix: master volume/mute (nodes arrive in any order — CI showed the mix sink after its cells)
         QString disp = n.description; if (disp.startsWith(QLatin1String("Mix: "))) disp.remove(0, 5);
         bool found = false; for (auto &m : m_mixes) if (m.slug == slug) { found = true; if (m.name.isEmpty()) m.name = disp; }
         if (!found) { m_mixes.push_back({slug, disp, {}, true}); layout = true; }
