@@ -16,7 +16,21 @@
     <property name="InputDevice" type="s" access="readwrite"/>
     <!-- false while InputDevice is set but the device is unplugged: grey the row out, keep the value (DV-9) -->
     <property name="InputPresent" type="b" access="read"/>
+    <!-- ordered insert chain as JSON {enabled, chain:[{type,params,…}]} (ADR 0008); "" when none.
+         Set through SetFx only — the property itself is read so third-party UIs can mirror it cheaply. -->
+    <property name="FxChain" type="s" access="read"/>
     <!-- atomic mute toggle: what a hotkey or a Stream Deck key calls (no read-modify-write race) -->
     <method name="ToggleMute"/>
+    <!-- replace the whole chain; validates first, errors surface as D-Bus errors. "{}" = clear (FX-5 bypass: enabled=false) -->
+    <method name="SetFx">
+      <arg name="chainJson" type="s" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
+    <!-- live tweak without rebuilding: full Props key as in the chain JSON, e.g. "gate:Threshold (dB)" -->
+    <method name="SetFxControl">
+      <arg name="control" type="s" direction="in"/>
+      <arg name="value" type="d" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
   </interface>
 </node>

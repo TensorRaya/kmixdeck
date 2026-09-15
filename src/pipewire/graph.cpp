@@ -307,6 +307,24 @@ void Graph::setVolume(uint32_t nodeId, float linear, bool mute) {
     pw_thread_loop_unlock(d->loop);
 }
 
+void Graph::setControl(uint32_t nodeId, const QString &control, double value) {
+    pw_thread_loop_lock(d->loop);
+    auto it = d->nodes.find(nodeId);
+    if (it != d->nodes.end()) {
+        uint8_t buffer[1024];
+        spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+        const QByteArray key = control.toUtf8();
+        // filter-chain maps every filter.graph control into Props as "<node>:<Control>" — measured: setting
+        // "gate:Threshold (dB)" via Props silences the node live (rc 0, RMS follows the threshold).
+        const spa_pod *param = static_cast<const spa_pod *>(spa_pod_builder_add_object(&b,
+            SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
+            key.constData(), SPA_POD_Double(value),
+            nullptr));
+        pw_node_set_param(reinterpret_cast<pw_node *>(it.value()->proxy), SPA_PARAM_Props, 0, param);
+    }
+    pw_thread_loop_unlock(d->loop);
+}
+
 void Graph::createNullSink(const QString &name, const QString &description, bool passive) {
     pw_thread_loop_lock(d->loop);
     pw_properties *props = pw_properties_new(
@@ -326,9 +344,9 @@ void Graph::createNullSink(const QString &name, const QString &description, bool
     pw_thread_loop_unlock(d->loop);
 }
 
-void Graph::loadLoopback(const QString &args) {
+void Graph::loadLoopback(const QString &args, const char *module) {
     pw_thread_loop_lock(d->loop);
-    pw_context_load_module(d->context, "libpipewire-module-loopback", args.toUtf8().constData(), nullptr);
+    pw_context_load_module(d->context, module, args.toUtf8().constData(), nullptr);
     pw_thread_loop_unlock(d->loop);
 }
 

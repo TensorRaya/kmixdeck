@@ -77,13 +77,16 @@ void Mixer::reconcile() {
         bool found = false; for (auto &mx : m_mixes) if (mx.slug == m.slug) { found = true; mx.name = m.name; }
         if (!found) m_mixes.push_back({m.slug, m.name, m.icon, true});
     }
+    // chains on top of the sinks (ADR 0008): cheap, idempotent, and the fragment renders the same shape
+    for (const auto &c : m_layout.channels) if (!c.fx.effects.isEmpty() && c.fx.enabled) applyFx(c.slug);
+    for (const auto &m : m_layout.mixes)     if (!m.fx.effects.isEmpty() && m.fx.enabled) applyFx(m.slug);
     for (const auto &c : m_layout.channels)
         for (const auto &m : m_layout.mixes) {
             const QString cell = Names::cellNode(c.slug, m.slug);
             if (m_graph.node(cell)) continue;
             m_graph.loadLoopback(loopbackArgs(c.name + QStringLiteral(" → ") + m.name,
                                               cell + QStringLiteral(".in"), Names::channelNode(c.slug), true, {}, false,
-                                              cell, Names::mixNode(m.slug), {}, false, true));
+                                              cell, m_layout.mixEntry(m.slug), {}, false, true));
         }
     ensureEdgeLoopbacks();
     // Capture sides are plumbing, not faders. WirePlumber restores whatever volume it last saw on them (it did:
@@ -99,6 +102,116 @@ void Mixer::reconcile() {
     m_reconciled = true;
     Q_EMIT layoutChanged();
 }
+
+// ---- effects (ADR 0008) ---------------------------------------------------------------------------------
+namespace {
+fx::Chain *chainOf(Layout &l, const QString &slug) {
+    if (auto *c = l.channel(slug)) return &c->fx;
+    if (auto *m = l.mix(slug))     return &m->fx;
+    return nullptr;
+}
+} // namespace
+
+QJsonObject Mixer::fxChain(const QString &slug) const {
+    if (const auto *c = m_layout.channel(slug)) return c->fx.enabled && !c->fx.effects.isEmpty() ? c->fx.toJson() : QJsonObject{};
+    if (const auto *m = m_layout.mix(slug))     return m->fx.enabled && !m->fx.effects.isEmpty() ? m->fx.toJson() : QJsonObject{};
+    return {};
+}
+
+bool Mixer::setFxChain(const QString &slug, const QJsonObject &chainJson) {
+    qInfo() << "fx: setFxChain" << slug;
+    fx::Chain *chain = chainOf(m_layout, slug);
+    if (!chain) return false;
+    const fx::Chain next = fx::Chain::fromJson(chainJson);
+    const QString why = fx::validate(next);
+    if (!why.isEmpty()) { qWarning() << "kmixdeck: refusing fx chain:" << why; return false; }
+    *chain = next;
+    applyFx(slug);
+    saveLayout();
+    Q_EMIT layoutChanged();
+    return true;
+}
+
+bool Mixer::setFxControl(const QString &slug, const QString &control, double value) {
+    const fx::Chain *chain = nullptr; QString entry;
+    if (const auto *c = m_layout.channel(slug)) { chain = &c->fx; entry = m_layout.channelEntry(slug); }
+    else if (const auto *m = m_layout.mix(slug)) { chain = &m->fx; entry = m_layout.mixEntry(slug); }
+    if (!chain || chain->effects.isEmpty()) return false;
+    const auto info = m_graph.node(entry);
+    if (!info) return false;
+
+    // Keys on the node are "<graphNode>:<LadspaLabel>" (measured). Accept either the full key or the short
+    // spec key: "threshold" matches the first control whose label starts with it ("Threshold (dB)" ✓).
+    const auto pairs = fx::controlValues(*chain, slug);
+    // On the node, keys read "<nodeName>:<LadspaLabel>" — nodeName = slug + effect prefix (measured: "gamegate:Threshold (dB)").
+    // Accept the full key, or the label part: compare against the LAST ":" section of both sides.
+    QString key;
+    for (const auto &p : pairs) if (p.first == control) { key = p.first; break; }
+    if (key.isEmpty()) {
+        const QString want = control.section(QLatin1Char(':'), -1).toLower();
+        for (const auto &p : pairs) {
+            const QString ctl = p.first.section(QLatin1Char(':'), -1).toLower();
+            if (ctl == want || ctl.startsWith(want + QLatin1Char(' ')) || ctl == want + QLatin1Char('s')) { key = p.first; break; }
+        }
+    }
+    if (key.isEmpty()) return false;
+    m_graph.setControl(info->id, key, value);
+    return true;
+}
+
+QJsonObject Mixer::fxPresets() const { return fx::presetChains(); }
+
+QJsonArray Mixer::fxTypes() const {
+    QJsonArray out;
+    for (const auto &t : fx::builtinTypes()) {
+        QJsonArray params;
+        for (const auto &p : t.params) params.append(QJsonObject{{QStringLiteral("key"), p.key}, {QStringLiteral("label"), p.label},
+                                                                {QStringLiteral("unit"), p.unit}, {QStringLiteral("min"), p.min},
+                                                                {QStringLiteral("max"), p.max}, {QStringLiteral("def"), p.def}});
+        out.append(QJsonObject{{QStringLiteral("type"), t.type}, {QStringLiteral("label"), t.label},
+                               {QStringLiteral("description"), t.description}, {QStringLiteral("params"), params}});
+    }
+    return out;
+}
+
+/// Rebuild one chain live: replace the filter-chain module, keep everything else. Streams that were
+/// linked to the plain sink move onto the new entry so effects take effect without restarting PipeWire.
+void Mixer::applyFx(const QString &slug) {
+    qInfo() << "fx: applyFx" << slug << "connected" << m_connected;
+    if (!m_connected) return;
+    fx::Chain chain;
+    QString desc, entry, exit, plainName;
+    if (const auto *c = m_layout.channel(slug)) { chain = c->fx; desc = c->name; plainName = Names::channelNode(slug); entry = QStringLiteral("kmixdeck.fx.%1").arg(slug); exit = entry + QStringLiteral(".out"); }
+    else if (const auto *m = m_layout.mix(slug)) { chain = m->fx; desc = QStringLiteral("Mix: ") + m->name; plainName = Names::mixNode(slug); entry = QStringLiteral("kmixdeck.fx.mix.%1").arg(slug); exit = entry + QStringLiteral(".out"); }
+    else return;
+
+    // drop the old chain: everything with this entry prefix (never the plain sink, cells or edges)
+    destroyOurNodes([&](const QString &n) { return n == entry || n.startsWith(entry + QLatin1Char('.')) || n.startsWith(entry); });
+
+    if (!chain.enabled || chain.effects.isEmpty()) {   // bypass / cleared → plain sink again; move streams back
+        if (!m_graph.node(plainName)) m_graph.createNullSink(plainName, desc, !slug.isEmpty());
+        const auto e = m_graph.node(entry);
+        const auto p = m_graph.node(plainName);
+        if (e && p)
+            for (const auto &n : m_graph.nodes())
+                if (n.mediaClass.contains(QLatin1String("Stream")) && m_graph.streamSink(n.id) == e->id) m_graph.moveStream(n.id, plainName);
+        return;
+    }
+    if (!m_graph.node(plainName)) m_graph.createNullSink(plainName, desc, true);   // tail for the chain
+    const QString args = fx::renderFilterChainArgs(chain, desc, entry, exit, plainName, plainName, slug);
+    qInfo() << "fx: rendered" << args.length() << "chars";
+    if (args.isEmpty()) return;
+    m_graph.loadLoopback(args, "libpipewire-module-filter-chain");
+    // streams already sitting on the plain sink move onto the fx entry (queued: the module appears next tick)
+    QTimer::singleShot(0, this, [this, slug, plainName, entry] {
+        const auto e = m_graph.node(entry);
+        const auto p = m_graph.node(plainName);
+        if (!e || !p) return;
+        for (const auto &n : m_graph.nodes())
+            if (n.mediaClass.contains(QLatin1String("Stream")) && m_graph.streamSink(n.id) == p->id) m_graph.moveStream(n.id, entry);
+    });
+}
+
 
 QStringList Mixer::channelSlugs() const { QStringList l; for (const auto &c : m_channels) l << c.slug; return l; }
 QStringList Mixer::mixSlugs() const     { QStringList l; for (const auto &m : m_mixes) l << m.slug; return l; }
@@ -420,7 +533,7 @@ bool Mixer::moveApp(uint32_t id, const QString &channelSlug) {
     if (!m_apps.contains(id) || !channelSlugs().contains(channelSlug)) return false;
     const QString key = appKey(m_apps[id]);
     if (!key.isEmpty() && !m_layout.knownApps.contains(key)) { m_layout.knownApps << key; saveLayout(); }
-    return m_graph.moveStream(id, Names::channelNode(channelSlug));
+    return m_graph.moveStream(id, m_layout.channelEntry(channelSlug));
 }
 // CH-5. Only apps we have NEVER routed are touched: for everything else WirePlumber's restore-target has the
 // user's last choice (CH-4) and must win — even if that choice was "system default, not kmixdeck at all".
@@ -429,7 +542,7 @@ void Mixer::autoRouteNewApp(const App &a) {
     const QString key = appKey(a);
     if (key.isEmpty() || m_layout.knownApps.contains(key)) return;
     if (!a.channelSlug.isEmpty()) { m_layout.knownApps << key; saveLayout(); return; }   // already on one of ours (e.g. restored)
-    if (m_graph.moveStream(a.id, Names::channelNode(m_layout.defaultChannel))) {
+    if (m_graph.moveStream(a.id, m_layout.channelEntry(m_layout.defaultChannel))) {
         m_layout.knownApps << key; saveLayout();
         qInfo() << "new application" << key << "→ default channel" << m_layout.defaultChannel;
     }

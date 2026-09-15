@@ -78,6 +78,7 @@ class ChannelObject : public ExportedObject {
     Q_PROPERTY(QString NodeName READ nodeName CONSTANT)
     Q_PROPERTY(QString InputDevice READ inputDevice WRITE setInputDevice)
     Q_PROPERTY(bool InputPresent READ inputPresent)
+    Q_PROPERTY(QString FxChain READ fxChainJson)   // FX-1…FX-7: JSON {enabled, chain:[…]}, "" = none
 public:
     ChannelObject(Mixer *mixer, const QString &slug, QObject *parent);
     QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.Channel"); }
@@ -90,8 +91,11 @@ public:
     QString nodeName() const { return Names::channelNode(m_slug); }
     QString inputDevice() const; void setInputDevice(const QString &);
     bool inputPresent() const;
+    QString fxChainJson() const;
 public Q_SLOTS:
     void ToggleMute();
+    bool SetFx(const QString &chainJson);           // FX-1: replace the chain (validated; false = refused)
+    bool SetFxControl(const QString &control, double value);   // FX-3 live
 private:
     Mixer *m_mixer; QString m_slug, m_icon;
 };
@@ -111,6 +115,7 @@ class MixObject : public ExportedObject {
     Q_PROPERTY(bool OutputPresent READ outputPresent)
     Q_PROPERTY(double Volume READ volume WRITE setVolume)   // master, linear 0..1 (MX-6)
     Q_PROPERTY(bool Muted READ muted WRITE setMuted)
+    Q_PROPERTY(QString FxChain READ fxChainJson)   // FX-6: the same chain model on the output side
 public:
     MixObject(Mixer *mixer, const QString &slug, QObject *parent);
     QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.Mix"); }
@@ -126,10 +131,13 @@ public:
     bool muted() const; void setMuted(bool);
     QStringList outputs() const;
     QString fallbackOutput() const; void setFallbackOutput(const QString &);
+    QString fxChainJson() const;
 public Q_SLOTS:
     void ToggleMute();
     void AddOutput(const QString &nodeName);
     void RemoveOutput(const QString &nodeName);
+    bool SetFx(const QString &chainJson);
+    bool SetFxControl(const QString &control, double value);
 private:
     Mixer *m_mixer; QString m_slug, m_icon;
 };
@@ -203,6 +211,8 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_PROPERTY(StringMap InputDevices READ inputDevices)
     Q_PROPERTY(QDBusObjectPath DefaultChannel READ defaultChannel WRITE setDefaultChannel)   // CH-5; "/" = off
     Q_PROPERTY(QString UndoDescription READ undoDescription)   // CH-9: "" = nothing to undo, else e.g. channel “Music”
+    Q_PROPERTY(QString FxTypes READ fxTypes CONSTANT)          // FX-4: built-in catalog as JSON [{type,label,params:[…]}]
+    Q_PROPERTY(QString FxPresets READ fxPresets CONSTANT)      // FX-4: name → chain JSON
 public:
     MixerAdaptor(Mixer *mixer, QObject *parent);
     QString version() const;
@@ -212,6 +222,8 @@ public:
     QDBusObjectPath defaultChannel() const;
     void setDefaultChannel(const QDBusObjectPath &p);
     QString undoDescription() const { return m_mixer->undoDescription(); }
+    QString fxTypes() const;
+    QString fxPresets() const;
 public Q_SLOTS:
     void Undo();                                      // CH-9: restore the last removed channel/mix
     QDBusObjectPath AddChannel(const QString &name);

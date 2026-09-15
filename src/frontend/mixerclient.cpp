@@ -9,6 +9,9 @@
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 #include <QDebug>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonDocument>
 #include <algorithm>
 
 namespace kmixdeck::frontend {
@@ -70,6 +73,13 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
             const QString p = props.value(QStringLiteral("DefaultChannel")).toString();
             const QString slug = p == QLatin1String("/") ? QString() : p.section(QLatin1Char('/'), -1);
             if (slug != m_defaultChannel) { m_defaultChannel = slug; Q_EMIT defaultChannelChanged(); }
+        }
+        if (rawProps.contains(QStringLiteral("FxTypes")) || rawProps.contains(QStringLiteral("FxPresets"))) {
+            const QString t = props.value(QStringLiteral("FxTypes")).toString();
+            const QString pr = props.value(QStringLiteral("FxPresets")).toString();
+            if (!t.isEmpty()) m_fxTypes = QJsonDocument::fromJson(t.toUtf8()).array().toVariantList();
+            if (!pr.isEmpty()) m_fxPresets = QJsonDocument::fromJson(pr.toUtf8()).object().toVariantMap();
+            Q_EMIT fxTypesReady();
         }
         if (props.contains(QStringLiteral("UndoDescription"))) {
             const QString u = props.value(QStringLiteral("UndoDescription")).toString();
@@ -245,9 +255,30 @@ void MixerClient::moveApp(const QString &appPath, const QString &channelSlug) {
     QDBusInterface(BUS, appPath, QStringLiteral("org.kmixdeck1.App"), QDBusConnection::sessionBus())
         .asyncCall(QStringLiteral("MoveTo"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/channel/%2").arg(ROOT, channelSlug))));
 }
+QString MixerClient::fxChain(const QString &kind, const QString &slug) const {
+    return (kind == QLatin1String("mix") ? m_mixes : m_channels).value(slug).value(QStringLiteral("FxChain")).toString();
+}
+void MixerClient::setFxChain(const QString &kind, const QString &slug, const QString &chainJson) {
+    auto &m = (kind == QLatin1String("mix") ? m_mixes : m_channels)[slug];
+    m[QStringLiteral("FxChain")] = chainJson;
+    QDBusInterface(BUS, QStringLiteral("%1/%2/%3").arg(ROOT, kind, slug),
+                   kind == QLatin1String("mix") ? QStringLiteral("org.kmixdeck1.Mix") : QStringLiteral("org.kmixdeck1.Channel"),
+                   QDBusConnection::sessionBus()).asyncCall(QStringLiteral("SetFx"), chainJson);
+    Q_EMIT kind == QLatin1String("mix") ? mixChanged(slug) : channelChanged(slug);
+}
+void MixerClient::setFxControl(const QString &kind, const QString &slug, const QString &control, double value) {
+    QDBusInterface(BUS, QStringLiteral("%1/%2/%3").arg(ROOT, kind, slug),
+                   kind == QLatin1String("mix") ? QStringLiteral("org.kmixdeck1.Mix") : QStringLiteral("org.kmixdeck1.Channel"),
+                   QDBusConnection::sessionBus()).asyncCall(QStringLiteral("SetFxControl"), control, value);
+}
 void MixerClient::setChannelDevice(const QString &slug, const QString &deviceNode) {
     m_channels[slug][QStringLiteral("InputDevice")] = deviceNode;
     setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("InputDevice"), deviceNode);
 }
 
 } // namespace kmixdeck::frontend
+
+bool kmixdeck::frontend::MixerClient::fxEnabled(const QString &kind, const QString &slug) const {
+    const QJsonObject o = QJsonDocument::fromJson(fxChain(kind, slug).toUtf8()).object();
+    return o.value(QStringLiteral("enabled")).toBool(true) && !o.value(QStringLiteral("chain")).toArray().isEmpty();
+}

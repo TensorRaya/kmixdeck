@@ -14,6 +14,18 @@ namespace kmixdeck {
 QString Layout::defaultPath() { return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QStringLiteral("/kmixdeck/layout.json"); }
 QString Layout::defaultPipewireConfPath() { return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QStringLiteral("/pipewire/pipewire.conf.d/90-kmixdeck.conf"); }
 
+// Entry point a stream should target: the fx entry when a chain is active, the plain sink otherwise (ADR 0008 D1/D3).
+QString Layout::channelEntry(const QString &slug) const {
+    const auto *c = channel(slug);
+    if (c && c->fx.enabled && !c->fx.effects.isEmpty()) return QStringLiteral("kmixdeck.fx.%1").arg(slug);
+    return Names::channelNode(slug);
+}
+QString Layout::mixEntry(const QString &slug) const {
+    const auto *m = mix(slug);
+    if (m && m->fx.enabled && !m->fx.effects.isEmpty()) return QStringLiteral("kmixdeck.fx.mix.%1").arg(slug);
+    return Names::mixNode(slug);
+}
+
 Layout Layout::starter() {
     Layout l;
     l.channels = {{QStringLiteral("game"), QStringLiteral("Game"), QStringLiteral("input-gaming")},
@@ -42,14 +54,21 @@ DeviceRef DeviceRef::fromJson(const QJsonObject &o) {
     return r;
 }
 
+QJsonArray fxChainArray(const fx::Chain &c) { QJsonArray a; for (const auto &e : c.effects) a.append(e.toJson()); return a; }
+
 QJsonObject Layout::toJson() const {
     QJsonArray ch, mx, in;
-    for (const auto &c : channels) ch.append(QJsonObject{{QStringLiteral("slug"), c.slug}, {QStringLiteral("name"), c.name}, {QStringLiteral("icon"), c.icon}});
+    for (const auto &c : channels) {
+        QJsonObject o{{QStringLiteral("slug"), c.slug}, {QStringLiteral("name"), c.name}, {QStringLiteral("icon"), c.icon}};
+        if (!c.fx.effects.isEmpty() || !c.fx.enabled) o.insert(QStringLiteral("fx"), QJsonObject{{QStringLiteral("enabled"), c.fx.enabled}, {QStringLiteral("chain"), fxChainArray(c.fx)}});
+        ch.append(o);
+    }
     for (const auto &m : mixes) {
         QJsonArray outs; for (const auto &d : m.outputs) outs.append(d.toJson());
         QJsonObject o{{QStringLiteral("slug"), m.slug}, {QStringLiteral("name"), m.name}, {QStringLiteral("icon"), m.icon}, {QStringLiteral("outputs"), outs}};
         if (!outs.isEmpty()) o.insert(QStringLiteral("outputDevice"), m.outputs.first().node);   // v1-compatible view: first entry
         if (!m.fallbackOutput.node.isEmpty()) o.insert(QStringLiteral("fallbackOutput"), m.fallbackOutput.toJson());
+        if (!m.fx.effects.isEmpty() || !m.fx.enabled) o.insert(QStringLiteral("fx"), QJsonObject{{QStringLiteral("enabled"), m.fx.enabled}, {QStringLiteral("chain"), fxChainArray(m.fx)}});
         mx.append(o);
     }
     for (const auto &i : inputs) in.append(QJsonObject{{QStringLiteral("slug"), i.slug}, {QStringLiteral("name"), i.name}, {QStringLiteral("device"), i.device.toJson()}, {QStringLiteral("channel"), i.channel}});
@@ -59,10 +78,11 @@ QJsonObject Layout::toJson() const {
 }
 Layout Layout::fromJson(const QJsonObject &o) {
     Layout l;
+    auto readFx = [](const QJsonObject &j) { fx::Chain c; if (j.contains(QStringLiteral("fx"))) c = fx::Chain::fromJson(j.value(QStringLiteral("fx")).toObject()); return c; };
     if (o.contains(QStringLiteral("defaultChannel"))) l.defaultChannel = o.value(QStringLiteral("defaultChannel")).toString();
     for (const auto &v : o.value(QStringLiteral("knownApps")).toArray()) l.knownApps << v.toString();
     for (const auto &v : o.value(QStringLiteral("links")).toArray()) { const auto j = v.toObject(); l.links.push_back({j.value(QStringLiteral("channel")).toString(), j.value(QStringLiteral("mix")).toString(), j.value(QStringLiteral("follows")).toString()}); }
-    for (const auto &v : o.value(QStringLiteral("channels")).toArray()) { const auto c = v.toObject(); l.channels.push_back({c.value(QStringLiteral("slug")).toString(), c.value(QStringLiteral("name")).toString(), c.value(QStringLiteral("icon")).toString()}); }
+    for (const auto &v : o.value(QStringLiteral("channels")).toArray()) { const auto c = v.toObject(); l.channels.push_back({c.value(QStringLiteral("slug")).toString(), c.value(QStringLiteral("name")).toString(), c.value(QStringLiteral("icon")).toString(), readFx(c)}); }
     for (const auto &v : o.value(QStringLiteral("mixes")).toArray()) {
         const auto m = v.toObject(); LayoutMix lm;
         lm.slug = m.value(QStringLiteral("slug")).toString(); lm.name = m.value(QStringLiteral("name")).toString(); lm.icon = m.value(QStringLiteral("icon")).toString();
@@ -71,6 +91,7 @@ Layout Layout::fromJson(const QJsonObject &o) {
         const QString legacy = m.value(QStringLiteral("outputDevice")).toString();
         if (lm.outputs.isEmpty() && !legacy.isEmpty()) lm.outputs.push_back({legacy, legacy, {}});
         if (m.contains(QStringLiteral("fallbackOutput"))) lm.fallbackOutput = DeviceRef::fromJson(m.value(QStringLiteral("fallbackOutput")).toObject());
+        lm.fx = readFx(m);
         l.mixes.push_back(lm);
     }
     for (const auto &v : o.value(QStringLiteral("inputs")).toArray()) {
@@ -117,28 +138,46 @@ QString Layout::toPipewireConf() const {
     QString out;
     out += QStringLiteral("# Generated by kmixdeckd — do not edit; change the layout through kmixdeck/kmixdeck-kde instead.\n"
                           "# ADR 0002: channel = null sink, mix = null sink, cell = loopback whose playback volume is the fader.\n"
+                          "# ADR 0008: a channel/mix with effects gets a filter-chain instead of the plain sink; its capture node\n"
+                          "# keeps the plain name, everything else targets that name unchanged.\n"
                           "# Every loopback has node.dont-fallback so a missing target never silently becomes the default sink (feedback).\n"
                           "# ADR 0007: device edges (inputs, mix outputs) carry node.linger — they wait for an absent device and\n"
                           "# WirePlumber links them by itself when it appears. A mix with NO output configured parks on kmixdeck.null.\n\n");
     out += QStringLiteral("context.objects = [\n");
     out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = \"kmixdeck.null\" media.name = \"kmixdeck.null\" node.description = \"kmixdeck (unrouted)\" media.class = Audio/Sink object.linger = true audio.position = [ FL FR ] priority.session = 0 priority.driver = 0 node.passive = true } }\n");
-    for (const auto &c : channels)
+    const auto fxModule = [&](const fx::Chain &chain, const QString &desc, const QString &entry, const QString &exit,
+                              const QString &mediaName, const QString &target, const QString &prefix) {
+        const QString args = fx::renderFilterChainArgs(chain, desc, entry, exit, mediaName, target, prefix);
+        if (args.isEmpty()) return false;
+        out += QStringLiteral("  { name = libpipewire-module-filter-chain args = %1 }\n").arg(args);
+        return true;
+    };
+    for (const auto &c : channels) {
+        // plain sink first — fx-enabled channels keep it as the tail the chain plays into (ADR 0008 D1)
         out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = %1 media.name = %1 node.description = %2 media.class = Audio/Sink object.linger = true audio.position = [ FL FR ] monitor.channel-volumes = true node.passive = true } }\n")
                    .arg(q(Names::channelNode(c.slug)), q(c.name));
-    for (const auto &m : mixes)
+        fxModule(c.fx, c.name, QStringLiteral("kmixdeck.fx.%1").arg(c.slug), QStringLiteral("kmixdeck.fx.%1.out").arg(c.slug),
+                 Names::channelNode(c.slug), Names::channelNode(c.slug), c.slug);
+    }
+    for (const auto &m : mixes) {
         out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = %1 media.name = %1 node.description = %2 media.class = Audio/Sink object.linger = true audio.position = [ FL FR ] monitor.channel-volumes = true } }\n")
                    .arg(q(Names::mixNode(m.slug)), q(QStringLiteral("Mix: ") + m.name));
+        fxModule(m.fx, QStringLiteral("Mix: ") + m.name, QStringLiteral("kmixdeck.fx.mix.%1").arg(m.slug), QStringLiteral("kmixdeck.fx.mix.%1.out").arg(m.slug),
+                 Names::mixNode(m.slug), Names::mixNode(m.slug), m.slug);
+    }
     out += QStringLiteral("]\n\ncontext.modules = [\n");
     const auto mod = [&](const QString &args) { out += QStringLiteral("  { name = libpipewire-module-loopback args = %1 }\n").arg(args); };
     for (const auto &c : channels)
         for (const auto &m : mixes) {
             const QString cell = Names::cellNode(c.slug, m.slug);
+            // cell capture sits on the PLAIN channel sink — that is where processed audio arrives (FX-3);
+            // only apps/inputs aim at channelEntry so the chain actually runs in front of everything.
             mod(loopbackArgs(c.name + QStringLiteral(" → ") + m.name, cell + QStringLiteral(".in"), Names::channelNode(c.slug), true, {}, false,
-                             cell, Names::mixNode(m.slug), {}, false, true));
+                             cell, mixEntry(m.slug), {}, false, true));
         }
     for (const auto &i : inputs)   // physical input → channel (ADR 0007 D2); capture side waits for the device
         mod(loopbackArgs(QStringLiteral("Input: ") + i.name, EdgeNames::inputNode(i.slug) + QStringLiteral(".in"), i.device.node, false, i.device.positions, true,
-                         EdgeNames::inputNode(i.slug), Names::channelNode(i.channel), {}, false, true));
+                         EdgeNames::inputNode(i.slug), channelEntry(i.channel), {}, false, true));
     for (const auto &m : mixes) {
         if (m.outputs.isEmpty())   // no output configured → park; linger anyway, the same node is retargeted onto devices later
             mod(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → output"), EdgeNames::outputNode(m.slug, 0) + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,

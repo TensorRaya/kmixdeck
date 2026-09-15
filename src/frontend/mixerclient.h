@@ -93,6 +93,17 @@ public:
     Q_INVOKABLE void    toggleMixMute(const QString &slug);
     Q_INVOKABLE bool    mixOutputPresent(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("OutputPresent"), true).toBool(); }
 
+    // ---- effects (ADR 0008): kind is "channel" or "mix"
+    Q_INVOKABLE QString channelIcon(const QString &slug) const { const auto i = m_channels.value(slug).value(QStringLiteral("Icon")).toString(); return i.isEmpty() ? QStringLiteral("audio-card") : i; }
+    Q_INVOKABLE QString mixIcon(const QString &slug) const { const auto i = m_mixes.value(slug).value(QStringLiteral("Icon")).toString(); return i.isEmpty() ? QStringLiteral("audio-headphones") : i; }
+    /// True when a non-empty, enabled effect chain sits on that channel/mix (ADR 0008) — for the highlighted FX button.
+    Q_INVOKABLE bool    fxEnabled(const QString &kind, const QString &slug) const;
+    Q_INVOKABLE QString fxChain(const QString &kind, const QString &slug) const;
+    Q_INVOKABLE void    setFxChain(const QString &kind, const QString &slug, const QString &chainJson);
+    Q_INVOKABLE void    setFxControl(const QString &kind, const QString &slug, const QString &control, double value);
+    Q_INVOKABLE QVariantList fxTypes() const { return m_fxTypes; }
+    Q_INVOKABLE QVariantMap fxPresets() const { return m_fxPresets; }
+
 Q_SIGNALS:
     void errorOccurred(const QString &message);
     void defaultChannelChanged();
@@ -105,6 +116,7 @@ Q_SIGNALS:
     void appsChanged();
     void outputDevicesChanged();
     void inputDevicesChanged();
+    void fxTypesReady();
     void metersEnabledChanged();
     void peaksChanged();                                        // once per tick
     void mixChanged(const QString &slug);
@@ -125,6 +137,7 @@ private:
 
     bool m_available = false, m_pwConnected = false;
     QMap<QString, QVariantMap> m_channels, m_mixes, m_cells;   // keyed by slug / slug / "ch/mix"
+    QVariantList m_fxTypes; QVariantMap m_fxPresets;           // FX catalog + presets, read once
     QMap<QString, QVariantMap> m_apps;                          // keyed by object path
     QMap<QString, QString> m_outputDevices, m_inputDevices;    // node.name → description (both directions)
     QString m_defaultChannel, m_undoDescription;

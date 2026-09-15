@@ -9,6 +9,7 @@
 #include <QVector>
 #include <QString>
 #include <optional>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <functional>
 #include "pipewire/graph.h"
@@ -81,6 +82,20 @@ public:
     Q_INVOKABLE void   renameChannel(const QString &slug, const QString &name);
     Q_INVOKABLE void   renameMix(const QString &slug, const QString &name);
     Q_INVOKABLE QString mixCaptureSource(const QString &slug) const;
+    // ---- effects per channel/mix (ADR 0008) --------------------------------------------------------
+    /// The chain of a channel or mix as JSON ({enabled, chain:[{type,params,…}]}). {} when none.
+    Q_INVOKABLE QJsonObject fxChain(const QString &slug) const;
+    /// Validate + store + apply the chain (live, no PipeWire restart). False keeps the old chain; the
+    /// refusal reason goes to the log. An empty chain clears the effects.
+    Q_INVOKABLE bool setFxChain(const QString &slug, const QJsonObject &chainJson);
+    /// Live control update for one object's chain. `control` is the short key ("threshold") or the full
+    /// Props key ("gate:Threshold (dB)"); resolved against the object's own chain, first match wins.
+    Q_INVOKABLE bool setFxControl(const QString &slug, const QString &control, double value);
+    /// The built-in catalog for UIs (FX-4): [{type,label,description,params:[{key,label,unit,min,max,def}]}].
+    Q_INVOKABLE QJsonArray fxTypes() const;
+    /// One-click chains, name → chain JSON (FX-4). Editable afterwards: a preset is just a starting chain.
+    Q_INVOKABLE QJsonObject fxPresets() const;
+
     /// Bus-facing single-device view of the output list (first entry; empty when none).
     Q_INVOKABLE QString mixOutputDevice(const QString &slug) const;
     Q_INVOKABLE void    setMixOutputDevice(const QString &slug, const QString &nodeName);
@@ -191,6 +206,7 @@ private:
     void restorePendingCellStates();
     QJsonObject m_undo;                                  // {"what","kind","layout":{…},"cells":[{ch,mix,volume,mute}], "links":[…], "inputs":[…]}
     QHash<QString, QPair<float, bool>> m_pendingCellState;   // cell node → (volume, mute) to apply once the node exists
+    void applyFx(const QString &slug);                                   // rebuild one chain live (ADR 0008)
     void propagateLinks(const QString &ch, const QString &sourceMix);   // source cell changed → push to followers
     void breakLink(const QString &ch, const QString &mix);
     void autoRouteNewApp(const App &a);

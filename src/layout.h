@@ -4,6 +4,8 @@
 // The declared layout: what the user configured, independent of what PipeWire currently shows.
 // Persisted as JSON; also rendered to a pipewire.conf.d fragment so the graph exists before the
 // service runs (and keeps running if the service dies — ADR 0002/0005). Devices: ADR 0007.
+#include "fx.h"
+
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -23,13 +25,14 @@ struct DeviceRef {
     static DeviceRef fromJson(const QJsonObject &o);
 };
 
-struct LayoutChannel { QString slug, name, icon; };
+struct LayoutChannel { QString slug, name, icon; fx::Chain fx; };
 /// A physical input feeding a channel (mic, capture card, BT headset mic) — ADR 0007 D2.
 struct LayoutInput   { QString slug, name; DeviceRef device; QString channel; };
 struct LayoutMix     {
     QString slug, name, icon;
     QVector<DeviceRef> outputs;   // MX-9: several hardware outputs at once
     DeviceRef fallbackOutput;     // DV-15: used while outputs[0] is absent; empty node = none
+    fx::Chain fx;                 // FX-6: same chain model on the output side
 };
 
 /// MX-7: cell (channel, mix) mirrors volume+mute of cell (channel, follows). Broken by touching the follower.
@@ -65,6 +68,10 @@ struct Layout {
     const LayoutChannel *channel(const QString &slug) const;
     const LayoutMix *mix(const QString &slug) const;
     const LayoutInput *input(const QString &slug) const;
+
+    /// Where streams should aim: the fx entry when a chain is active, the plain node otherwise (ADR 0008).
+    QString channelEntry(const QString &slug) const;
+    QString mixEntry(const QString &slug) const;
 };
 
 /// Node names of the device-edge loopbacks (ADR 0007).

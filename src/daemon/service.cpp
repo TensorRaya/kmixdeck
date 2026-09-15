@@ -5,6 +5,7 @@
 #include <QDBusMessage>
 #include <QDBusMetaType>
 #include <QDBusError>
+#include <QJsonDocument>
 #include <QDebug>
 #include <QFile>
 #include <cmath>
@@ -68,10 +69,23 @@ void ChannelObject::setInputDevice(const QString &d) {
     if (!m_mixer->setChannelInputDevice(m_slug, d)) rejectProperty(QStringLiteral("InputDevice"), QStringLiteral("unknown input device (see Mixer.InputDevices)"));
 }
 bool ChannelObject::inputPresent() const { return m_mixer->channelInputPresent(m_slug); }
+QString ChannelObject::fxChainJson() const { return QJsonDocument(m_mixer->fxChain(m_slug)).toJson(QJsonDocument::Compact); }
+bool ChannelObject::SetFx(const QString &chainJson) {
+    const QJsonDocument doc = QJsonDocument::fromJson(chainJson.toUtf8());
+    if (!doc.isObject()) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("expected a JSON object")); return false; }
+    if (!m_mixer->setFxChain(m_slug, doc.object())) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("refused: see daemon log")); return false; }
+    emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("FxChain"), fxChainJson()}});
+    return true;
+}
+bool ChannelObject::SetFxControl(const QString &control, double value) {
+    if (!m_mixer->setFxControl(m_slug, control, value)) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("no node for control '%1'").arg(control)); return false; }
+    return true;
+}
 QVariantMap ChannelObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), m_icon},
             {QStringLiteral("Trim"), trim()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("NodeName"), nodeName()},
-            {QStringLiteral("InputDevice"), inputDevice()}, {QStringLiteral("InputPresent"), inputPresent()}};
+            {QStringLiteral("InputDevice"), inputDevice()}, {QStringLiteral("InputPresent"), inputPresent()},
+            {QStringLiteral("FxChain"), fxChainJson()}};
 }
 
 // ---- Mix
@@ -89,6 +103,18 @@ bool MixObject::muted() const { return m_mixer->mixMuted(m_slug); }
 void MixObject::setMuted(bool m) { m_mixer->setMixMuted(m_slug, m); }
 QStringList MixObject::outputs() const { QStringList l; for (const auto &d : m_mixer->mixOutputs(m_slug)) l << d.node; return l; }
 QString MixObject::fallbackOutput() const { return m_mixer->mixFallbackOutput(m_slug).node; }
+QString MixObject::fxChainJson() const { return QJsonDocument(m_mixer->fxChain(m_slug)).toJson(QJsonDocument::Compact); }
+bool MixObject::SetFx(const QString &chainJson) {
+    const QJsonDocument doc = QJsonDocument::fromJson(chainJson.toUtf8());
+    if (!doc.isObject()) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("expected a JSON object")); return false; }
+    if (!m_mixer->setFxChain(m_slug, doc.object())) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("refused: see daemon log")); return false; }
+    emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("FxChain"), fxChainJson()}});
+    return true;
+}
+bool MixObject::SetFxControl(const QString &control, double value) {
+    if (!m_mixer->setFxControl(m_slug, control, value)) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("no node for control '%1'").arg(control)); return false; }
+    return true;
+}
 void MixObject::setFallbackOutput(const QString &n) { m_mixer->setMixFallbackOutput(m_slug, m_mixer->deviceRef(n)); }
 void MixObject::AddOutput(const QString &n) {
     if (n.isEmpty()) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("empty node name")); return; }
@@ -109,7 +135,8 @@ QVariantMap MixObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), m_icon},
             {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("Outputs"), outputs()}, {QStringLiteral("FallbackOutput"), fallbackOutput()},
             {QStringLiteral("CaptureSource"), captureSource()}, {QStringLiteral("NodeName"), nodeName()},
-            {QStringLiteral("OutputPresent"), outputPresent()}, {QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()}};
+            {QStringLiteral("OutputPresent"), outputPresent()}, {QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()},
+            {QStringLiteral("FxChain"), fxChainJson()}};
 }
 
 // ---- App
@@ -182,6 +209,8 @@ void LevelsAdaptor::syncTargets() {
 MixerAdaptor::MixerAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor(parent), m_mixer(mixer) {}
 QString MixerAdaptor::version() const { return QStringLiteral(KMIXDECK_VERSION_STRING); }
 bool MixerAdaptor::connected() const { return m_mixer->connected(); }
+QString MixerAdaptor::fxTypes() const { return QJsonDocument(QJsonArray(m_mixer->fxTypes())).toJson(QJsonDocument::Compact); }
+QString MixerAdaptor::fxPresets() const { return QJsonDocument(m_mixer->fxPresets()).toJson(QJsonDocument::Compact); }
 StringMap MixerAdaptor::outputDevices() const {
     StringMap m;
     for (const auto &d : m_mixer->outputDevices()) {
@@ -317,7 +346,8 @@ ManagedObjects Service::managedObjects() const {
     out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
         {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()},
          {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())},
-         {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}}}});
+         {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()},
+         {QStringLiteral("FxTypes"), m_mixerAdaptor->fxTypes()}, {QStringLiteral("FxPresets"), m_mixerAdaptor->fxPresets()}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)
         out.insert(QDBusObjectPath(it.key()), InterfaceMap{{it.value()->interfaceName(), it.value()->properties()}});
     return out;

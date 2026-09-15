@@ -24,5 +24,16 @@
     <property name="Volume" type="d" access="readwrite"/>
     <property name="Muted" type="b" access="readwrite"/>
     <method name="ToggleMute"/>
+    <!-- same effect-chain contract as on Channel (FX-6: a limiter on the Stream mix is the common case) -->
+    <property name="FxChain" type="s" access="read"/>
+    <method name="SetFx">
+      <arg name="chainJson" type="s" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
+    <method name="SetFxControl">
+      <arg name="control" type="s" direction="in"/>
+      <arg name="value" type="d" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
   </interface>
 </node>

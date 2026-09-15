@@ -71,6 +71,16 @@ Kirigami.ApplicationWindow {
     Shortcut { sequences: [StandardKey.Undo]; enabled: Mixer.undoDescription.length > 0; onActivated: Mixer.undo() }
     RenameDialog { id: renameDialog }
     function renameDialogOpen(kind, slug) { renameDialog.open(kind, slug) }
+    // FX panel opens as a dialog layer over the matrix — narrow windows keep the grid behind them.
+    function fxPanelOpen(kind, slug) {
+        const page = fxPanelComp.createObject(this, {kind: kind, slug: slug,
+            title: kind === "mix" ? Mixer.mixName(slug) : Mixer.channelName(slug)})
+        root.pageStack.pushDialogLayer(page)
+    }
+    Component {
+        id: fxPanelComp
+        FxPanel {}
+    }
     function addDialogOpen(kind) { addDialog.open(kind) }
 
     footer: QQC2.ToolBar {

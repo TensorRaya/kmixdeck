@@ -2,6 +2,7 @@
 add_library(kmixdeck_core STATIC
     mixer.cpp mixer.h
     layout.cpp layout.h
+    fx.cpp fx.h
     pipewire/graph.cpp pipewire/graph.h
     pipewire/meters.cpp pipewire/meters.h
 )
@@ -46,6 +47,8 @@ ecm_add_qml_module(kmixdeck-kde
         qml/MixHeader.qml
         qml/ChannelHeader.qml
         qml/RenameDialog.qml
+        qml/FxPanel.qml
+        qml/Fader.qml
         qml/LevelMeter.qml
 )
 target_include_directories(kmixdeck-kde PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/.. frontend)

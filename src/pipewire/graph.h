@@ -64,11 +64,15 @@ public:
     /// Load a module-loopback with the given SPA-JSON args (built by kmixdeck::loopbackArgs so runtime and
     /// config fragment can never drift). Modules live in our context — as long as the daemon. The persistent
     /// graph is the generated pipewire.conf.d fragment (DV-1/DV-5).
-    void loadLoopback(const QString &args);
+    /// `module` lets an fx chain load libpipewire-module-filter-chain with the same plumbing.
+    void loadLoopback(const QString &args, const char *module = "libpipewire-module-loopback");
     /// Loopback for a mix output: capture from the mix, play to `device` (node.name) or stay unlinked ("").
     /// No dont-reconnect so it can be retargeted later; dont-fallback so it never hits the default sink.
     /// The hidden parking sink unrouted mix outputs play to (never default: priority.session 0, passive).
     void createParkingSink();
+    /// Set one LADSPA/builtin control on a filter-chain node by name ("gate:Threshold (dB)"), live.
+    /// The name is exactly what the node's Props expose (measured: filter-chain puts controls there).
+    void setControl(uint32_t nodeId, const QString &control, double value);
     void destroyObject(uint32_t id);
     /// Current sink a stream's output ports are linked to (node id), or 0. Derived from Link globals.
     uint32_t streamSink(uint32_t streamId) const;

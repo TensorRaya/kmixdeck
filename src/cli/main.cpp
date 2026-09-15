@@ -163,6 +163,11 @@ int main(int argc, char *argv[]) {
         "  levels                                     live peak meters (Ctrl-C to stop)\n"
         "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
         "  cell    link <ch> <mix> <other-mix|none>   MX-7: this cell follows the other mix's cell (volume+mute)\n"
+        "  fx      types                                  built-in effect catalog (JSON)\n"
+        "  fx      presets                                one-click chains (FX-4), editable starting points\n"
+        "  fx      get|set|clear <channel|mix> <slug> ['<json>']   ordered insert chain on one object\n"
+        "  fx      copy <channel|mix> <from> <kind> <to>          copy the chain to another object\n"
+        "  fx      control <channel|mix> <slug> <node:Control> <value>   live tweak, no reload\n"
         "  app     list|move <id|name> <channel>          running application streams\n"
         "  watch                                      print property changes as they happen\n\n"
         "Levels: linear 0..1, or NdB (e.g. -12dB), or N% (UI/cubic scale). Exit codes: 0 ok, 1 usage, 2 no service, 3 not found, 4 rejected."));
@@ -252,6 +257,56 @@ int main(int argc, char *argv[]) {
             return setProp(pathOf(a[2]), iface, "OutputDevice", dev, &e) ? Ok : fail(Rejected, e);
         }
         return fail(Usage, "unknown subcommand '" + sub + "'");
+    }
+    if (cmd == "fx") {   // effects per channel/mix (ADR 0008)
+        // fx types | fx get <channel|mix> <slug> | fx set <channel|mix> <slug> '<json>' | fx control <channel|mix> <slug> <key> <value>
+        if (sub == "types") {
+            const QString t = unwrap(o.mixer.value("FxTypes")).toString();
+            out << t << "\n"; return Ok;
+        }
+        if (sub == "presets") {   // FX-4: name → chain JSON
+            const QString t = unwrap(o.mixer.value("FxPresets")).toString();
+            out << t << "\n"; return Ok;
+        }
+        if (!need(4)) return Usage;
+        const bool ch = a[2] == "channel";
+        if (!ch && a[2] != "mix") return fail(Usage, "expected 'channel' or 'mix'");
+        const auto &objs = ch ? o.channels : o.mixes;
+        const QString iface = ch ? "org.kmixdeck1.Channel" : "org.kmixdeck1.Mix";
+        const QString path = QStringLiteral("%1/%2/%3").arg(ROOT, ch ? "channel" : "mix", a[3]);
+        if (!objs.contains(path)) return fail(NotFound, QStringLiteral("no %1 '%2'").arg(a[2], a[3]));
+        QDBusInterface obj(BUS, path, iface, QDBusConnection::sessionBus());
+        if (sub == "get") { out << unwrap(objs.value(path).value("FxChain")).toString() << "\n"; return Ok; }
+        if (sub == "set") {
+            if (!need(5)) return Usage;
+            const QDBusMessage r = obj.call("SetFx", a[4]);
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        if (sub == "clear") {
+            const QDBusMessage r = obj.call("SetFx", "{}");
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        if (sub == "copy") {   // FX-7: same chain onto another object, even while its device is absent
+            if (!need(5)) return Usage;
+            const bool toCh = a[4] == "channel";
+            if (!toCh && a[4] != "mix") return fail(Usage, "expected 'channel' or 'mix'");
+            const QString toPath = QStringLiteral("%1/%2/%3").arg(ROOT, toCh ? "channel" : "mix", a.size() > 5 ? a[5] : QString());
+            const auto &toObjs = toCh ? o.channels : o.mixes;
+            if (!toObjs.contains(toPath)) return fail(NotFound, "target not found");
+            const QString chain = unwrap(objs.value(path).value("FxChain")).toString();
+            if (chain.isEmpty() || chain == "{}") return fail(NotFound, "source has no chain");
+            QDBusInterface to(BUS, toPath, toCh ? "org.kmixdeck1.Channel" : "org.kmixdeck1.Mix", QDBusConnection::sessionBus());
+            const QDBusMessage r = to.call("SetFx", chain);
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        if (sub == "control") {   // live: full Props key, gate:Threshold (dB) — quoting is the shell's problem
+            if (!need(6)) return Usage;
+            bool okNum = false; const double v = a[5].toDouble(&okNum);
+            if (!okNum) return fail(Usage, "value must be a number");
+            const QDBusMessage r = obj.call("SetFxControl", a[4], v);
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        return fail(Usage, "unknown fx subcommand '" + sub + "'");
     }
     if (cmd == "cell") {
         if (!need(4)) return Usage;

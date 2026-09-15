@@ -22,6 +22,10 @@
     <!-- CH-9: the last RemoveChannel/RemoveMix can be undone (layout, links, inputs, outputs AND every fader).
          UndoDescription is "" when there is nothing, else a human string like: channel “Music”. -->
     <property name="UndoDescription" type="s" access="read"/>
+    <!-- FX-4: built-in effect catalog as JSON [{type,label,description,params:[{key,label,unit,min,max,def}]}] -->
+    <property name="FxTypes" type="s" access="read"/>
+    <!-- FX-4: one-click chains as JSON {name: chain}; a preset is just a starting point, editable afterwards -->
+    <property name="FxPresets" type="s" access="read"/>
     <method name="Undo"/>
     <!-- Create a channel (input group). Returns the new object path. Slug derived from name. -->
     <method name="AddChannel">
