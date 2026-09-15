@@ -24,12 +24,33 @@ ColumnLayout {
         }
     }
 
-    Kirigami.Heading {
+    RowLayout {
         Layout.fillWidth: true
-        level: 3
-        text: Mixer.channelName(header.channel)
-        elide: Text.ElideRight
-        verticalAlignment: Text.AlignVCenter
+        spacing: 0
+        Kirigami.Heading {
+            Layout.fillWidth: true
+            level: 3
+            text: Mixer.channelName(header.channel)
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+            TapHandler { acceptedButtons: Qt.RightButton; onTapped: ctxMenu.popup() }
+        }
+        QQC2.ToolButton {
+            icon.name: "overflow-menu"
+            display: QQC2.AbstractButton.IconOnly
+            text: i18n("Channel actions")
+            onClicked: ctxMenu.popup()
+            QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+        }
+        QQC2.Menu {
+            id: ctxMenu
+            QQC2.MenuItem { text: i18n("Rename…"); icon.name: "edit-rename"; onTriggered: applicationWindow().renameDialogOpen("channel", header.channel) }
+            QQC2.MenuSeparator {}
+            QQC2.MenuItem {
+                text: i18n("Remove channel"); icon.name: "edit-delete"
+                onTriggered: Mixer.removeChannel(header.channel)   // undo is offered by the toast (CH-9)
+            }
+        }
     }
     QQC2.ToolButton {
         id: inButton

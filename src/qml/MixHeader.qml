@@ -52,6 +52,20 @@ QQC2.Control {
                 text: header.masterMuted ? i18nc("@title mix header while muted, %1 mix name", "%1 — MUTED", Mixer.mixName(header.mix)) : Mixer.mixName(header.mix)
                 color: header.masterMuted ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
                 elide: Text.ElideRight
+                TapHandler { acceptedButtons: Qt.RightButton; onTapped: mixCtxMenu.popup() }
+            }
+            QQC2.ToolButton {
+                icon.name: "overflow-menu"
+                display: QQC2.AbstractButton.IconOnly
+                text: i18n("Mix actions")
+                onClicked: mixCtxMenu.popup()
+                QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+            }
+            QQC2.Menu {
+                id: mixCtxMenu
+                QQC2.MenuItem { text: i18n("Rename…"); icon.name: "edit-rename"; onTriggered: applicationWindow().renameDialogOpen("mix", header.mix) }
+                QQC2.MenuSeparator {}
+                QQC2.MenuItem { text: i18n("Remove mix"); icon.name: "edit-delete"; onTriggered: Mixer.removeMix(header.mix) }
             }
             // horizontal mix meter next to the name
             LevelMeter {

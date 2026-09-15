@@ -189,6 +189,9 @@ StringMap MixerAdaptor::outputDevices() const {
     }
     return m;
 }
+void MixerAdaptor::Undo() {
+    if (!m_mixer->undo()) static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.Failed"), QStringLiteral("nothing to undo"));
+}
 QDBusObjectPath MixerAdaptor::defaultChannel() const {
     const QString s = m_mixer->defaultChannel();
     return QDBusObjectPath(s.isEmpty() ? QStringLiteral("/") : Service::channelPath(s));
@@ -254,6 +257,9 @@ Service::Service(QObject *parent) : QObject(parent) {
     connect(&m_mixer, &Mixer::outputDevicesChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->outputDevices() : StringMap{})}});
     });
+    connect(&m_mixer, &Mixer::undoChanged, this, [this] {
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("UndoDescription"), m_mixer.undoDescription()}});
+    });
     connect(&m_mixer, &Mixer::defaultChannelChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->defaultChannel() : QDBusObjectPath(QStringLiteral("/")))}});
     });
@@ -311,7 +317,7 @@ ManagedObjects Service::managedObjects() const {
     out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
         {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()},
          {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())},
-         {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}}}});
+         {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)
         out.insert(QDBusObjectPath(it.key()), InterfaceMap{{it.value()->interfaceName(), it.value()->properties()}});
     return out;

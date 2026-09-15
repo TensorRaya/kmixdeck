@@ -19,6 +19,10 @@
     <property name="InputDevices" type="a{ss}" access="read"/>
     <!-- CH-5: never-seen applications are moved here on first appearance. "/" disables auto-routing. -->
     <property name="DefaultChannel" type="o" access="readwrite"/>
+    <!-- CH-9: the last RemoveChannel/RemoveMix can be undone (layout, links, inputs, outputs AND every fader).
+         UndoDescription is "" when there is nothing, else a human string like: channel “Music”. -->
+    <property name="UndoDescription" type="s" access="read"/>
+    <method name="Undo"/>
     <!-- Create a channel (input group). Returns the new object path. Slug derived from name. -->
     <method name="AddChannel">
       <arg name="name" type="s" direction="in"/>

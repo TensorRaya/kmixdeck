@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QRegularExpression>
 #include <QDebug>
+#include <QJsonArray>
 #include <cmath>
 
 namespace kmixdeck {
@@ -454,6 +455,7 @@ QString Mixer::addChannel(const QString &displayName, QString *error) {
     if (slug.isEmpty()) { if (error) *error = QStringLiteral("name has no usable characters"); return {}; }
     if (m_layout.channel(slug)) { if (error) *error = QStringLiteral("channel '%1' already exists").arg(slug); return {}; }
     m_layout.channels.push_back({slug, displayName.trimmed(), {}});
+    if (!m_undo.isEmpty()) { m_undo = {}; Q_EMIT undoChanged(); }
     saveLayout(); reconcile();
     return slug;
 }
@@ -462,10 +464,84 @@ QString Mixer::addMix(const QString &displayName, QString *error) {
     if (slug.isEmpty()) { if (error) *error = QStringLiteral("name has no usable characters"); return {}; }
     if (m_layout.mix(slug)) { if (error) *error = QStringLiteral("mix '%1' already exists").arg(slug); return {}; }
     m_layout.mixes.push_back({slug, displayName.trimmed(), {}, {}, {}});
+    if (!m_undo.isEmpty()) { m_undo = {}; Q_EMIT undoChanged(); }
     saveLayout(); reconcile();
     return slug;
 }
+// CH-9 -----------------------------------------------------------------------------------------------------
+void Mixer::snapshotForUndo(const QString &kind, const QString &slug) {
+    QJsonObject u{{QStringLiteral("kind"), kind}};
+    QJsonArray cells, links, inputs;
+    const bool isCh = kind == QLatin1String("channel");
+    QString name = isCh ? channelName(slug) : mixName(slug);
+    u.insert(QStringLiteral("what"), (isCh ? QStringLiteral("channel “%1”") : QStringLiteral("mix “%1”")).arg(name));
+    for (auto it = m_cells.cbegin(); it != m_cells.cend(); ++it) {
+        const QStringList parts = it.key().mid(14).split(QLatin1Char('.'));   // "kmixdeck.link." is 14 chars
+        if (parts.size() != 2 || parts[isCh ? 0 : 1] != slug) continue;
+        cells.append(QJsonObject{{QStringLiteral("channel"), parts[0]}, {QStringLiteral("mix"), parts[1]}, {QStringLiteral("volume"), it->volume}, {QStringLiteral("mute"), it->mute}});
+    }
+    for (const auto &l : m_layout.links)
+        if ((isCh && l.channel == slug) || (!isCh && (l.mix == slug || l.follows == slug)))
+            links.append(QJsonObject{{QStringLiteral("channel"), l.channel}, {QStringLiteral("mix"), l.mix}, {QStringLiteral("follows"), l.follows}});
+    if (isCh) {
+        for (const auto &i : m_layout.inputs) if (i.channel == slug || i.slug == slug)
+            inputs.append(QJsonObject{{QStringLiteral("slug"), i.slug}, {QStringLiteral("name"), i.name}, {QStringLiteral("device"), i.device.toJson()}, {QStringLiteral("channel"), i.channel}});
+        if (auto *c = m_layout.channel(slug)) u.insert(QStringLiteral("layout"), QJsonObject{{QStringLiteral("slug"), c->slug}, {QStringLiteral("name"), c->name}, {QStringLiteral("icon"), c->icon}});
+        u.insert(QStringLiteral("wasDefault"), m_layout.defaultChannel == slug);
+        // channel trim/mute live on the channel sink
+        if (auto s = m_sinks.constFind(Names::channelNode(slug)); s != m_sinks.constEnd()) { u.insert(QStringLiteral("trim"), s->volume); u.insert(QStringLiteral("muted"), s->mute); }
+    } else if (auto *m = m_layout.mix(slug)) {
+        QJsonArray outs; for (const auto &d : m->outputs) outs.append(d.toJson());
+        u.insert(QStringLiteral("layout"), QJsonObject{{QStringLiteral("slug"), m->slug}, {QStringLiteral("name"), m->name}, {QStringLiteral("icon"), m->icon}, {QStringLiteral("outputs"), outs}, {QStringLiteral("fallbackOutput"), m->fallbackOutput.toJson()}});
+        if (auto s = m_sinks.constFind(Names::mixNode(slug)); s != m_sinks.constEnd()) { u.insert(QStringLiteral("trim"), s->volume); u.insert(QStringLiteral("muted"), s->mute); }
+    }
+    u.insert(QStringLiteral("cells"), cells); u.insert(QStringLiteral("links"), links); u.insert(QStringLiteral("inputs"), inputs);
+    m_undo = u; Q_EMIT undoChanged();
+}
+bool Mixer::undo() {
+    if (m_undo.isEmpty()) return false;
+    const QJsonObject u = m_undo; m_undo = {};
+    const QJsonObject lay = u.value(QStringLiteral("layout")).toObject();
+    const QString slug = lay.value(QStringLiteral("slug")).toString();
+    const bool isCh = u.value(QStringLiteral("kind")).toString() == QLatin1String("channel");
+    if (slug.isEmpty() || (isCh ? m_layout.channel(slug) != nullptr : m_layout.mix(slug) != nullptr)) { Q_EMIT undoChanged(); return false; }
+    if (isCh) m_layout.channels.push_back({slug, lay.value(QStringLiteral("name")).toString(), lay.value(QStringLiteral("icon")).toString()});
+    else {
+        LayoutMix m; m.slug = slug; m.name = lay.value(QStringLiteral("name")).toString(); m.icon = lay.value(QStringLiteral("icon")).toString();
+        for (const auto &d : lay.value(QStringLiteral("outputs")).toArray()) m.outputs.push_back(DeviceRef::fromJson(d.toObject()));
+        m.fallbackOutput = DeviceRef::fromJson(lay.value(QStringLiteral("fallbackOutput")).toObject());
+        m_layout.mixes.push_back(m);
+    }
+    for (const auto &v : u.value(QStringLiteral("links")).toArray()) { const auto j = v.toObject(); m_layout.links.push_back({j.value(QStringLiteral("channel")).toString(), j.value(QStringLiteral("mix")).toString(), j.value(QStringLiteral("follows")).toString()}); }
+    for (const auto &v : u.value(QStringLiteral("inputs")).toArray()) { const auto j = v.toObject(); m_layout.inputs.push_back({j.value(QStringLiteral("slug")).toString(), j.value(QStringLiteral("name")).toString(), DeviceRef::fromJson(j.value(QStringLiteral("device")).toObject()), j.value(QStringLiteral("channel")).toString()}); }
+    if (isCh && u.value(QStringLiteral("wasDefault")).toBool()) m_layout.defaultChannel = slug;
+    // fader/mute per cell: the loopbacks do not exist yet — apply as soon as each node shows up (onNode)
+    for (const auto &v : u.value(QStringLiteral("cells")).toArray()) {
+        const auto j = v.toObject();
+        m_pendingCellState.insert(Names::cellNode(j.value(QStringLiteral("channel")).toString(), j.value(QStringLiteral("mix")).toString()),
+                                  {static_cast<float>(j.value(QStringLiteral("volume")).toDouble(1.0)), j.value(QStringLiteral("mute")).toBool()});
+    }
+    if (u.contains(QStringLiteral("trim")))
+        m_pendingCellState.insert(isCh ? Names::channelNode(slug) : Names::mixNode(slug), {static_cast<float>(u.value(QStringLiteral("trim")).toDouble(1.0)), u.value(QStringLiteral("muted")).toBool()});
+    saveLayout(); reconcile();
+    restorePendingCellStates();
+    qInfo() << "undo:" << u.value(QStringLiteral("what")).toString() << "restored";
+    Q_EMIT undoChanged(); if (isCh) Q_EMIT defaultChannelChanged();
+    return true;
+}
+void Mixer::restorePendingCellStates() {
+    for (auto it = m_pendingCellState.begin(); it != m_pendingCellState.end();) {
+        const pw::NodeInfo *n = nullptr;
+        if (auto c = m_cells.constFind(it.key()); c != m_cells.constEnd()) n = &*c;
+        else if (auto s = m_sinks.constFind(it.key()); s != m_sinks.constEnd()) n = &*s;
+        if (!n) { ++it; continue; }
+        m_graph.setVolume(n->id, it->first, it->second);
+        it = m_pendingCellState.erase(it);
+    }
+}
 void Mixer::removeChannel(const QString &slug) {
+    if (!m_layout.channel(slug)) return;
+    snapshotForUndo(QStringLiteral("channel"), slug);
     m_layout.channels.removeIf([&](const LayoutChannel &c) { return c.slug == slug; });
     m_layout.inputs.removeIf([&](const LayoutInput &i) { return i.channel == slug || i.slug == slug; });   // no orphan inputs
     if (m_layout.defaultChannel == slug) { m_layout.defaultChannel.clear(); Q_EMIT defaultChannelChanged(); }
@@ -479,6 +555,8 @@ void Mixer::removeChannel(const QString &slug) {
     m_channels.removeIf([&](const Channel &c) { return c.slug == slug; }); Q_EMIT layoutChanged(); Q_EMIT inputsChanged();
 }
 void Mixer::removeMix(const QString &slug) {
+    if (!m_layout.mix(slug)) return;
+    snapshotForUndo(QStringLiteral("mix"), slug);
     m_layout.mixes.removeIf([&](const LayoutMix &m) { return m.slug == slug; });
     m_layout.links.removeIf([&](const LayoutLink &l) { return l.mix == slug || l.follows == slug; });
     saveLayout();
@@ -521,7 +599,7 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         m_cells[n.name] = n;
         const QStringList parts = n.name.mid(lkP.size()).split(QLatin1Char('.'));
         if (parts.size() == 2) { Q_EMIT cellChanged(parts[0], parts[1]); if (!isNew) propagateLinks(parts[0], parts[1]); }
-        if (isNew) layout = true;
+        if (isNew) { layout = true; if (!m_pendingCellState.isEmpty()) restorePendingCellStates(); }
     }
     else if (n.name.startsWith(QLatin1String("kmixdeck.in.")) || n.name.startsWith(QLatin1String("kmixdeck.out.")) || n.name.startsWith(QLatin1String("kmixdeck.source."))) {
         m_edges[n.name] = n;                                    // device-edge playback side (DV-14 volume lives here)

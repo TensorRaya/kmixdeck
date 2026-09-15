@@ -60,6 +60,17 @@ Kirigami.ApplicationWindow {
 
     AddDialog { id: addDialog }
     Connections { target: Mixer; function onErrorOccurred(message) { root.showPassiveNotification(message, "long") } }
+    // CH-9: a removal is never a dead end — the toast carries the way back.
+    Connections {
+        target: Mixer
+        function onUndoChanged() {
+            if (Mixer.undoDescription.length > 0)
+                root.showPassiveNotification(i18n("Removed %1", Mixer.undoDescription), "long", i18n("Undo"), () => Mixer.undo())
+        }
+    }
+    Shortcut { sequences: [StandardKey.Undo]; enabled: Mixer.undoDescription.length > 0; onActivated: Mixer.undo() }
+    RenameDialog { id: renameDialog }
+    function renameDialogOpen(kind, slug) { renameDialog.open(kind, slug) }
     function addDialogOpen(kind) { addDialog.open(kind) }
 
     footer: QQC2.ToolBar {

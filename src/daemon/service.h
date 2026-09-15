@@ -202,6 +202,7 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_PROPERTY(StringMap OutputDevices READ outputDevices)     // a{ss}: node.name → description
     Q_PROPERTY(StringMap InputDevices READ inputDevices)
     Q_PROPERTY(QDBusObjectPath DefaultChannel READ defaultChannel WRITE setDefaultChannel)   // CH-5; "/" = off
+    Q_PROPERTY(QString UndoDescription READ undoDescription)   // CH-9: "" = nothing to undo, else e.g. channel “Music”
 public:
     MixerAdaptor(Mixer *mixer, QObject *parent);
     QString version() const;
@@ -210,7 +211,9 @@ public:
     StringMap inputDevices() const;
     QDBusObjectPath defaultChannel() const;
     void setDefaultChannel(const QDBusObjectPath &p);
+    QString undoDescription() const { return m_mixer->undoDescription(); }
 public Q_SLOTS:
+    void Undo();                                      // CH-9: restore the last removed channel/mix
     QDBusObjectPath AddChannel(const QString &name);
     QDBusObjectPath AddMix(const QString &name);
     void RemoveChannel(const QDBusObjectPath &path);

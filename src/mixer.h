@@ -9,6 +9,7 @@
 #include <QVector>
 #include <QString>
 #include <optional>
+#include <QJsonObject>
 #include <functional>
 #include "pipewire/graph.h"
 #include "pipewire/meters.h"
@@ -142,6 +143,10 @@ public:
     QString addMix(const QString &displayName, QString *error = nullptr);
     Q_INVOKABLE void removeChannel(const QString &slug);
     Q_INVOKABLE void removeMix(const QString &slug);
+    /// CH-9: the last removal (channel or mix) can be undone — layout entry, links, inputs/outputs AND every
+    /// cell's fader/mute come back. One level; anything that mutates the layout afterwards clears it.
+    Q_INVOKABLE QString undoDescription() const { return m_undo.isEmpty() ? QString() : m_undo.value(QStringLiteral("what")).toString(); }
+    Q_INVOKABLE bool   undo();
 
     static double linearToCubic(float lin) { return std::cbrt(static_cast<double>(lin)); }
     static float  cubicToLinear(double cub) { return static_cast<float>(cub * cub * cub); }
@@ -160,6 +165,7 @@ Q_SIGNALS:
     void inputChanged(const QString &slug);
     void inputsChanged();                       // list of inputs changed
     void defaultChannelChanged();
+    void undoChanged();
 
 private:
     void onNode(const pw::NodeInfo &n);
@@ -181,6 +187,10 @@ private:
     void ensureEdgeLoopbacks();
     void ensureEdgeLoopbackForInput(const QString &slug);
     void notifyPresence();
+    void snapshotForUndo(const QString &kind, const QString &slug);
+    void restorePendingCellStates();
+    QJsonObject m_undo;                                  // {"what","kind","layout":{…},"cells":[{ch,mix,volume,mute}], "links":[…], "inputs":[…]}
+    QHash<QString, QPair<float, bool>> m_pendingCellState;   // cell node → (volume, mute) to apply once the node exists
     void propagateLinks(const QString &ch, const QString &sourceMix);   // source cell changed → push to followers
     void breakLink(const QString &ch, const QString &mix);
     void autoRouteNewApp(const App &a);

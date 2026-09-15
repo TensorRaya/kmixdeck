@@ -71,6 +71,10 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
             const QString slug = p == QLatin1String("/") ? QString() : p.section(QLatin1Char('/'), -1);
             if (slug != m_defaultChannel) { m_defaultChannel = slug; Q_EMIT defaultChannelChanged(); }
         }
+        if (props.contains(QStringLiteral("UndoDescription"))) {
+            const QString u = props.value(QStringLiteral("UndoDescription")).toString();
+            if (u != m_undoDescription) { m_undoDescription = u; Q_EMIT undoChanged(); }
+        }
         if (rawProps.contains(QStringLiteral("InputDevices"))) {
             QVariant v = rawProps.value(QStringLiteral("InputDevices"));
             if (v.userType() == qMetaTypeId<QDBusVariant>()) v = v.value<QDBusVariant>().variant();
@@ -146,7 +150,8 @@ void MixerClient::toggleChannelMute(const QString &slug) {
 // Creation can be refused (duplicate, unusable name). The daemon answers with a D-Bus error; surface it
 // instead of leaving the user staring at a dialog that closed and a matrix that did not change.
 void MixerClient::callReportingErrors(const QString &method, const QVariant &arg) {
-    auto *w = new QDBusPendingCallWatcher(QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus()).asyncCall(method, arg), this);
+    QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
+    auto *w = new QDBusPendingCallWatcher(arg.isValid() ? iface.asyncCall(method, arg) : iface.asyncCall(method), this);
     connect(w, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w) {
         QDBusPendingReply<> r = *w;
         if (r.isError()) { qWarning() << "kmixdeck: request refused:" << r.error().message(); Q_EMIT errorOccurred(r.error().message()); }
@@ -206,6 +211,7 @@ void MixerClient::setMixOutputDevice(const QString &slug, const QString &nodeNam
     m_mixes[slug][QStringLiteral("OutputDevice")] = nodeName;
     setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("OutputDevice"), nodeName);
 }
+void MixerClient::undo() { callReportingErrors(QStringLiteral("Undo"), QVariant()); }
 void MixerClient::setDefaultChannel(const QString &slug) {
     const QString path = slug.isEmpty() ? QStringLiteral("/") : QStringLiteral("%1/channel/%2").arg(ROOT, slug);
     setProperty(ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QStringLiteral("DefaultChannel"), QVariant::fromValue(QDBusObjectPath(path)));

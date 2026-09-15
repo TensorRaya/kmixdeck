@@ -338,3 +338,63 @@ def test_refused_property_writes_never_kill_the_daemon(stack):
     assert stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"] == pytest.approx(0.5)
     assert stack.cli("channel", "default").stdout.strip() != "nope"
     stack.cli("cell", "set", "game", "stream", "1.0")
+
+
+# ---------------------------------------------------------------- CH-9: undo removal
+def test_ch9_undo_restores_channel_with_faders_links_input_and_default(fresh):
+    stack = fresh
+    from test_service_cli import make_fake_source
+    make_fake_source(stack, "fake.undo.mic", "Undo Mic")
+    stack.cli("cell", "set", "voice", "stream", "-18dB"); stack.cli("cell", "mute", "voice", "monitor", "on")
+    stack.cli("channel", "trim", "voice", "-6dB")
+    stack.cli("cell", "link", "game", "stream", "monitor")
+    stack.cli("channel", "input", "voice", "fake.undo.mic"); stack.pw.wait_node("kmixdeck.in.voice")
+    stack.cli("channel", "default", "voice")
+    assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", "UndoDescription").stdout.strip() == 's ""'
+    stack.cli("channel", "remove", "voice")
+    assert wait(lambda: "kmixdeck.channel.voice" not in node_names(stack))
+    assert "Voice" in stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", "UndoDescription").stdout
+    assert stack.cli("channel", "default").stdout.strip() == "none"
+    r = stack.cli("undo"); assert "Voice" in r.stdout
+    assert wait(lambda: "kmixdeck.channel.voice" in node_names(stack) and "kmixdeck.link.voice.stream" in node_names(stack) and "kmixdeck.in.voice" in node_names(stack), tries=80)
+    def cell(ch, mx): return stack.cli("cell", "get", ch, mx, json_out=True)
+    assert wait(lambda: abs(cell("voice", "stream")["Volume"] - 10 ** (-18 / 20)) < 0.003, tries=60), cell("voice", "stream")
+    assert wait(lambda: cell("voice", "monitor")["Muted"] is True, tries=30)
+    ch = next(c for c in stack.cli("channel", "list", json_out=True) if c["Name"] == "Voice")
+    assert ch["Trim"] == pytest.approx(10 ** (-6 / 20), abs=0.003) and ch["InputDevice"] == "fake.undo.mic"
+    assert stack.cli("channel", "default").stdout.strip() == "voice"
+    assert cell("game", "stream")["Follows"].endswith("/monitor"), "links of OTHER channels untouched"
+    assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", "UndoDescription").stdout.strip() == 's ""', "one level only"
+    assert stack.cli("undo", check=False).returncode == 3
+    # persisted: a daemon restart keeps the restored channel
+    stack.restart_daemon()
+    assert "Voice" in [c["Name"] for c in stack.cli("channel", "list", json_out=True)]
+    assert wait(lambda: stack.cli("cell", "get", "voice", "stream", check=False).returncode == 0, tries=60)
+    stack.cli("channel", "default", "system"); stack.cli("channel", "input", "voice", "none"); stack.cli("cell", "link", "game", "stream", "none")
+    stack.cli("cell", "set", "voice", "stream", "1.0"); stack.cli("cell", "mute", "voice", "monitor", "off"); stack.cli("channel", "trim", "voice", "1.0")
+
+
+def test_ch9_undo_restores_mix_with_outputs_and_master_and_is_cleared_by_a_new_add(fresh):
+    stack = fresh
+    from test_service_cli import make_fake_sink
+    make_fake_sink(stack, "fake.undo.hp", "Undo HP")
+    stack.cli("mix", "output", "monitor", "fake.undo.hp"); stack.cli("mix", "fallback", "monitor", "fake.undo.hp")
+    stack.cli("mix", "volume", "monitor", "-10dB"); stack.cli("cell", "set", "game", "monitor", "-30dB")
+    stack.cli("mix", "remove", "monitor")
+    assert wait(lambda: "kmixdeck.mix.monitor" not in node_names(stack) and "kmixdeck.out.monitor" not in node_names(stack))
+    stack.cli("undo")
+    assert wait(lambda: "kmixdeck.mix.monitor" in node_names(stack) and "kmixdeck.out.monitor" in node_names(stack), tries=80)
+    m = None
+    for _ in range(60):
+        m = next(x for x in stack.cli("mix", "list", json_out=True) if x["Slug"] == "monitor")
+        if abs(m["Volume"] - 10 ** (-10 / 20)) < 0.003: break
+        time.sleep(0.1)
+    assert m["OutputDevice"] == "fake.undo.hp" and m["FallbackOutput"] == "fake.undo.hp" and m["Volume"] == pytest.approx(10 ** (-10 / 20), abs=0.003), m
+    assert wait(lambda: abs(stack.cli("cell", "get", "game", "monitor", json_out=True)["Volume"] - 10 ** (-30 / 20)) < 0.003, tries=60)
+    # a new add clears the undo slot (undoing "old" after "new" is what confuses people)
+    stack.cli("mix", "remove", "monitor")
+    stack.cli("mix", "add", "Recording")
+    assert stack.cli("undo", check=False).returncode == 3
+    stack.cli("mix", "remove", "recording"); stack.cli("mix", "add", "Monitor")
+    assert wait(lambda: "kmixdeck.mix.monitor" in node_names(stack), tries=60)
+    stack.cli("cell", "set", "game", "monitor", "1.0")

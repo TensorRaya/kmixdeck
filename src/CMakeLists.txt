@@ -45,6 +45,7 @@ ecm_add_qml_module(kmixdeck-kde
         qml/AppsPage.qml
         qml/MixHeader.qml
         qml/ChannelHeader.qml
+        qml/RenameDialog.qml
         qml/LevelMeter.qml
 )
 target_include_directories(kmixdeck-kde PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/.. frontend)

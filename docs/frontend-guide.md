@@ -62,6 +62,14 @@ decoration. The introspection XML in [`interfaces/`](../interfaces/) is the auth
 signal per tick (~25 Hz), keyed `channel/<slug>` and `mix/<slug>`, linear 0..1. The service only runs
 the meter graph while somebody is subscribed — call `Unsubscribe()` when your window hides.
 
+## Undo (CH-9)
+
+`RemoveChannel`/`RemoveMix` are never dead ends: afterwards `Mixer.UndoDescription` (`s`) holds a human string
+(`channel “Music”`) and `Mixer.Undo()` brings everything back — layout entry, links, hardware input,
+default-channel flag, outputs, fallback, master level *and every cell's fader/mute*. One level; any later
+add clears it (`UndoDescription` becomes `""`). Show it as a toast with an action, that is what the KDE
+frontend does; you do not have to keep any state yourself.
+
 ## Linked cells (MX-7)
 
 `Cell.Follows` (`o`, read/write) — object path of another **mix**; the cell then mirrors volume and mute of

@@ -152,6 +152,7 @@ int main(int argc, char *argv[]) {
         "kmixdeck — control the kmixdeck service (org.kmixdeck1) from the shell.\n\n"
         "Commands:\n"
         "  status                                     matrix overview\n"
+        "  undo                                    restore the last removed channel or mix (CH-9)\n"
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
         "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
         "  mix     list|add <name>|remove <slug>|rename <slug> <name>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
@@ -189,6 +190,13 @@ int main(int argc, char *argv[]) {
     QDBusInterface mixer(BUS, ROOT, "org.kmixdeck1.Mixer", QDBusConnection::sessionBus());
 
     if (cmd == "status") return cmdStatus(o);
+    if (cmd == "undo") {
+        const QString what = unwrap(o.mixer.value("UndoDescription")).toString();
+        if (what.isEmpty()) return fail(NotFound, "nothing to undo");
+        const QDBusMessage r = mixer.call("Undo");
+        if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
+        out << "restored " << what << "\n"; return Ok;
+    }
     if (cmd == "devices") {
         const StringMap devs = qdbus_cast<StringMap>(o.mixer.value(sub == "in" ? "InputDevices" : "OutputDevices"));
         if (g_json) { QJsonObject j; for (auto it = devs.cbegin(); it != devs.cend(); ++it) j[it.key()] = it.value(); out << QJsonDocument(j).toJson(); return Ok; }
