@@ -144,7 +144,7 @@ void MixerClient::callReportingErrors(const QString &method, const QVariant &arg
     auto *w = new QDBusPendingCallWatcher(QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus()).asyncCall(method, arg), this);
     connect(w, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w) {
         QDBusPendingReply<> r = *w;
-        if (r.isError()) Q_EMIT errorOccurred(r.error().message());
+        if (r.isError()) { qWarning() << "kmixdeck: request refused:" << r.error().message(); Q_EMIT errorOccurred(r.error().message()); }
         w->deleteLater();
     });
 }
