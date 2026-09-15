@@ -103,6 +103,7 @@ void Mixer::reconcile() {
                                               cell, m_layout.mixEntry(m.slug), {}, false, true));
         }
     ensureEdgeLoopbacks();
+    for (const auto &a : m_layout.apps) ensureAppRelays(a);   // CH-12 relays are layout, so they come back like cells
     // Capture sides are plumbing, not faders. WirePlumber restores whatever volume it last saw on them (it did:
     // a test left kmixdeck.link.game.stream.in at 0.0156 → the stream mix was 36 dB down with the fader at 0 dB).
     for (const auto &n : m_graph.nodes())
@@ -110,8 +111,13 @@ void Mixer::reconcile() {
             qInfo() << "resetting capture side" << n.name << "to 1.0/unmuted (was" << n.volume << n.mute << ")";
             m_graph.setVolume(n.id, 1.0f, false);
         }
-    // First start without a config fragment on disk: write it now so the graph exists at next login without us.
-    if (!m_pwConfPath.isEmpty() && !QFile::exists(m_pwConfPath)) saveLayout();
+    // Config fragment on disk must match what THIS binary renders — a stale one (older renderer, or written by
+    // hand) would rebuild a different graph at next login. Compare content, write only on drift (idempotent).
+    if (!m_pwConfPath.isEmpty()) {
+        QFile f(m_pwConfPath);
+        const bool same = f.open(QIODevice::ReadOnly) && f.readAll() == m_layout.toPipewireConf().toUtf8();
+        if (!same) { qInfo() << "pipewire fragment differs from layout, rewriting" << m_pwConfPath; saveLayout(); }
+    }
     applyFallbacks();
     m_reconciled = true;
     Q_EMIT layoutChanged();
@@ -602,7 +608,10 @@ void Mixer::ensureAppRelays(const LayoutApp &a) {
     if (a.channels.size() < 2 || a.nodeName.isEmpty()) return;
     for (int n = 1; n < a.channels.size(); ++n) {
         const QString node = EdgeNames::relayNode(a.key, a.channels[n]);
-        if (m_graph.node(node)) continue;
+        if (const auto in = m_graph.node(node + QStringLiteral(".in")); in && in->target == a.nodeName && m_graph.node(node)) continue;
+        // present but capturing the wrong node (older renderer captured the channel sink) → rebuild
+        if (const auto in = m_graph.node(node + QStringLiteral(".in"))) m_graph.destroyObject(in->id);
+        if (const auto out = m_graph.node(node)) m_graph.destroyObject(out->id);
         m_graph.loadLoopback(loopbackArgs(QStringLiteral("App: ") + a.key, node + QStringLiteral(".in"), a.nodeName, false, {}, true,
                                           node, m_layout.channelEntry(a.channels[n]), {}, false, true));
     }

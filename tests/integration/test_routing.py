@@ -330,9 +330,15 @@ def test_ch12_multi_assign_relays_only_that_app(stack):
         v, g = stack.pw.level_at("kmixdeck.channel.voice"), stack.pw.level_at("kmixdeck.channel.game")
         assert v < SILENT, f"relay leaked another app of the primary channel into voice: {v:.1f} dBFS"
         assert g > HOT, f"game must still carry OtherGame: {g:.1f} dBFS"
-        # persisted like CH-4 (layout, not PipeWire state)
+        # persisted like CH-4 (layout, not PipeWire state) — and the relay comes back after a daemon restart,
+        # capturing the app node (a fragment from an older renderer captured the channel sink — boreas 2026-09-16)
         layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
         assert any(x["key"] == "FakeGame" and x["channels"] == ["game", "voice"] for x in layout["apps"]), layout.get("apps")
+        conf = (Path(stack.pw.runtime_dir) / "config" / "pipewire" / "pipewire.conf.d" / "90-kmixdeck.conf").read_text()
+        assert 'node.name = "kmixdeck.relay.FakeGame.voice.in"' in conf and 'node.target = "fakegame-out"' in conf, conf
+        stack.restart_daemon()
+        rin = stack.pw.wait_node("kmixdeck.relay.FakeGame.voice.in", timeout=10)
+        assert rin["info"]["props"].get("node.target") == "fakegame-out", rin["info"]["props"]
     finally:
         for p in (a, b):
             if p.poll() is None: p.kill(); p.wait()
