@@ -196,8 +196,8 @@ void MixerClient::moveApp(const QString &appPath, const QString &channelSlug) {
         .asyncCall(QStringLiteral("MoveTo"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/channel/%2").arg(ROOT, channelSlug))));
 }
 void MixerClient::setChannelDevice(const QString &slug, const QString &deviceNode) {
-    m_channels[slug][QStringLiteral("Device")] = deviceNode;
-    setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Device"), deviceNode);
+    m_channels[slug][QStringLiteral("InputDevice")] = deviceNode;
+    setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("InputDevice"), deviceNode);
 }
 
 } // namespace kmixdeck::frontend

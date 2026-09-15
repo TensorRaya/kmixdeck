@@ -135,9 +135,9 @@ QString Layout::toPipewireConf() const {
         mod(loopbackArgs(QStringLiteral("Input: ") + i.name, EdgeNames::inputNode(i.slug) + QStringLiteral(".in"), i.device.node, false, i.device.positions, true,
                          EdgeNames::inputNode(i.slug), Names::channelNode(i.channel), {}, false, true));
     for (const auto &m : mixes) {
-        if (m.outputs.isEmpty())   // no output configured → park (an empty target is not an absent device)
+        if (m.outputs.isEmpty())   // no output configured → park; linger anyway, the same node is retargeted onto devices later
             mod(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → output"), EdgeNames::outputNode(m.slug, 0) + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,
-                             EdgeNames::outputNode(m.slug, 0), QStringLiteral("kmixdeck.null"), {}, false, false));
+                             EdgeNames::outputNode(m.slug, 0), QStringLiteral("kmixdeck.null"), {}, true, false));
         for (int n = 0; n < m.outputs.size(); ++n)   // one loopback per output (MX-9); playback side waits for the device
             mod(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + m.outputs[n].description, EdgeNames::outputNode(m.slug, n) + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,
                              EdgeNames::outputNode(m.slug, n), m.outputs[n].node, m.outputs[n].positions, true, false));

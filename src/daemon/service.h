@@ -67,6 +67,8 @@ class ChannelObject : public ExportedObject {
     Q_PROPERTY(double Trim READ trim WRITE setTrim)
     Q_PROPERTY(bool Muted READ muted WRITE setMuted)
     Q_PROPERTY(QString NodeName READ nodeName CONSTANT)
+    Q_PROPERTY(QString InputDevice READ inputDevice WRITE setInputDevice)
+    Q_PROPERTY(bool InputPresent READ inputPresent)
 public:
     ChannelObject(Mixer *mixer, const QString &slug, QObject *parent);
     QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.Channel"); }
@@ -77,6 +79,8 @@ public:
     double trim() const; void setTrim(double);
     bool muted() const; void setMuted(bool);
     QString nodeName() const { return Names::channelNode(m_slug); }
+    QString inputDevice() const; void setInputDevice(const QString &);
+    bool inputPresent() const;
 public Q_SLOTS:
     void ToggleMute();
 private:
@@ -93,6 +97,7 @@ class MixObject : public ExportedObject {
     Q_PROPERTY(QString OutputDevice READ outputDevice WRITE setOutputDevice)
     Q_PROPERTY(QString CaptureSource READ captureSource CONSTANT)
     Q_PROPERTY(QString NodeName READ nodeName CONSTANT)
+    Q_PROPERTY(bool OutputPresent READ outputPresent)
 public:
     MixObject(Mixer *mixer, const QString &slug, QObject *parent);
     QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.Mix"); }
@@ -103,6 +108,7 @@ public:
     QString outputDevice() const; void setOutputDevice(const QString &);
     QString captureSource() const;
     QString nodeName() const { return Names::mixNode(m_slug); }
+    bool outputPresent() const;
 private:
     Mixer *m_mixer; QString m_slug, m_icon;
 };

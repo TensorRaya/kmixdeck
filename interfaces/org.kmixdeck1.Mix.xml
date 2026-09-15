@@ -11,5 +11,7 @@
     <!-- node.name of the virtual capture source exposing this mix, or empty (MX-3b) -->
     <property name="CaptureSource" type="s" access="read"/>
     <property name="NodeName" type="s" access="read"/>
+    <!-- false while OutputDevice is set but the device is unplugged; the mix is parked and comes back by itself (DV-9..12) -->
+    <property name="OutputPresent" type="b" access="read"/>
   </interface>
 </node>

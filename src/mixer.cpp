@@ -250,19 +250,59 @@ bool Mixer::inputPresent(const QString &slug) const {
     return in->device.node.isEmpty() || m_devices.contains(in->device.node);   // not bound yet → not greyed out
 }
 
+// ---- one-input-per-channel view (bus: Channel.InputDevice) ----------------------------------------
+QString Mixer::channelInputDevice(const QString &channel) const {
+    const auto *in = m_layout.input(channel);
+    return in ? in->device.node : QString();
+}
+bool Mixer::channelInputPresent(const QString &channel) const {
+    return m_layout.input(channel) ? inputPresent(channel) : true;
+}
+bool Mixer::setChannelInputDevice(const QString &channel, const QString &nodeName) {
+    if (!m_layout.channel(channel)) return false;
+    if (!nodeName.isEmpty() && !m_devices.contains(nodeName)) return false;
+    if (auto *in = m_layout.input(channel)) {
+        if (in->device.node == nodeName) return true;
+        if (auto n = m_graph.node(EdgeNames::inputNode(channel))) m_graph.destroyObject(n->id);   // rebuild with the new target
+        m_edges.remove(EdgeNames::inputNode(channel));
+        if (nodeName.isEmpty()) { removeInput(channel); Q_EMIT channelChanged(channel); return true; }
+        DeviceRef d{nodeName, m_devices.value(nodeName).description, {}};
+        in->device = d; saveLayout(); ensureEdgeLoopbackForInput(channel);
+        Q_EMIT inputChanged(channel); Q_EMIT channelChanged(channel);
+        return true;
+    }
+    if (nodeName.isEmpty()) return true;
+    LayoutInput in; in.slug = channel; in.name = channelName(channel); in.channel = channel;
+    in.device = {nodeName, m_devices.value(nodeName).description, {}};
+    m_layout.inputs.push_back(in);
+    saveLayout(); ensureEdgeLoopbackForInput(channel);
+    Q_EMIT inputsChanged(); Q_EMIT inputChanged(channel); Q_EMIT channelChanged(channel);
+    return true;
+}
+bool Mixer::mixOutputPresent(const QString &slug) const {
+    const auto outs = mixOutputs(slug);
+    if (outs.isEmpty()) return true;
+    for (const auto &d : outs) if (m_devices.contains(d.node)) return true;
+    return false;
+}
+
 // One loopback per edge, identical args to the config renderer (ADR 0007). Device-side capture streams
 // carry node.linger: they wait for an absent device instead of dying, WirePlumber relinks on appearance.
 void Mixer::ensureEdgeLoopbacks() {
     for (const auto &i : m_layout.inputs) ensureEdgeLoopbackForInput(i.slug);
     for (const auto &m : m_layout.mixes) {
-        if (m.outputs.isEmpty()) {   // no output configured → park (an empty target is not an absent device)
-            const QString out = EdgeNames::outputNode(m.slug, 0);
-            if (!m_graph.node(out))
-                m_graph.loadLoopback(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → output"),
-                                                  out + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,
-                                                  out, QStringLiteral("kmixdeck.null"), {}, false, false));
+        // Output edge, index 0, exists ALWAYS — parked on kmixdeck.null when nothing is configured. It carries
+        // node.linger in both cases: it is retargeted onto real devices later and must outlive their absence (D3).
+        // (Found by test DV-9/12: without linger the stream died on unplug and never came back.)
+        const QString out0 = EdgeNames::outputNode(m.slug, 0);
+        if (!m_graph.node(out0)) {
+            const QString target = m.outputs.isEmpty() ? QStringLiteral("kmixdeck.null") : m.outputs.first().node;
+            const QString what = m.outputs.isEmpty() ? QStringLiteral("output") : m.outputs.first().description;
+            m_graph.loadLoopback(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + what,
+                                              out0 + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,
+                                              out0, target, m.outputs.isEmpty() ? QStringList{} : m.outputs.first().positions, true, false));
         }
-        for (int n = 0; n < m.outputs.size(); ++n) {   // one loopback per output (MX-9)
+        for (int n = 1; n < m.outputs.size(); ++n) {   // additional outputs (MX-9)
             const QString out = EdgeNames::outputNode(m.slug, n);
             if (m_graph.node(out)) continue;
             const DeviceRef &d = m.outputs[n];
@@ -406,6 +446,7 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         if (wasNew) {                                            // DV-12: appearance → re-pick outputs and inputs
             applyFallbacks();
             for (const auto &i : m_layout.inputs) ensureEdgeLoopbackForInput(i.slug);
+            notifyPresence();
         }
         if (n.mediaClass == QLatin1String("Audio/Sink")) Q_EMIT outputDevicesChanged(); else Q_EMIT inputDevicesChanged();
     }
@@ -424,7 +465,7 @@ void Mixer::onNodeRemoved(uint32_t id) {
     if (m_apps.remove(id)) Q_EMIT appRemoved(id);
     if (name.isEmpty()) return;
     if (m_edges.remove(name)) for (const auto &m : m_mixes) if (name == EdgeNames::outputNode(m.slug, 0) || name == EdgeNames::sourceNode(m.slug)) { Q_EMIT mixChanged(m.slug); break; }
-    if (m_devices.remove(name)) { Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged(); applyFallbacks(); }   // DV-9: absence → grey out + park outputs
+    if (m_devices.remove(name)) { Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged(); applyFallbacks(); notifyPresence(); }   // DV-9: absence → grey out + park outputs
     bool layout = false;
     if (m_cells.remove(name)) layout = true;
     m_sinks.remove(name);
@@ -434,5 +475,11 @@ void Mixer::onNodeRemoved(uint32_t id) {
 }
 
 void Mixer::rebuildLayoutFromGraph() { for (const auto &n : m_graph.nodes()) onNode(n); }
+
+// Present-flags live on Channel/Mix objects; a device coming or going changes them without any layout edit.
+void Mixer::notifyPresence() {
+    for (const auto &i : m_layout.inputs) Q_EMIT channelChanged(i.channel);
+    for (const auto &m : m_layout.mixes) if (!m.outputs.isEmpty()) Q_EMIT mixChanged(m.slug);
+}
 
 } // namespace kmixdeck

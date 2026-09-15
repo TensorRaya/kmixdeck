@@ -101,6 +101,12 @@ public:
     bool   inputMuted(const QString &slug) const;
     void   setInputVolume(const QString &slug, double cubic, bool muted);
     bool   inputPresent(const QString &slug) const;
+    // One-input-per-channel view for the bus (Channel.InputDevice, CH-3): the input slug IS the channel slug.
+    QString channelInputDevice(const QString &channel) const;
+    bool    channelInputPresent(const QString &channel) const;
+    bool    setChannelInputDevice(const QString &channel, const QString &nodeName);
+    /// false only when an output is configured and its device is currently not in the graph (DV-9).
+    bool    mixOutputPresent(const QString &slug) const;
 
     /// Peak meters (ADR 0006); owned here so they share the graph's loop.
     pw::Meters *meters() { return &m_meters; }
@@ -158,6 +164,7 @@ private:
     void applyFallbacks();
     void ensureEdgeLoopbacks();
     void ensureEdgeLoopbackForInput(const QString &slug);
+    void notifyPresence();
     QList<Device> devicesFor(const QString &mediaClass) const;
     QHash<uint32_t, App> m_apps;
     Layout m_layout;

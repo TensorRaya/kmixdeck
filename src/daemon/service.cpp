@@ -54,9 +54,15 @@ void ChannelObject::setTrim(double v) { if (v < 0 || v > 1) { sendErrorReply(QDB
 bool ChannelObject::muted() const { return m_mixer->channelMuted(m_slug); }
 void ChannelObject::setMuted(bool m) { m_mixer->setChannelMuted(m_slug, m); }
 void ChannelObject::ToggleMute() { m_mixer->setChannelMuted(m_slug, !m_mixer->channelMuted(m_slug)); }
+QString ChannelObject::inputDevice() const { return m_mixer->channelInputDevice(m_slug); }
+void ChannelObject::setInputDevice(const QString &d) {
+    if (!m_mixer->setChannelInputDevice(m_slug, d)) sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("unknown input device (see Mixer.InputDevices)"));
+}
+bool ChannelObject::inputPresent() const { return m_mixer->channelInputPresent(m_slug); }
 QVariantMap ChannelObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), m_icon},
-            {QStringLiteral("Trim"), trim()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("NodeName"), nodeName()}};
+            {QStringLiteral("Trim"), trim()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("NodeName"), nodeName()},
+            {QStringLiteral("InputDevice"), inputDevice()}, {QStringLiteral("InputPresent"), inputPresent()}};
 }
 
 // ---- Mix
@@ -67,9 +73,11 @@ void MixObject::setIcon(const QString &i) { m_icon = i; emitPropertiesChanged(m_
 QString MixObject::outputDevice() const { return m_mixer->mixOutputDevice(m_slug); }
 void MixObject::setOutputDevice(const QString &d) { m_mixer->setMixOutputDevice(m_slug, d); }
 QString MixObject::captureSource() const { return m_mixer->mixCaptureSource(m_slug); }
+bool MixObject::outputPresent() const { return m_mixer->mixOutputPresent(m_slug); }
 QVariantMap MixObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), m_icon},
-            {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("CaptureSource"), captureSource()}, {QStringLiteral("NodeName"), nodeName()}};
+            {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("CaptureSource"), captureSource()}, {QStringLiteral("NodeName"), nodeName()},
+            {QStringLiteral("OutputPresent"), outputPresent()}};
 }
 
 // ---- App
@@ -186,6 +194,9 @@ Service::Service(QObject *parent) : QObject(parent) {
     connect(&m_mixer, &Mixer::outputDevicesChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->outputDevices() : StringMap{})}});
     });
+    connect(&m_mixer, &Mixer::inputDevicesChanged, this, [this] {
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->inputDevices() : StringMap{})}});
+    });
     connect(&m_mixer, &Mixer::appAdded, this, [this](uint32_t id) { if (!m_objects.contains(appPath(id))) exportObject(new AppObject(&m_mixer, id, this)); });
     connect(&m_mixer, &Mixer::appRemoved, this, [this](uint32_t id) { unexportObject(appPath(id)); });
     connect(&m_mixer, &Mixer::appChanged, this, [this](uint32_t id) { if (auto *o = qobject_cast<AppObject *>(m_objects.value(appPath(id)))) o->notifyChanged(); });
@@ -235,7 +246,8 @@ void Service::syncObjects() {
 ManagedObjects Service::managedObjects() const {
     ManagedObjects out;
     out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
-        {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()}, {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}}}});
+        {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()},
+         {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)
         out.insert(QDBusObjectPath(it.key()), InterfaceMap{{it.value()->interfaceName(), it.value()->properties()}});
     return out;

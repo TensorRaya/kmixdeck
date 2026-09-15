@@ -75,14 +75,7 @@ Kirigami.ScrollablePage {
 
     Component {
         id: labelComp
-        Kirigami.Heading {
-            property string channel
-            property string mix
-            level: 3
-            text: Mixer.channelName(channel)
-            elide: Text.ElideRight
-            verticalAlignment: Text.AlignVCenter
-        }
+        ChannelHeader { channel: ""; mix: "" }
     }
     Component {
         id: cellComp

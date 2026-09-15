@@ -11,6 +11,11 @@
     <property name="Muted" type="b" access="readwrite"/>
     <!-- PipeWire node.name, for tools that want to link things themselves -->
     <property name="NodeName" type="s" access="read"/>
+    <!-- node.name of a hardware source feeding this channel (mic, capture card), or empty (CH-3, ADR 0007).
+         Set to a key of Mixer.InputDevices; unknown names are rejected with InvalidArgs. -->
+    <property name="InputDevice" type="s" access="readwrite"/>
+    <!-- false while InputDevice is set but the device is unplugged: grey the row out, keep the value (DV-9) -->
+    <property name="InputPresent" type="b" access="read"/>
     <!-- atomic mute toggle: what a hotkey or a Stream Deck key calls (no read-modify-write race) -->
     <method name="ToggleMute"/>
   </interface>

@@ -84,6 +84,16 @@ def test_ar2_contract_matches_shipped_xml(stack):
         live = members(stack.busctl("introspect", "--xml-interface", "org.kmixdeck1", path).stdout, iface)
         assert live is not None, f"{iface} not exported at {path}"
         assert live == shipped, f"{iface}: live−shipped={live - shipped} shipped−live={shipped - live}"
+    # GetManagedObjects must carry every property the XML promises — a frontend bootstraps from it and
+    # never introspects (frontend-guide: "one round trip returns every object with all properties").
+    managed = stack.busctl("call", "--json=short", "org.kmixdeck1", "/org/kmixdeck1", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects")
+    assert managed.returncode == 0, managed.stderr
+    objs = json.loads(managed.stdout)["data"][0]
+    for iface, path in [("org.kmixdeck1.Mixer", "/org/kmixdeck1"), ("org.kmixdeck1.Channel", "/org/kmixdeck1/channel/game"),
+                        ("org.kmixdeck1.Mix", "/org/kmixdeck1/mix/stream"), ("org.kmixdeck1.Cell", "/org/kmixdeck1/cell/game/stream")]:
+        promised = {n for kind, n in members((REPO / "interfaces" / f"{iface}.xml").read_text(), iface) if kind == "property"}
+        got = set(objs[path][iface].keys())
+        assert promised <= got, f"{iface} at {path}: GetManagedObjects lacks {promised - got}"
 
 
 def test_ar3_cli_status_lists_the_prototype_graph(stack):
@@ -471,3 +481,75 @@ def test_ux6_subscriber_that_dies_is_forgotten(stack):
         if meter_nodes(stack) == 0: break
         time.sleep(0.1)
     assert meter_nodes(stack) == 0
+
+
+# ---------------------------------------------------------------- channel inputs + device absence (CH-3, DV-9, DV-12, ADR 0007)
+def make_fake_source(stack, name, desc):
+    subprocess.run(["pw-cli", "create-node", "adapter",
+                    f'{{ factory.name=support.null-audio-sink node.name={name} node.description="{desc}" media.class=Audio/Source audio.position=[FL FR] object.linger=true }}'],
+                   env=stack.pw.env, capture_output=True)
+    stack.pw.wait_node(name)
+
+
+def destroy_node(stack, name):
+    nid = stack.pw.node_id(name)
+    subprocess.run(["pw-cli", "destroy", str(nid)], env=stack.pw.env, capture_output=True)
+    for _ in range(50):
+        if stack.pw.node(name) is None: return
+        time.sleep(0.1)
+    raise AssertionError(f"{name} still in graph")
+
+
+def wait_prop(stack, kind, slug, prop, want, tries=50):
+    for _ in range(tries):
+        objs = stack.cli(kind, "list", json_out=True)
+        cur = next(o for o in objs if o["Slug"] == slug)[prop]
+        if cur == want: return cur
+        time.sleep(0.1)
+    return cur
+
+
+def test_ch3_devices_in_lists_sources_and_channel_input_is_settable(stack):
+    make_fake_source(stack, "fake.mic", "Fake Microphone")
+    for _ in range(30):
+        devs = stack.cli("devices", "in", json_out=True)
+        if "fake.mic" in devs: break
+        time.sleep(0.1)
+    assert devs["fake.mic"] == "Fake Microphone"
+    assert not any(k.startswith("kmixdeck.") for k in devs), "our own kmixdeck.source.* must not be offered as inputs"
+    r = stack.cli("channel", "input", "voice", "does.not.exist", check=False)
+    assert r.returncode == 3
+    stack.cli("channel", "input", "voice", "fake.mic")
+    assert wait_prop(stack, "channel", "voice", "InputDevice", "fake.mic") == "fake.mic"
+    assert wait_prop(stack, "channel", "voice", "InputPresent", True) is True
+    stack.pw.wait_node("kmixdeck.in.voice")
+    layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
+    assert any(i["channel"] == "voice" and i["device"]["node"] == "fake.mic" for i in layout["inputs"])
+
+
+def test_dv9_dv12_unplug_greys_out_and_replug_restores(stack):
+    # input side
+    destroy_node(stack, "fake.mic")
+    assert wait_prop(stack, "channel", "voice", "InputPresent", False) is False
+    assert wait_prop(stack, "channel", "voice", "InputDevice", "fake.mic") == "fake.mic", "the choice must survive the absence (DV-9)"
+    make_fake_source(stack, "fake.mic", "Fake Microphone")
+    assert wait_prop(stack, "channel", "voice", "InputPresent", True) is True
+    # output side, same contract
+    stack.cli("mix", "output", "stream", "fake.headphones")
+    assert wait_prop(stack, "mix", "stream", "OutputPresent", True) is True
+    destroy_node(stack, "fake.headphones")
+    assert wait_prop(stack, "mix", "stream", "OutputPresent", False) is False
+    assert wait_prop(stack, "mix", "stream", "OutputDevice", "fake.headphones") == "fake.headphones"
+    for _ in range(40):
+        if out_link_target(stack, "stream") == "kmixdeck.null": break
+        time.sleep(0.1)
+    assert out_link_target(stack, "stream") == "kmixdeck.null", "absent output must park, never fall to the default sink"
+    make_fake_sink(stack, "fake.headphones", "Fake Headphones")
+    assert wait_prop(stack, "mix", "stream", "OutputPresent", True) is True
+    for _ in range(60):
+        if out_link_target(stack, "stream") == "fake.headphones": break
+        time.sleep(0.1)
+    assert out_link_target(stack, "stream") == "fake.headphones", "replug must resume on the device without user action (DV-12)"
+    stack.cli("mix", "output", "stream", "none")
+    stack.cli("channel", "input", "voice", "none")
+    assert wait_prop(stack, "channel", "voice", "InputDevice", "") == ""

@@ -68,7 +68,9 @@ public:
     Q_INVOKABLE void    renameMix(const QString &slug, const QString &name);
     Q_INVOKABLE void   moveApp(const QString &appPath, const QString &channelSlug);
     Q_INVOKABLE void   setChannelDevice(const QString &slug, const QString &deviceNode);
-    Q_INVOKABLE QString channelDevice(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Device"), QStringLiteral("default")).toString(); }
+    Q_INVOKABLE QString channelDevice(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("InputDevice")).toString(); }
+    Q_INVOKABLE bool    channelInputPresent(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("InputPresent"), true).toBool(); }
+    Q_INVOKABLE bool    mixOutputPresent(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("OutputPresent"), true).toBool(); }
 
 Q_SIGNALS:
     void connectedChanged();
