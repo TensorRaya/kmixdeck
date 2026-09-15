@@ -163,11 +163,13 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_PROPERTY(QString Version READ version CONSTANT)
     Q_PROPERTY(bool Connected READ connected)
     Q_PROPERTY(StringMap OutputDevices READ outputDevices)     // a{ss}: node.name → description
+    Q_PROPERTY(StringMap InputDevices READ inputDevices)
 public:
     MixerAdaptor(Mixer *mixer, QObject *parent);
     QString version() const;
     bool connected() const;
     StringMap outputDevices() const;
+    StringMap inputDevices() const;
 public Q_SLOTS:
     QDBusObjectPath AddChannel(const QString &name);
     QDBusObjectPath AddMix(const QString &name);

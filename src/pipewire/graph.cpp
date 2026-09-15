@@ -19,6 +19,13 @@
 
 namespace kmixdeck::pw {
 
+// "[ FL FR ]" / "[FL,FR]" → {"FL","FR"}. audio.position on the node props is what the adapter was configured
+// with; for ALSA nodes it is the port layout of the active profile (AUX0..AUXn in Pro Audio) — DV-13.
+static QStringList parsePositions(const QString &s) {
+    QString t = s; t.remove(QLatin1Char('[')).remove(QLatin1Char(']')).replace(QLatin1Char(','), QLatin1Char(' '));
+    return t.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+}
+
 struct NodeProxy {
     Graph::Impl *impl = nullptr;
     uint32_t id = 0;
@@ -74,6 +81,7 @@ struct Graph::Impl {
             np->info.appName = prop(info->props, PW_KEY_APP_NAME);
             np->info.appBinary = prop(info->props, PW_KEY_APP_PROCESS_BINARY);
             np->info.mediaRole = prop(info->props, PW_KEY_MEDIA_ROLE);
+            { const QString p = prop(info->props, "audio.position"); if (!p.isEmpty()) np->info.positions = parsePositions(p); }
             if (np->info.serial == 0) np->info.serial = prop(info->props, PW_KEY_OBJECT_SERIAL).toUInt();
         }
         if (info->change_mask & PW_NODE_CHANGE_MASK_STATE) {
@@ -169,6 +177,7 @@ struct Graph::Impl {
         np->info.appName = prop(props, PW_KEY_APP_NAME);
         np->info.appBinary = prop(props, PW_KEY_APP_PROCESS_BINARY);
         np->info.mediaRole = prop(props, PW_KEY_MEDIA_ROLE);
+        np->info.positions = parsePositions(prop(props, "audio.position"));
         np->info.serial = prop(props, PW_KEY_OBJECT_SERIAL).toUInt();
         np->proxy = static_cast<pw_proxy *>(pw_registry_bind(impl->registry, id, type, PW_VERSION_NODE, 0));
         if (!np->proxy) { delete np; return; }
@@ -317,15 +326,8 @@ void Graph::createNullSink(const QString &name, const QString &description, bool
     pw_thread_loop_unlock(d->loop);
 }
 
-void Graph::createLoopback(const QString &name, const QString &description, const QString &from, const QString &to) {
-    // Modules are loaded in *our* context — they live as long as the app. That's fine for runtime
-    // edits; the persistent graph is written to pipewire.conf.d by the config writer (DV-1/DV-5).
+void Graph::loadLoopback(const QString &args) {
     pw_thread_loop_lock(d->loop);
-    const QString args = QStringLiteral(
-        "{ node.description = \"%1\" "
-        "capture.props = { node.name = \"%2.in\" media.name = \"%2.in\" node.target = \"%3\" stream.capture.sink = true node.passive = true node.dont-reconnect = true } "
-        "playback.props = { node.name = \"%2\" media.name = \"%2\" node.target = \"%4\" node.dont-reconnect = true } }")
-        .arg(description, name, from, to);
     pw_context_load_module(d->context, "libpipewire-module-loopback", args.toUtf8().constData(), nullptr);
     pw_thread_loop_unlock(d->loop);
 }
@@ -344,29 +346,6 @@ void Graph::createParkingSink() {
     if (p) pw_proxy_destroy(p);
     pw_thread_loop_unlock(d->loop);
 }
-void Graph::createMixOutput(const QString &mixSlug, const QString &description, const QString &device) {
-    pw_thread_loop_lock(d->loop);
-    const QString out = QStringLiteral("kmixdeck.out.") + mixSlug;
-    const QString args = QStringLiteral(
-        "{ node.description = \"%1\" "
-        "capture.props = { node.name = \"%2.in\" media.name = \"%2.in\" node.target = \"kmixdeck.mix.%3\" stream.capture.sink = true node.passive = true node.dont-reconnect = true node.dont-fallback = true } "
-        "playback.props = { node.name = \"%2\" media.name = \"%2\" node.target = \"%4\" node.dont-fallback = true } }")
-        .arg(description, out, mixSlug, device.isEmpty() ? QStringLiteral("kmixdeck.null") : device);
-    pw_context_load_module(d->context, "libpipewire-module-loopback", args.toUtf8().constData(), nullptr);
-    pw_thread_loop_unlock(d->loop);
-}
-void Graph::createMixSource(const QString &mixSlug, const QString &description) {
-    pw_thread_loop_lock(d->loop);
-    const QString src = QStringLiteral("kmixdeck.source.") + mixSlug;
-    const QString args = QStringLiteral(
-        "{ node.description = \"%1\" "
-        "capture.props = { node.name = \"%2.in\" media.name = \"%2.in\" node.target = \"kmixdeck.mix.%3\" stream.capture.sink = true node.passive = true node.dont-reconnect = true node.dont-fallback = true } "
-        "playback.props = { node.name = \"%2\" media.name = \"%2\" node.description = \"%1\" media.class = Audio/Source audio.position = [ FL FR ] } }")
-        .arg(description, src, mixSlug);
-    pw_context_load_module(d->context, "libpipewire-module-loopback", args.toUtf8().constData(), nullptr);
-    pw_thread_loop_unlock(d->loop);
-}
-
 uint32_t Graph::streamSink(uint32_t streamId) const {
     std::lock_guard<std::mutex> g(d->snapshotMutex);
     return d->routes.value(streamId, 0);

@@ -27,7 +27,9 @@ struct Names {
 struct Channel { QString slug; QString name; QString icon; bool virt = true; };
 /// A running application audio stream (Stream/Output/Audio that is not one of ours).
 struct App { uint32_t id = 0; QString name, binary, mediaName, mediaRole, nodeName; QString channelSlug; /* empty = not on a kmixdeck channel */ };
-struct Mix     { QString slug; QString name; QString icon; bool capture = true; QString outputDevice; };
+struct Mix     { QString slug; QString name; QString icon; bool capture = true; };
+/// A device the daemon can see right now (ADR 0007): node.name → face + channel layout.
+struct Device  { QString node, description; QStringList positions; bool isSource = false; };
 
 /// The (channel × mix) matrix. One fader per cell = channelVolumes on the cell's loopback playback
 /// stream (validated in ADR 0002). Cubic UI curve ↔ linear PipeWire volume conversion lives here.
@@ -67,15 +69,45 @@ public:
     Q_INVOKABLE void   setChannelMuted(const QString &slug, bool muted);
     Q_INVOKABLE void   renameChannel(const QString &slug, const QString &name);
     Q_INVOKABLE void   renameMix(const QString &slug, const QString &name);
+    Q_INVOKABLE QString mixCaptureSource(const QString &slug) const;
+    /// Bus-facing single-device view of the output list (first entry; empty when none).
     Q_INVOKABLE QString mixOutputDevice(const QString &slug) const;
     Q_INVOKABLE void    setMixOutputDevice(const QString &slug, const QString &nodeName);
-    Q_INVOKABLE QString mixCaptureSource(const QString &slug) const;
+
+    // ---- device edges (ADR 0007) -----------------------------------------------------------------------
+    /// Outputs of a mix as configured (present or not). Empty = plays nowhere.
+    QVector<DeviceRef> mixOutputs(const QString &slug) const;
+    /// Replace the whole output list (MX-9). Unknown node names are accepted: the device may be unplugged
+    /// right now (DV-11) — the loopback waits for it (DV-12).
+    bool setMixOutputs(const QString &slug, const QVector<DeviceRef> &outputs);
+    DeviceRef mixFallbackOutput(const QString &slug) const;
+    void setMixFallbackOutput(const QString &slug, const DeviceRef &dev);
+    /// Is this device node in the graph right now?
+    bool devicePresent(const QString &nodeName) const { return m_devices.contains(nodeName); }
+    /// Level/mute of one mix output (DV-14): channelVolumes on kmixdeck.out.<mix>.<n>.
+    double mixOutputVolume(const QString &slug, int index) const;
+    bool   mixOutputMuted(const QString &slug, int index) const;
+    void   setMixOutputVolume(const QString &slug, int index, double cubic, bool muted);
+
+    QStringList inputSlugs() const;
+    const LayoutInput *input(const QString &slug) const { return m_layout.input(slug); }
+    /// Add a physical input feeding `channel` (CH-3). Returns the slug ("" on failure).
+    QString addInput(const QString &displayName, const DeviceRef &device, const QString &channel);
+    void removeInput(const QString &slug);
+    bool setInputChannel(const QString &slug, const QString &channel);
+    bool setInputDevice(const QString &slug, const DeviceRef &device);
+    /// Input trim/mute (DV-14) = channelVolumes on kmixdeck.in.<slug> (playback side).
+    double inputVolume(const QString &slug) const;
+    bool   inputMuted(const QString &slug) const;
+    void   setInputVolume(const QString &slug, double cubic, bool muted);
+    bool   inputPresent(const QString &slug) const;
 
     /// Peak meters (ADR 0006); owned here so they share the graph's loop.
     pw::Meters *meters() { return &m_meters; }
 
-    /// Hardware (non-kmixdeck) sinks a mix can be routed to: node.name → description (DV-2).
-    QList<QPair<QString, QString>> outputDevices() const;
+    /// Hardware (non-kmixdeck) sinks a mix can play to (DV-8) / sources that can feed a channel (DV-10).
+    QList<Device> outputDevices() const;
+    QList<Device> inputDevices() const;
 
     /// Running application streams (CH-4/CH-10).
     QList<uint32_t> appIds() const;
@@ -103,6 +135,9 @@ Q_SIGNALS:
     void appChanged(uint32_t id);
     void appRemoved(uint32_t id);
     void outputDevicesChanged();
+    void inputDevicesChanged();
+    void inputChanged(const QString &slug);
+    void inputsChanged();                       // list of inputs changed
 
 private:
     void onNode(const pw::NodeInfo &n);
@@ -118,7 +153,12 @@ private:
     QVector<Mix> m_mixes;
     QHash<QString, pw::NodeInfo> m_cells;      // key: cell node name
     QHash<QString, pw::NodeInfo> m_sinks;
-    QHash<QString, pw::NodeInfo> m_devices;    // foreign Audio/Sink nodes, key: node name
+    QHash<QString, pw::NodeInfo> m_devices;    // foreign Audio/Sink + Audio/Source nodes, key: node name
+    QHash<QString, pw::NodeInfo> m_edges;      // kmixdeck.in.* / kmixdeck.out.* playback streams, key: node name
+    void applyFallbacks();
+    void ensureEdgeLoopbacks();
+    void ensureEdgeLoopbackForInput(const QString &slug);
+    QList<Device> devicesFor(const QString &mediaClass) const;
     QHash<uint32_t, App> m_apps;
     Layout m_layout;
     QString m_layoutPath, m_pwConfPath;

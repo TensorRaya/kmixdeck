@@ -15,6 +15,8 @@
     <property name="Connected" type="b" access="read"/>
     <!-- hardware sinks a Mix.OutputDevice may point to: node.name → human description -->
     <property name="OutputDevices" type="a{ss}" access="read"/>
+    <!-- hardware sources a channel may be fed by (ADR 0007): node.name → human description -->
+    <property name="InputDevices" type="a{ss}" access="read"/>
     <!-- Create a channel (input group). Returns the new object path. Slug derived from name. -->
     <method name="AddChannel">
       <arg name="name" type="s" direction="in"/>

@@ -29,6 +29,7 @@ class MixerClient : public QObject {
     Q_PROPERTY(QStringList mixSlugs READ mixSlugs NOTIFY layoutChanged)
     Q_PROPERTY(QVariantList apps READ apps NOTIFY appsChanged)   // [{path,name,binary,mediaName,channel}] for QML
     Q_PROPERTY(QVariantList outputDevices READ outputDevices NOTIFY outputDevicesChanged)   // [{nodeName, description}]
+    Q_PROPERTY(QVariantList inputDevices READ inputDevices NOTIFY inputDevicesChanged)   // hardware sources a channel can be fed by
     Q_PROPERTY(bool metersEnabled READ metersEnabled WRITE setMetersEnabled NOTIFY metersEnabledChanged)   // Levels.Subscribe while true
 public:
     explicit MixerClient(QObject *parent = nullptr);
@@ -55,6 +56,7 @@ public:
     Q_INVOKABLE void   removeMix(const QString &slug);
     QVariantList apps() const;
     QVariantList outputDevices() const;
+    QVariantList inputDevices() const;
     bool metersEnabled() const { return m_metersEnabled; }
     void setMetersEnabled(bool on);
     /// Last peak (linear 0..1) for "channel/<slug>" or "mix/<slug>"; 0 when unknown.
@@ -65,6 +67,8 @@ public:
     Q_INVOKABLE void    renameChannel(const QString &slug, const QString &name);
     Q_INVOKABLE void    renameMix(const QString &slug, const QString &name);
     Q_INVOKABLE void   moveApp(const QString &appPath, const QString &channelSlug);
+    Q_INVOKABLE void   setChannelDevice(const QString &slug, const QString &deviceNode);
+    Q_INVOKABLE QString channelDevice(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Device"), QStringLiteral("default")).toString(); }
 
 Q_SIGNALS:
     void connectedChanged();
@@ -74,6 +78,7 @@ Q_SIGNALS:
     void channelChanged(const QString &slug);
     void appsChanged();
     void outputDevicesChanged();
+    void inputDevicesChanged();
     void metersEnabledChanged();
     void peaksChanged();                                        // once per tick
     void mixChanged(const QString &slug);
@@ -94,7 +99,7 @@ private:
     bool m_available = false, m_pwConnected = false;
     QMap<QString, QVariantMap> m_channels, m_mixes, m_cells;   // keyed by slug / slug / "ch/mix"
     QMap<QString, QVariantMap> m_apps;                          // keyed by object path
-    QMap<QString, QString> m_devices;                           // node.name → description
+    QMap<QString, QString> m_outputDevices, m_inputDevices;    // node.name → description (both directions)
     bool m_metersEnabled = false;
     QHash<QString, double> m_peaks;
     QStringList m_channelOrder, m_mixOrder;

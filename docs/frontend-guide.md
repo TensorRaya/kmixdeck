@@ -44,6 +44,24 @@ org.kmixdeck1                                   (bus name; "1" = API major versi
 A UI is a grid: channels down, mixes across, one `Cell` per intersection. Everything else is
 decoration. The introspection XML in [`interfaces/`](../interfaces/) is the authoritative contract.
 
+## Devices (ADR 0007)
+
+- `Mixer.OutputDevices` / `Mixer.InputDevices` (`a{ss}`): hardware sinks a mix can play to / hardware
+  sources a channel can be fed by — `node.name` → human description. Your own virtual nodes
+  (`kmixdeck.*`) are deliberately not in these lists.
+- `Mix.OutputDevice` is one `node.name` (or empty = capture-only). The daemon renders one loopback per
+  mix output; unplugging a device parks its output on the hidden `kmixdeck.null` sink and WirePlumber
+  re-links it when the device returns — no frontend action needed. Grey out a device when it is not in
+  the list; keep the configured value, it comes back.
+- `Mix.CaptureSource` names the virtual Audio/Source node (`kmixdeck.source.<mix>`) that OBS or
+  Discord can pick as their input device.
+
+## Level meters (ADR 0006)
+
+`org.kmixdeck1.Levels` on the root object: `Subscribe()` / `Unsubscribe()`, then one `Peaks(a{sv})`
+signal per tick (~25 Hz), keyed `channel/<slug>` and `mix/<slug>`, linear 0..1. The service only runs
+the meter graph while somebody is subscribed — call `Unsubscribe()` when your window hides.
+
 ## The three things your frontend must do
 
 1. **Bootstrap** with `GetManagedObjects()` — one round trip returns every object with all

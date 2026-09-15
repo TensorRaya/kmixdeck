@@ -15,7 +15,7 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 |---|---|---|---|
 | CH-1 | The app MUST provide virtual audio channels (e.g. *Game*, *System*, *Voice*, *Music*, *Browser*) that appear to the desktop as ordinary output devices, selectable in any application and in the Plasma volume applet. | owner, wavelink | 📝 |
 | CH-2 | Channels MUST be user-definable: create, rename, reorder, delete, choose icon/colour. No fixed set, no fixed count. | owner | 📝 |
-| CH-3 | Physical inputs (microphones, capture cards, line-in, Bluetooth) MUST be usable as channels alongside virtual ones. | wavelink | 📝 |
+| CH-3 | Physical inputs (microphones, capture cards, line-in, Bluetooth) MUST be usable as channels alongside virtual ones — as `Input` objects attached to a channel (ADR 0007 D2). | wavelink; ADR 0007 | 📝 |
 | CH-4 | An application MUST be assignable to a channel from within the app (drag-and-drop or picker); the assignment MUST persist across app restarts, PipeWire restarts and reboots. | owner, wavelink; tests `test_ch4_move_app_to_channel_is_immediate_and_audible`, `test_ch4_routing_survives_app_restart`, `test_ch4_routing_survives_pipewire_restart` (WirePlumber restore-target, keyed by node.name) | ✅ |
 | CH-5 | New, never-seen applications MUST land on a user-chosen default channel (default: *System*). | owner | 📝 |
 | CH-6 | Assignment MUST survive PipeWire renaming or re-creating an app's node (see Sonusmix #38); matching MUST NOT rely on volatile node IDs alone. | platform | 📝 |
@@ -38,7 +38,7 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 | MX-6 | Each mix MUST have a master fader, mute and meter. | wavelink | 📝 |
 | MX-7 | Per-channel fader per mix MUST include a *link to another mix* toggle (e.g. "Stream follows Monitor for this channel") that can be broken at any time. | wavelink | 📝 |
 | MX-8 | A mix MAY be duplicated as a starting point for a new mix. | owner | 📝 |
-| MX-9 | A mix MUST be sendable to several hardware outputs at once (e.g. headphones + speakers). | wavelink #5 | 📝 |
+| MX-9 | A mix MUST be sendable to several hardware outputs at once (e.g. headphones + speakers) — `Mix.Outputs` list, one loopback per output (ADR 0007 D2). | wavelink #5; ADR 0007 | 📝 |
 | MX-10 | Muted mixes MUST be unmistakable in the UI (Wave Link: header turns red). | wavelink #8 | 📝 |
 
 ## 3. Microphone & effects
@@ -76,6 +76,13 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 | DV-5 | Configuration MUST be plain files under `$XDG_CONFIG_HOME`, human-readable, diff-able, and MUST restore the full graph on login without user action. | owner; `layout.json` + generated `pipewire.conf.d/90-kmixdeck.conf` on every edit (QSaveFile, atomic) | ✅ |
 | DV-6 | Sleep/wake and device re-enumeration MUST NOT lose routing or require a restart (Wave Link 3.x release notes list repeated fixes here; VoiceMeeter forum: crackling after updates). | wavelink #44, users | 📝 |
 | DV-8 | Frontends MUST be able to list the hardware outputs a mix can play to, without talking to PipeWire themselves. | owner 2026-09-14; `Mixer.OutputDevices` (a{ss}), `kmixdeck devices`, mix-header menu; test `test_dv8_devices_lists_hardware_sinks_not_ours` | ✅ |
+| DV-9 | A device reference MUST be the PipeWire `node.name` (stable across replug/reboot, same key WirePlumber uses); node ids/serials/bus paths MUST NOT be persisted. | ADR 0007 D1 | 📝 |
+| DV-10 | Input devices (`Audio/Source`: mics, capture cards, BT) MUST attach to a channel; output devices (`Audio/Sink`) MUST attach to a mix; the UI MUST offer each kind only where it fits. | ADR 0007 D2 | 📝 |
+| DV-11 | An absent (unplugged) input or output MUST stay configured, be shown greyed with its last-seen name, and MUST NOT be deleted automatically. | ADR 0007 D3; wavelink L7/#44 | 📝 |
+| DV-12 | When an absent device reappears, its routing MUST be restored by the daemon within 2 s with no client action; while absent, its loopback MUST be parked on `kmixdeck.null`, never on the default device. | ADR 0007 D3 | 📝 |
+| DV-13 | Multi-channel devices: an input/output reference MAY select a channel subset (e.g. AUX2–AUX3 of a 32-ch Pro-Audio node); device lists MUST expose channel count and positions. | ADR 0007 D4 | 📝 |
+| DV-14 | Device edges MUST have their own trim/mute inside kmixdeck; hardware volumes of the device itself MUST NOT be touched (Plasma owns them, CT-5). | ADR 0007 D5 | 📝 |
+| DV-15 | A mix MAY name a fallback output used while the primary is absent; without one the mix is silent, never rerouted to the default sink. | ADR 0007 D3; DV-3 | 📝 |
 | DV-7 | Virtual device identity (node.name) MUST stay stable across app updates so OBS/Discord keep their device selection (Wave Link L7: driver update changed device IDs). | wavelink L7; tests `test_dv7_levels_and_mute_survive_daemon_restart`, `test_dv7_state_is_keyed_by_stable_name_not_display_name` | ✅ |
 
 ## 5a. Architecture: service, CLI, frontends

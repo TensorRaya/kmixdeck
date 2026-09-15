@@ -143,7 +143,18 @@ MixerAdaptor::MixerAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor
 QString MixerAdaptor::version() const { return QStringLiteral(KMIXDECK_VERSION_STRING); }
 bool MixerAdaptor::connected() const { return m_mixer->connected(); }
 StringMap MixerAdaptor::outputDevices() const {
-    StringMap m; for (const auto &d : m_mixer->outputDevices()) m.insert(d.first, d.second); return m;
+    StringMap m;
+    for (const auto &d : m_mixer->outputDevices()) {
+        m.insert(d.node, d.description);
+    }
+    return m;
+}
+StringMap MixerAdaptor::inputDevices() const {
+    StringMap m;
+    for (const auto &d : m_mixer->inputDevices()) {
+        m.insert(d.node, d.description);
+    }
+    return m;
 }
 QDBusObjectPath MixerAdaptor::AddChannel(const QString &name) { m_mixer->addChannel(name); return QDBusObjectPath(Service::channelPath(Names::slugify(name))); }
 QDBusObjectPath MixerAdaptor::AddMix(const QString &name) { m_mixer->addMix(name); return QDBusObjectPath(Service::mixPath(Names::slugify(name))); }

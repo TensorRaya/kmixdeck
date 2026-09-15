@@ -34,6 +34,7 @@ struct NodeInfo {
     float volume = 1.0f;   // channelVolumes[0], linear
     bool mute = false;
     QString state;         // suspended / idle / running
+    QStringList positions; // audio.position of the node's ports (e.g. FL FR, or AUX0..AUX31 in Pro Audio) — DV-13
 };
 
 /// Thin RAII wrapper around a pw_thread_loop + core + registry that mirrors the graph into
@@ -60,15 +61,14 @@ public:
 
     /// Create a null sink (channel or mix). Returns immediately; node appears via nodeAdded().
     void createNullSink(const QString &name, const QString &description, bool passive);
-    /// Load a loopback module wiring `from` sink's monitor into `to` sink. Returns module id via callback.
-    void createLoopback(const QString &name, const QString &description, const QString &from, const QString &to);
+    /// Load a module-loopback with the given SPA-JSON args (built by kmixdeck::loopbackArgs so runtime and
+    /// config fragment can never drift). Modules live in our context — as long as the daemon. The persistent
+    /// graph is the generated pipewire.conf.d fragment (DV-1/DV-5).
+    void loadLoopback(const QString &args);
     /// Loopback for a mix output: capture from the mix, play to `device` (node.name) or stay unlinked ("").
     /// No dont-reconnect so it can be retargeted later; dont-fallback so it never hits the default sink.
     /// The hidden parking sink unrouted mix outputs play to (never default: priority.session 0, passive).
     void createParkingSink();
-    void createMixOutput(const QString &mixSlug, const QString &description, const QString &device);
-    /// Loopback exposing a mix as a virtual Audio/Source (for OBS/Discord).
-    void createMixSource(const QString &mixSlug, const QString &description);
     void destroyObject(uint32_t id);
     /// Current sink a stream's output ports are linked to (node id), or 0. Derived from Link globals.
     uint32_t streamSink(uint32_t streamId) const;
