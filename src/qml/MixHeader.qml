@@ -59,7 +59,8 @@ QQC2.Control {
             Kirigami.Icon {
                 anchors.centerIn: parent
                 width: parent.width * 0.6; height: width
-                source: header.outputPresent || header.outputs.length === 0 ? Mixer.mixIcon(header.mix) : "dialog-warning"
+                source: Mixer.mixIcon(header.mix)
+                color: header.outputPresent || header.outputs.length === 0 ? Kirigami.Theme.textColor : Kirigami.Theme.neutralTextColor
             }
         }
         ColumnLayout {
@@ -78,13 +79,14 @@ QQC2.Control {
                 id: outLabel
                 Layout.fillWidth: true
                 font: Kirigami.Theme.smallFont
-                opacity: header.outputPresent ? 0.6 : 0.4
+                opacity: header.outputPresent ? 0.6 : 0.9
+                color: header.outputPresent ? Kirigami.Theme.textColor : Kirigami.Theme.neutralTextColor
                 elide: Text.ElideRight
                 text: {
                     if (header.outputs.length === 0) return i18nc("@label mix is not routed to a hardware output", "Capture only")
                     const name = header.outputs.length === 1 ? Mixer.deviceDescription(header.outputs[0])
                                : i18ncp("@label number of hardware outputs of a mix", "%1 output", "%1 outputs", header.outputs.length)
-                    return header.outputPresent ? name : i18nc("@label %1 device name(s), unplugged", "%1 (unplugged)", name)
+                    return header.outputPresent ? name : i18nc("@label %1 device name(s), unplugged", "%1 — unplugged", name)
                 }
                 TapHandler { onTapped: outMenu.popup() }
                 HoverHandler { id: outHover; cursorShape: Qt.PointingHandCursor }

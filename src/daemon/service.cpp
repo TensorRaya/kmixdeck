@@ -102,6 +102,7 @@ void MixObject::setVolume(double v) { if (!(v >= 0.0 && v <= 1.0)) { rejectPrope
 bool MixObject::muted() const { return m_mixer->mixMuted(m_slug); }
 void MixObject::setMuted(bool m) { m_mixer->setMixMuted(m_slug, m); }
 QStringList MixObject::outputs() const { QStringList l; for (const auto &d : m_mixer->mixOutputs(m_slug)) l << d.node; return l; }
+QStringList MixObject::outputDescriptions() const { QStringList l; for (const auto &d : m_mixer->mixOutputs(m_slug)) l << (d.description.isEmpty() ? d.node : d.description); return l; }
 QString MixObject::fallbackOutput() const { return m_mixer->mixFallbackOutput(m_slug).node; }
 QString MixObject::fxChainJson() const { return QJsonDocument(m_mixer->fxChain(m_slug)).toJson(QJsonDocument::Compact); }
 bool MixObject::SetFx(const QString &chainJson) {
@@ -133,7 +134,7 @@ void MixObject::RemoveOutput(const QString &n) {
 void MixObject::ToggleMute() { m_mixer->setMixMuted(m_slug, !m_mixer->mixMuted(m_slug)); }
 QVariantMap MixObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), m_icon},
-            {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("Outputs"), outputs()}, {QStringLiteral("FallbackOutput"), fallbackOutput()},
+            {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("Outputs"), outputs()}, {QStringLiteral("OutputDescriptions"), outputDescriptions()}, {QStringLiteral("FallbackOutput"), fallbackOutput()},
             {QStringLiteral("CaptureSource"), captureSource()}, {QStringLiteral("NodeName"), nodeName()},
             {QStringLiteral("OutputPresent"), outputPresent()}, {QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()},
             {QStringLiteral("FxChain"), fxChainJson()}};

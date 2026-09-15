@@ -28,6 +28,9 @@ Item {
         }
     }
 
+    QQC2.ToolTip.text: i18n("Hardware input feeding this channel — click the input line to change it. Applications can be routed here regardless.")
+    QQC2.ToolTip.visible: inHover.hovered
+    QQC2.ToolTip.delay: 800
     Rectangle { visible: !header.first; anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: Kirigami.Units.largeSpacing; rightMargin: Kirigami.Units.largeSpacing } height: 1; color: Qt.alpha(Kirigami.Theme.textColor, 0.10) }
     TapHandler { acceptedButtons: Qt.RightButton; onTapped: ctxMenu.popup() }
 
@@ -73,8 +76,6 @@ Item {
                 }
                 TapHandler { onTapped: inMenu.popup() }
                 HoverHandler { id: inHover; cursorShape: Qt.PointingHandCursor }
-                QQC2.ToolTip.text: i18n("Hardware input feeding this channel — click to change. Applications can be routed here regardless.")
-                QQC2.ToolTip.visible: inHover.hovered
             }
         }
 
@@ -91,11 +92,10 @@ Item {
         // the channel's level (ADR 0006) — gain lives in the crosspoints (ADR 0002), so no fader here
         LevelMeter {
             id: chMeter
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 4
-            Layout.preferredHeight: Kirigami.Units.smallSpacing
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 3
+            Layout.preferredHeight: 3
             horizontal: true
-            QQC2.ToolTip.text: i18n("Channel level"); QQC2.ToolTip.visible: chHover.hovered
-            HoverHandler { id: chHover }
+            opacity: peak > 0.001 ? 1 : 0.35
             Connections { target: Mixer; function onPeaksChanged() { chMeter.peak = header.muted ? 0 : Mixer.peak("channel/" + header.channel) } }
         }
 

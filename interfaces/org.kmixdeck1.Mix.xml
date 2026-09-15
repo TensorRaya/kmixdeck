@@ -16,6 +16,8 @@
     <!-- MX-9: every hardware output this mix plays to (node.name each). OutputDevice is Outputs[0] for
          single-output frontends; AddOutput/RemoveOutput edit the list without clobbering the rest. -->
     <property name="Outputs" type="as" access="read"/>
+    <!-- parallel to Outputs: last seen node.description, so a frontend can name an unplugged device (DV-9) -->
+    <property name="OutputDescriptions" type="as" access="read"/>
     <method name="AddOutput"><arg name="node_name" type="s" direction="in"/></method>
     <method name="RemoveOutput"><arg name="node_name" type="s" direction="in"/></method>
     <!-- DV-15: played to while every entry of Outputs is unplugged. Empty = silence (never the default sink). -->

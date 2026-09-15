@@ -109,6 +109,7 @@ class MixObject : public ExportedObject {
     Q_PROPERTY(QString Icon READ icon WRITE setIcon)
     Q_PROPERTY(QString OutputDevice READ outputDevice WRITE setOutputDevice)
     Q_PROPERTY(QStringList Outputs READ outputs)                       // MX-9: all hardware outputs, node.name each
+    Q_PROPERTY(QStringList OutputDescriptions READ outputDescriptions) // parallel to Outputs: last seen node.description (DV-9: name an unplugged device)
     Q_PROPERTY(QString FallbackOutput READ fallbackOutput WRITE setFallbackOutput)   // DV-15: used while every output is absent
     Q_PROPERTY(QString CaptureSource READ captureSource CONSTANT)
     Q_PROPERTY(QString NodeName READ nodeName CONSTANT)
@@ -130,6 +131,7 @@ public:
     double volume() const; void setVolume(double);
     bool muted() const; void setMuted(bool);
     QStringList outputs() const;
+    QStringList outputDescriptions() const;
     QString fallbackOutput() const; void setFallbackOutput(const QString &);
     QString fxChainJson() const;
 public Q_SLOTS:

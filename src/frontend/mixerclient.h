@@ -86,7 +86,15 @@ public:
     Q_INVOKABLE QString mixFallbackOutput(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("FallbackOutput")).toString(); }
     Q_INVOKABLE void    setMixFallbackOutput(const QString &slug, const QString &node);
     Q_INVOKABLE void    toggleMixOutput(const QString &slug, const QString &node);   // MX-9: add if absent, remove if present
-    Q_INVOKABLE QString deviceDescription(const QString &node) const { return m_outputDevices.value(node, m_inputDevices.value(node, node)); }
+    Q_INVOKABLE QString deviceDescription(const QString &node) const {
+        if (m_outputDevices.contains(node)) return m_outputDevices.value(node);
+        if (m_inputDevices.contains(node)) return m_inputDevices.value(node);
+        for (auto it = m_mixes.constBegin(); it != m_mixes.constEnd(); ++it) {   // unplugged: the daemon remembers the name (DV-9)
+            const auto outs = it->value(QStringLiteral("Outputs")).toStringList(), descs = it->value(QStringLiteral("OutputDescriptions")).toStringList();
+            const int i = outs.indexOf(node); if (i >= 0 && i < descs.size()) return descs.at(i);
+        }
+        return node;
+    }
     Q_INVOKABLE double  mixVolume(const QString &slug) const { return std::cbrt(m_mixes.value(slug).value(QStringLiteral("Volume"), 1.0).toDouble()); }
     Q_INVOKABLE bool    mixMuted(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("Muted"), false).toBool(); }
     Q_INVOKABLE void    setMixVolume(const QString &slug, double cubic);
