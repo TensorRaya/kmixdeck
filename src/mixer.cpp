@@ -595,14 +595,15 @@ bool Mixer::assignApp(uint32_t id, const QStringList &wantedIn, bool cumulative)
     return true;
 }
 // Relay per extra channel, same loopbackArgs shape as the config renderer (ADR 0002) so runtime and fragment
-// stay identical. Capture side sits on the primary channel sink — processed audio arrives there (FX-3).
+// stay identical. Capture side sits on the app's OWN output node: capturing the primary channel's monitor would
+// relay every other app on that channel as well (measured on boreas 2026-09-16: voice heard all of game).
+// Trade-off: the app's node passes to the second channel unprocessed by the primary channel's fx (FX-3).
 void Mixer::ensureAppRelays(const LayoutApp &a) {
-    if (a.channels.size() < 2) return;
-    const QString from = Names::channelNode(a.channels.first());
+    if (a.channels.size() < 2 || a.nodeName.isEmpty()) return;
     for (int n = 1; n < a.channels.size(); ++n) {
         const QString node = EdgeNames::relayNode(a.key, a.channels[n]);
         if (m_graph.node(node)) continue;
-        m_graph.loadLoopback(loopbackArgs(QStringLiteral("App: ") + a.key, node + QStringLiteral(".in"), from, true, {}, false,
+        m_graph.loadLoopback(loopbackArgs(QStringLiteral("App: ") + a.key, node + QStringLiteral(".in"), a.nodeName, false, {}, true,
                                           node, m_layout.channelEntry(a.channels[n]), {}, false, true));
     }
 }

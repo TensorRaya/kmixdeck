@@ -189,14 +189,15 @@ QString Layout::toPipewireConf() const {
     for (const auto &i : inputs)   // physical input → channel (ADR 0007 D2); capture side waits for the device
         mod(loopbackArgs(QStringLiteral("Input: ") + i.name, EdgeNames::inputNode(i.slug) + QStringLiteral(".in"), i.device.node, false, i.device.positions, true,
                          EdgeNames::inputNode(i.slug), channelEntry(i.channel), {}, false, true));
-    for (const auto &a : apps) {   // CH-12: extra channels of a multi-assigned app hear it via relay loopbacks
-        const LayoutChannel *first = channel(a.channels.first());
-        if (!first) continue;
+    for (const auto &a : apps) {   // CH-12: extra channels of a multi-assigned app hear it via relay loopbacks.
+        // Capture side sits on the APP's own output node (not the primary channel's monitor — that would carry
+        // every other app on that channel too, measured on boreas 2026-09-16). linger: the app may not run yet.
+        if (a.channels.isEmpty() || a.nodeName.isEmpty()) continue;
         for (int n = 1; n < a.channels.size(); ++n) {
             const LayoutChannel *to = channel(a.channels[n]);
             if (!to) continue;
             mod(loopbackArgs(QStringLiteral("App: ") + a.key, EdgeNames::relayNode(a.key, to->slug) + QStringLiteral(".in"),
-                             Names::channelNode(first->slug), true, {}, false,
+                             a.nodeName, false, {}, true,
                              EdgeNames::relayNode(a.key, to->slug), channelEntry(to->slug), {}, false, true));
         }
     }

@@ -303,3 +303,37 @@ def test_mx7_cell_link_stream_follows_monitor_and_breaks_when_touched(stack, ton
     stack.cli("cell", "link", "game", "stream", "none")
     assert follows() == "/"
     stack.cli("cell", "set", "game", "monitor", "1.0")
+
+
+def test_ch12_multi_assign_relays_only_that_app(stack):
+    """CH-12: an app on game+voice is heard in both channels — but the relay must carry ONLY that app.
+    Measured on boreas 2026-09-16: a relay capturing the primary channel's monitor dragged every other app of
+    that channel along. So: A → game+voice, B → game only; mute A; voice must go silent while game stays hot."""
+    from test_service_cli import FAKE_APP
+    b_props = FAKE_APP.replace("FakeGame", "OtherGame").replace("fakegame", "othergame")
+    a = subprocess.Popen(["pw-play", "-P", FAKE_APP, str(stack.pw.tone())], env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    b = subprocess.Popen(["pw-play", "-P", b_props, str(stack.pw.tone())], env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(100):
+            names = {x["Name"] for x in stack.cli("app", "list", json_out=True)}
+            if {"FakeGame", "OtherGame"} <= names: break
+            time.sleep(0.1)
+        assert {"FakeGame", "OtherGame"} <= names, names
+        stack.cli("app", "move", "OtherGame", "game")
+        stack.cli("app", "assign", "FakeGame", "game,voice")
+        app = next(x for x in stack.cli("app", "list", json_out=True) if x["Name"] == "FakeGame")
+        assert app["Channels"] == ["game", "voice"], app
+        stack.pw.wait_node("kmixdeck.relay.FakeGame.voice"); time.sleep(0.8)
+        assert stack.pw.level_at("kmixdeck.channel.voice") > HOT, "voice must hear the multi-assigned app"
+        # kill A: voice must fall silent although B keeps playing into game
+        a.kill(); a.wait(); time.sleep(0.6)
+        v, g = stack.pw.level_at("kmixdeck.channel.voice"), stack.pw.level_at("kmixdeck.channel.game")
+        assert v < SILENT, f"relay leaked another app of the primary channel into voice: {v:.1f} dBFS"
+        assert g > HOT, f"game must still carry OtherGame: {g:.1f} dBFS"
+        # persisted like CH-4 (layout, not PipeWire state)
+        layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
+        assert any(x["key"] == "FakeGame" and x["channels"] == ["game", "voice"] for x in layout["apps"]), layout.get("apps")
+    finally:
+        for p in (a, b):
+            if p.poll() is None: p.kill(); p.wait()
+        stack.cli("app", "assign", "FakeGame", "none", check=False)
