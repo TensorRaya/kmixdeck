@@ -725,6 +725,17 @@ void Mixer::onNode(const pw::NodeInfo &n) {
     else if ((n.mediaClass == QLatin1String("Audio/Sink") || n.mediaClass == QLatin1String("Audio/Source")) && !n.name.startsWith(QLatin1String("kmixdeck."))) {
         const bool wasNew = !m_devices.contains(n.name);
         m_devices[n.name] = n;
+        // Remember the human name in the layout, so an unplugged device can still be named (DV-9). Layouts migrated
+        // from v1 carry the node.name as description — this heals them the first time the device is seen.
+        if (!n.description.isEmpty()) {
+            bool touched = false;
+            for (auto &m : m_layout.mixes) {
+                for (auto &d : m.outputs) if (d.node == n.name && d.description != n.description) { d.description = n.description; touched = true; }
+                if (m.fallbackOutput.node == n.name && m.fallbackOutput.description != n.description) { m.fallbackOutput.description = n.description; touched = true; }
+            }
+            for (auto &i : m_layout.inputs) if (i.device.node == n.name && i.device.description != n.description) { i.device.description = n.description; touched = true; }
+            if (touched) { saveLayout(); for (const auto &m : m_layout.mixes) Q_EMIT mixChanged(m.slug); }
+        }
         if (wasNew) {                                            // DV-12: appearance → re-pick outputs and inputs
             applyFallbacks();
             for (const auto &i : m_layout.inputs) ensureEdgeLoopbackForInput(i.slug);
