@@ -210,6 +210,15 @@ void MixerClient::setDefaultChannel(const QString &slug) {
     const QString path = slug.isEmpty() ? QStringLiteral("/") : QStringLiteral("%1/channel/%2").arg(ROOT, slug);
     setProperty(ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QStringLiteral("DefaultChannel"), QVariant::fromValue(QDBusObjectPath(path)));
 }
+void MixerClient::setMixFallbackOutput(const QString &slug, const QString &node) {
+    m_mixes[slug][QStringLiteral("FallbackOutput")] = node;
+    setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("FallbackOutput"), node);
+}
+void MixerClient::toggleMixOutput(const QString &slug, const QString &node) {
+    const bool has = mixOutputs(slug).contains(node);
+    QDBusInterface(BUS, QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QDBusConnection::sessionBus())
+        .asyncCall(has ? QStringLiteral("RemoveOutput") : QStringLiteral("AddOutput"), node);
+}
 void MixerClient::setMixVolume(const QString &slug, double cubic) {
     const double lin = std::pow(std::clamp(cubic, 0.0, 1.0), 3.0);
     m_mixes[slug][QStringLiteral("Volume")] = lin;

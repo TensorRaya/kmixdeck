@@ -62,6 +62,14 @@ decoration. The introspection XML in [`interfaces/`](../interfaces/) is the auth
 signal per tick (~25 Hz), keyed `channel/<slug>` and `mix/<slug>`, linear 0..1. The service only runs
 the meter graph while somebody is subscribed — call `Unsubscribe()` when your window hides.
 
+## Several outputs per mix (MX-9) and the fallback (DV-15)
+
+`Mix.Outputs` (`as`) lists every hardware sink the mix plays to; `Mix.AddOutput(s)` / `Mix.RemoveOutput(s)`
+edit it. `Mix.OutputDevice` (`s`) is the single-output view — it reads `Outputs[0]` and *replaces only that
+entry*, so a simple frontend and a multi-output one can coexist. `Mix.FallbackOutput` (`s`) is played to
+while **every** entry of `Outputs` is unplugged; empty means silence — kmixdeck never falls back to the
+system default sink on its own (feedback trap, ADR 0002).
+
 ## Default channel for new applications (CH-5)
 
 `Mixer.DefaultChannel` (`o`, read/write) — object path of the channel that applications kmixdeck has

@@ -33,12 +33,12 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 | MX-2a | Mute MUST be per cell (channel × mix): muting *Game* in *Stream* MUST NOT affect *Game* in *Monitor* nor *System* in *Stream*. | owner; test `test_ch4_mute_is_per_cell` | ✅ |
 | MX-2 | Every mix MUST have its own fader (and mute) **per channel**. Changing *Game* in mix *Monitor* MUST NOT change *Game* in mix *Stream*. | owner; test `test_mx2_per_mix_level_is_independent`, `test_mx2_other_direction` (−12.0 dB / +6.0 dB measured) | ✅ |
 | MX-3 | A mix MUST be routable to (a) a physical output device (headphones, speakers), (b) a virtual capture device that other software (OBS, Discord, a recorder) can pick as its input, or (c) both. | owner, wavelink; (b) covered by `test_graph_comes_up_from_config_alone` (`kmixdeck.source.stream`), (a)/(c) open; tests `test_mx3a_mix_output_follows_device_and_is_audible` (tone measured on the device), `test_mx3a_output_none_unlinks_and_unknown_device_is_rejected`, `test_mx3a_output_device_persists_in_generated_conf`; every mix also exposes `kmixdeck.source.<slug>` | ✅ |
-| MX-4 | Default setup on first run SHOULD create two mixes: *Monitor* → default output device, *Stream* → virtual capture device. | owner | 📝 |
+| MX-4 | Default setup on first run SHOULD create two mixes: *Monitor* → default output device, *Stream* → virtual capture device. | owner | ✅ Layout::starter(): Monitor (no output until chosen — the default sink is never auto-picked, MX-3a) + Stream (capture-only, `kmixdeck.source.stream`); test_audio_graph, test_lifecycle::test_rebuild_from_empty_and_default_layout_on_missing_file |
 | MX-5 | Mixes MUST be nameable, reorderable, colour-coded; the UI MUST scale to ≥ 8 mixes without hiding faders. | owner | 📝 |
 | MX-6 | Each mix MUST have a master fader, mute and meter. | wavelink | ✅ Mix.Volume/Muted/ToggleMute on the bus, `kmixdeck mix volume|mute`, master slider + mute in the column header; test_routing::test_mix_master_* (−20 dB reaches device, mute silences, other mix untouched) |
 | MX-7 | Per-channel fader per mix MUST include a *link to another mix* toggle (e.g. "Stream follows Monitor for this channel") that can be broken at any time. | wavelink | 📝 |
 | MX-8 | A mix MAY be duplicated as a starting point for a new mix. | owner | 📝 |
-| MX-9 | A mix MUST be sendable to several hardware outputs at once (e.g. headphones + speakers) — `Mix.Outputs` list, one loopback per output (ADR 0007 D2). | wavelink #5; ADR 0007 | 📝 |
+| MX-9 | A mix MUST be sendable to several hardware outputs at once (e.g. headphones + speakers) — `Mix.Outputs` list, one loopback per output (ADR 0007 D2). | wavelink #5; ADR 0007 | ✅ `Mix.Outputs` (as) + `AddOutput`/`RemoveOutput`, `kmixdeck mix outputs|output-add|output-remove`; header menu is multi-select ("2 outputs"). test_routing::test_mx9_*: both devices read the same level; OutputDevice replaces only Outputs[0] |
 | MX-10 | Muted mixes MUST be unmistakable in the UI (Wave Link: header turns red). | wavelink #8 | ✅ muted mix: header turns red (negativeBackgroundColor + border), title "… — MUTED", pressed mute button; screenshot-verified |
 
 ## 3. Microphone & effects
@@ -82,7 +82,7 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 | DV-12 | When an absent device reappears, its routing MUST be restored by the daemon within 2 s with no client action; while absent, its loopback MUST be parked on `kmixdeck.null`, never on the default device. | ADR 0007 D3 | ✅ test_dv9_dv12_* — parks on `kmixdeck.null`, resumes on replug w/o client action |
 | DV-13 | Multi-channel devices: an input/output reference MAY select a channel subset (e.g. AUX2–AUX3 of a 32-ch Pro-Audio node); device lists MUST expose channel count and positions. | ADR 0007 D4 | 📝 |
 | DV-14 | Device edges MUST have their own trim/mute inside kmixdeck; hardware volumes of the device itself MUST NOT be touched (Plasma owns them, CT-5). | ADR 0007 D5 | 📝 |
-| DV-15 | A mix MAY name a fallback output used while the primary is absent; without one the mix is silent, never rerouted to the default sink. | ADR 0007 D3; DV-3 | 📝 |
+| DV-15 | A mix MAY name a fallback output used while the primary is absent; without one the mix is silent, never rerouted to the default sink. | ADR 0007 D3; DV-3 | ✅ `Mix.FallbackOutput` (s), `kmixdeck mix fallback`, submenu in the header. test_routing::test_mx9_*: both outputs destroyed → fallback carries the mix, default sink stays silent, config kept; replug → primary wins, fallback quiet |
 | DV-7 | Virtual device identity (node.name) MUST stay stable across app updates so OBS/Discord keep their device selection (Wave Link L7: driver update changed device IDs). | wavelink L7; tests `test_dv7_levels_and_mute_survive_daemon_restart`, `test_dv7_state_is_keyed_by_stable_name_not_display_name` | ✅ |
 
 ## 5a. Architecture: service, CLI, frontends
@@ -101,13 +101,13 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 
 | ID | Requirement | Source | Status |
 |---|---|---|---|
-| UX-1 | Main view: channels as rows/columns against mixes as the other axis — one fader per (channel, mix) cell, visible at once. | owner | 📝 |
+| UX-1 | Main view: channels as rows/columns against mixes as the other axis — one fader per (channel, mix) cell, visible at once. | owner | ✅ MixerPage: one GridLayout, channels × mixes, one fader per cell; header pinned to cell width; screenshot-verified |
 | UX-2 | A "what am I hearing" indicator MUST show which mix is currently routed to the user's headphones; switching MUST be one click. | wavelink | 📝 |
 | UX-3 | First-run wizard SHOULD create default channels and mixes, detect the microphone and the default output, and assign running apps. | wavelink | 📝 |
 | UX-4 | Full keyboard operability and screen-reader labels per KDE HIG. | platform | 📝 |
 | UX-5 | Languages: English first; German second; translatable via KDE's i18n. | owner | 📝 |
 | UX-6 | Level meters (VU) on every channel and every mix (top Linux wish: Sonusmix #20; Pulsemeeter has them). | users; ADR 0006: daemon peak streams (25 Hz, `resample.peaks`), `org.kmixdeck1.Levels` Subscribe/Peaks, on demand only; CLI `kmixdeck levels`; UI meters per cell (channel peak × gain) and per mix; tests `test_ux6_levels_signal_carries_peaks_of_the_tone`, `test_ux6_subscriber_that_dies_is_forgotten` | ✅ |
-| UX-7 | Volume sliders MUST use a logarithmic curve and show dB and percent. | wavelink #19, #20 | 📝 |
+| UX-7 | Volume sliders MUST use a logarithmic curve and show dB and percent. | wavelink #19, #20 | ✅ CellFader/MixHeader: cubic slider (WirePlumber curve), tooltip/readout in dB, CLI accepts dB/%/linear (test_cli_level_syntax) |
 
 ## 7. Verification (binding)
 

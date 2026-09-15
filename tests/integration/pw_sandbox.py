@@ -82,7 +82,7 @@ class PwDaemon:
         p = self.runtime_dir / "tone.wav"
         if not p.exists():
             subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "quiet", "-y", "-f", "lavfi", "-i",
-                            "sine=frequency=1000:sample_rate=48000", "-t", "20", "-ac", "2", str(p)], check=True)
+                            "sine=frequency=1000:sample_rate=48000", "-t", "120", "-ac", "2", str(p)], check=True)
         return p
 
     def play_into(self, sink: str) -> subprocess.Popen:

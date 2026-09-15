@@ -14,6 +14,8 @@ QQC2.Control {
     property bool outputPresent: Mixer.mixOutputPresent(mix)
     property double masterValue: Mixer.mixVolume(mix)      // cubic 0..1 (MX-6)
     property bool masterMuted: Mixer.mixMuted(mix)
+    property var outputs: Mixer.mixOutputs(mix)              // MX-9
+    property string fallbackOutput: Mixer.mixFallbackOutput(mix)   // DV-15
     padding: Kirigami.Units.smallSpacing
 
     background: Rectangle {
@@ -32,6 +34,8 @@ QQC2.Control {
             header.outputPresent = Mixer.mixOutputPresent(slug)
             header.masterValue = Mixer.mixVolume(slug)
             header.masterMuted = Mixer.mixMuted(slug)
+            header.outputs = Mixer.mixOutputs(slug)
+            header.fallbackOutput = Mixer.mixFallbackOutput(slug)
         }
     }
 
@@ -95,10 +99,10 @@ QQC2.Control {
             icon.name: header.outputDevice.length === 0 ? "network-disconnect"
                      : header.outputPresent ? "audio-headphones" : "dialog-warning"
             text: {
-                if (header.outputDevice.length === 0) return i18nc("@label mix is not routed to a hardware output", "No output")
-                const d = Mixer.outputDevices.find(x => x.nodeName === header.outputDevice)
-                const name = d ? d.description : header.outputDevice
-                return header.outputPresent ? name : i18nc("@label %1 device name, device is unplugged", "%1 (unplugged)", name)
+                if (header.outputs.length === 0) return i18nc("@label mix is not routed to a hardware output", "No output")
+                const name = header.outputs.length === 1 ? Mixer.deviceDescription(header.outputs[0])
+                           : i18ncp("@label number of hardware outputs of a mix", "%1 output", "%1 outputs", header.outputs.length)
+                return header.outputPresent ? name : i18nc("@label %1 device name(s), unplugged", "%1 (unplugged)", name)
             }
             font: Kirigami.Theme.smallFont
             display: QQC2.AbstractButton.TextBesideIcon
@@ -110,10 +114,12 @@ QQC2.Control {
 
             QQC2.Menu {
                 id: outMenu
+                // MX-9: every entry is a toggle — a mix can play to headphones AND speakers
                 QQC2.MenuItem {
                     text: i18nc("@item mix output", "No output (capture only)")
-                    checkable: true; checked: header.outputDevice.length === 0
-                    onTriggered: Mixer.setMixOutputDevice(header.mix, "")
+                    checkable: true; checked: header.outputs.length === 0
+                    enabled: header.outputs.length > 0
+                    onTriggered: { const outs = header.outputs.slice(); for (const n of outs) Mixer.toggleMixOutput(header.mix, n) }
                 }
                 QQC2.MenuSeparator {}
                 Repeater {
@@ -121,8 +127,40 @@ QQC2.Control {
                     delegate: QQC2.MenuItem {
                         required property var modelData
                         text: modelData.description
-                        checkable: true; checked: modelData.nodeName === header.outputDevice
-                        onTriggered: Mixer.setMixOutputDevice(header.mix, modelData.nodeName)
+                        checkable: true; checked: header.outputs.indexOf(modelData.nodeName) >= 0
+                        onTriggered: Mixer.toggleMixOutput(header.mix, modelData.nodeName)
+                    }
+                }
+                // configured but unplugged outputs stay visible and de-selectable (DV-9)
+                Repeater {
+                    model: header.outputs.filter(n => !Mixer.outputDevices.some(d => d.nodeName === n))
+                    delegate: QQC2.MenuItem {
+                        required property string modelData
+                        icon.name: "dialog-warning"
+                        text: i18nc("@item unplugged output kept as selection", "%1 (unplugged)", modelData)
+                        checkable: true; checked: true
+                        onTriggered: Mixer.toggleMixOutput(header.mix, modelData)
+                    }
+                }
+                QQC2.MenuSeparator {}
+                // DV-15: where the mix goes while ALL outputs above are unplugged
+                QQC2.Menu {
+                    title: header.fallbackOutput.length === 0 ? i18n("Fallback: silence")
+                         : i18n("Fallback: %1", Mixer.deviceDescription(header.fallbackOutput))
+                    QQC2.MenuItem {
+                        text: i18nc("@item no fallback output", "Silence (never the system default)")
+                        checkable: true; checked: header.fallbackOutput.length === 0
+                        onTriggered: Mixer.setMixFallbackOutput(header.mix, "")
+                    }
+                    QQC2.MenuSeparator {}
+                    Repeater {
+                        model: Mixer.outputDevices
+                        delegate: QQC2.MenuItem {
+                            required property var modelData
+                            text: modelData.description
+                            checkable: true; checked: modelData.nodeName === header.fallbackOutput
+                            onTriggered: Mixer.setMixFallbackOutput(header.mix, modelData.nodeName)
+                        }
                     }
                 }
             }

@@ -155,6 +155,9 @@ int main(int argc, char *argv[]) {
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
         "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
         "  mix     list|add <name>|remove <slug>|rename <slug> <name>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
+        "  mix     outputs <slug>                 list all hardware outputs of a mix (MX-9)\n"
+        "  mix     output-add|output-remove <slug> <node.name>\n"
+        "  mix     fallback <slug> <node.name|none>   played while every output is unplugged (DV-15)\n"
         "  devices [in]                               hardware outputs a mix can play to (in: sources a channel can be fed by)\n"
         "  levels                                     live peak meters (Ctrl-C to stop)\n"
         "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
@@ -217,6 +220,21 @@ int main(int argc, char *argv[]) {
         }
         if (sub == "volume" && !ch) { if (!need(4)) return Usage; double l; if (!parseLevel(a[3], &l)) return fail(Usage, "bad level"); return setProp(pathOf(a[2]), iface, "Volume", l, &e) ? Ok : fail(Rejected, e); }
         if (sub == "mute" && !ch) { bool b; if (!parseBool(a, 3, &b)) return fail(Usage, "on|off"); return setProp(pathOf(a[2]), iface, "Muted", b, &e) ? Ok : fail(Rejected, e); }
+        if (sub == "outputs" && !ch) {
+            const QStringList outs = unwrap(objs.value(pathOf(a[2])).value("Outputs")).toStringList();
+            if (g_json) out << QJsonDocument(QJsonArray::fromStringList(outs)).toJson(); else for (const auto &o2 : outs) out << o2 << "\n";
+            return Ok;
+        }
+        if ((sub == "output-add" || sub == "output-remove") && !ch) {
+            if (!need(4)) return Usage;
+            QDBusInterface mixObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
+            const QDBusMessage r = mixObj.call(sub == "output-add" ? "AddOutput" : "RemoveOutput", a[3]);
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        if (sub == "fallback" && !ch) {
+            if (!need(4)) return Usage;
+            return setProp(pathOf(a[2]), iface, "FallbackOutput", a[3] == "none" ? QString() : a[3], &e) ? Ok : fail(Rejected, e);
+        }
         if (sub == "output" && !ch) {   // mix output <slug> <node.name|none>
             if (!need(4)) return Usage;
             const QString dev = a[3] == "none" ? QString() : a[3];

@@ -78,10 +78,28 @@ double MixObject::volume() const { return m_mixer->mixVolume(m_slug); }
 void MixObject::setVolume(double v) { if (!(v >= 0.0 && v <= 1.0)) { rejectProperty(QStringLiteral("Volume"), QStringLiteral("must be linear 0..1")); return; } m_mixer->setMixVolume(m_slug, v); }
 bool MixObject::muted() const { return m_mixer->mixMuted(m_slug); }
 void MixObject::setMuted(bool m) { m_mixer->setMixMuted(m_slug, m); }
+QStringList MixObject::outputs() const { QStringList l; for (const auto &d : m_mixer->mixOutputs(m_slug)) l << d.node; return l; }
+QString MixObject::fallbackOutput() const { return m_mixer->mixFallbackOutput(m_slug).node; }
+void MixObject::setFallbackOutput(const QString &n) { m_mixer->setMixFallbackOutput(m_slug, m_mixer->deviceRef(n)); }
+void MixObject::AddOutput(const QString &n) {
+    if (n.isEmpty()) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("empty node name")); return; }
+    auto outs = m_mixer->mixOutputs(m_slug);
+    for (const auto &d : outs) if (d.node == n) return;    // idempotent
+    outs.push_back(m_mixer->deviceRef(n));
+    m_mixer->setMixOutputs(m_slug, outs);
+}
+void MixObject::RemoveOutput(const QString &n) {
+    auto outs = m_mixer->mixOutputs(m_slug);
+    const int before = outs.size();
+    outs.removeIf([&](const DeviceRef &d) { return d.node == n; });
+    if (outs.size() == before) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("not an output of this mix")); return; }
+    m_mixer->setMixOutputs(m_slug, outs);
+}
 void MixObject::ToggleMute() { m_mixer->setMixMuted(m_slug, !m_mixer->mixMuted(m_slug)); }
 QVariantMap MixObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), m_icon},
-            {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("CaptureSource"), captureSource()}, {QStringLiteral("NodeName"), nodeName()},
+            {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("Outputs"), outputs()}, {QStringLiteral("FallbackOutput"), fallbackOutput()},
+            {QStringLiteral("CaptureSource"), captureSource()}, {QStringLiteral("NodeName"), nodeName()},
             {QStringLiteral("OutputPresent"), outputPresent()}, {QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()}};
 }
 

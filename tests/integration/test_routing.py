@@ -203,3 +203,69 @@ def test_mix_master_fader_and_mute_hit_outputs_and_capture_source(stack, tone):
     stack.cli("mix", "volume", "stream", "1.0")
     stack.cli("mix", "output", "stream", "none")
     assert stack.cli("mix", "volume", "stream", "+3dB", check=False).returncode in (1, 4), "above unity must be refused"
+
+
+def _out_targets(stack, mix):
+    """All link targets of kmixdeck.out.<mix>*: {node.name -> sink}"""
+    links = subprocess.run(["pw-link", "-l"], env=stack.pw.env, capture_output=True, text=True).stdout.splitlines()
+    res = {}
+    for i, l in enumerate(links):
+        if l.startswith(f"kmixdeck.out.{mix}") and ":output_FL" in l:
+            src = l.split(":")[0]
+            for j in range(i + 1, min(i + 4, len(links))):
+                if "|->" in links[j]: res[src] = links[j].split("|->")[1].strip().split(":")[0]; break
+    return res
+
+
+def _wait_targets(stack, mix, want, tries=60):
+    for _ in range(tries):
+        t = _out_targets(stack, mix)
+        if set(t.values()) == set(want): return t
+        time.sleep(0.1)
+    return _out_targets(stack, mix)
+
+
+def test_mx9_mix_plays_to_several_outputs_and_dv15_fallback_takes_over(stack, tone):
+    """MX-9: headphones AND speakers at once; DV-15: while both are unplugged the fallback plays, never the default sink."""
+    from test_service_cli import make_fake_sink, destroy_node
+    make_fake_sink(stack, "fake.speakers", "Fake Speakers")
+    make_fake_sink(stack, "fake.fallback", "Fake Fallback")
+    stack.cli("mix", "output", "monitor", "fake.headphones")
+    stack.cli("mix", "output-add", "monitor", "fake.speakers")
+    assert stack.cli("mix", "outputs", "monitor", json_out=True) == ["fake.headphones", "fake.speakers"]
+    assert stack.cli("mix", "output-add", "monitor", "fake.speakers").returncode == 0, "adding twice is idempotent"
+    assert stack.cli("mix", "outputs", "monitor", json_out=True) == ["fake.headphones", "fake.speakers"]
+    t = _wait_targets(stack, "monitor", {"fake.headphones", "fake.speakers"})
+    assert set(t.values()) == {"fake.headphones", "fake.speakers"}, t
+    settle()
+    hp, sp = stack.pw.level_at("fake.headphones"), stack.pw.level_at("fake.speakers")
+    assert hp > HOT and sp > HOT and abs(hp - sp) < 1.0, f"both outputs carry the same mix: hp={hp:.1f} sp={sp:.1f}"
+    # the single-output view replaces only the FIRST entry
+    stack.cli("mix", "output", "monitor", "fake.headphones")
+    assert stack.cli("mix", "outputs", "monitor", json_out=True) == ["fake.headphones", "fake.speakers"]
+    # DV-15: fallback while everything is gone. (tone.wav is 20 s; this test is longer — restart the tone)
+    tone.kill(); tone.wait(); tone2 = stack.pw.play_into("kmixdeck.channel.game")
+    stack.cli("mix", "fallback", "monitor", "fake.fallback")
+    assert stack.pw.level_at("fake.fallback") < SILENT, "fallback is silent while a primary output is present"
+    destroy_node(stack, "fake.headphones"); destroy_node(stack, "fake.speakers")
+    t = _wait_targets(stack, "monitor", {"fake.fallback", "kmixdeck.null"}, tries=80)
+    assert "fake.fallback" in t.values(), f"fallback must take over: {t}"
+    time.sleep(1.0)   # two destroys + a retarget: give the loopback a moment to run again before measuring
+    lvl = max(stack.pw.level_at("fake.fallback") for _ in range(2))
+    assert lvl > HOT, f"fallback linked but silent: {lvl}"
+    assert stack.pw.level_at("fake.default") < SILENT, "never the default sink"
+    m = next(m for m in stack.cli("mix", "list", json_out=True) if m["Slug"] == "monitor")
+    assert m["OutputPresent"] is False and m["Outputs"] == ["fake.headphones", "fake.speakers"], "configuration is kept while unplugged"
+    # replug → primary wins again, fallback goes quiet
+    make_fake_sink(stack, "fake.headphones", "Fake Headphones")
+    t = _wait_targets(stack, "monitor", {"fake.headphones", "kmixdeck.null"}, tries=80)
+    assert "fake.headphones" in t.values(), t
+    settle()
+    assert stack.pw.level_at("fake.headphones") > HOT and stack.pw.level_at("fake.fallback") < SILENT
+    # cleanup: back to the module's baseline
+    stack.cli("mix", "output-remove", "monitor", "fake.speakers")
+    assert stack.cli("mix", "output-remove", "monitor", "fake.speakers", check=False).returncode == 4, "removing a non-output is an error"
+    stack.cli("mix", "fallback", "monitor", "none"); stack.cli("mix", "output", "monitor", "none")
+    assert stack.cli("mix", "outputs", "monitor", json_out=True) == []
+    _wait_targets(stack, "monitor", {"kmixdeck.null"})
+    tone2.kill(); tone2.wait()

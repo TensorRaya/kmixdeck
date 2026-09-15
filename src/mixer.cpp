@@ -158,13 +158,19 @@ QString Mixer::mixOutputDevice(const QString &slug) const {
     const auto outs = mixOutputs(slug);
     return outs.isEmpty() ? QString() : outs.first().node;
 }
+DeviceRef Mixer::deviceRef(const QString &nodeName) const {
+    if (nodeName.isEmpty()) return {};
+    QString desc = nodeName;
+    if (auto d = m_devices.value(nodeName); !d.description.isEmpty()) desc = d.description;
+    return {nodeName, desc, {}};
+}
+// Single-output view (Mix.OutputDevice): replaces the FIRST output, keeps the rest (MX-9 frontends and the
+// pre-MX-9 UI must not clobber each other).
 void Mixer::setMixOutputDevice(const QString &slug, const QString &nodeName) {
-    QVector<DeviceRef> outs;
-    if (!nodeName.isEmpty()) {
-        QString desc = nodeName;
-        if (auto d = m_devices.value(nodeName); !d.description.isEmpty()) desc = d.description;
-        outs.push_back({nodeName, desc, {}});
-    }
+    QVector<DeviceRef> outs = mixOutputs(slug);
+    if (nodeName.isEmpty()) { if (!outs.isEmpty()) outs.removeFirst(); }
+    else if (outs.isEmpty()) outs.push_back(deviceRef(nodeName));
+    else outs[0] = deviceRef(nodeName);
     setMixOutputs(slug, outs);
 }
 bool Mixer::setMixOutputs(const QString &slug, const QVector<DeviceRef> &outputs) {

@@ -13,6 +13,13 @@
     <property name="NodeName" type="s" access="read"/>
     <!-- false while OutputDevice is set but the device is unplugged; the mix is parked and comes back by itself (DV-9..12) -->
     <property name="OutputPresent" type="b" access="read"/>
+    <!-- MX-9: every hardware output this mix plays to (node.name each). OutputDevice is Outputs[0] for
+         single-output frontends; AddOutput/RemoveOutput edit the list without clobbering the rest. -->
+    <property name="Outputs" type="as" access="read"/>
+    <method name="AddOutput"><arg name="node_name" type="s" direction="in"/></method>
+    <method name="RemoveOutput"><arg name="node_name" type="s" direction="in"/></method>
+    <!-- DV-15: played to while every entry of Outputs is unplugged. Empty = silence (never the default sink). -->
+    <property name="FallbackOutput" type="s" access="readwrite"/>
     <!-- master fader of the mix (MX-6), linear 0..1: applies to every hardware output and to CaptureSource alike -->
     <property name="Volume" type="d" access="readwrite"/>
     <property name="Muted" type="b" access="readwrite"/>

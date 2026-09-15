@@ -83,6 +83,7 @@ public:
     // ---- device edges (ADR 0007) -----------------------------------------------------------------------
     /// Outputs of a mix as configured (present or not). Empty = plays nowhere.
     QVector<DeviceRef> mixOutputs(const QString &slug) const;
+    DeviceRef deviceRef(const QString &nodeName) const;    // description filled from the live graph when known
     /// Replace the whole output list (MX-9). Unknown node names are accepted: the device may be unplugged
     /// right now (DV-11) — the loopback waits for it (DV-12).
     bool setMixOutputs(const QString &slug, const QVector<DeviceRef> &outputs);
