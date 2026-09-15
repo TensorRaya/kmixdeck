@@ -4,6 +4,7 @@
 Same three truths as the lifecycle tests: bus, graph, layout.json — plus the acoustic one:
 a gate with a high threshold silences a ~−24 dB signal, bypass brings it back.
 """
+import pytest
 import json, time
 from test_service_cli import Stack
 from pw_sandbox import start_private_pipewire
