@@ -31,6 +31,7 @@ class MixerClient : public QObject {
     Q_PROPERTY(QVariantList outputDevices READ outputDevices NOTIFY outputDevicesChanged)   // [{nodeName, description}]
     Q_PROPERTY(QVariantList inputDevices READ inputDevices NOTIFY inputDevicesChanged)   // hardware sources a channel can be fed by
     Q_PROPERTY(bool metersEnabled READ metersEnabled WRITE setMetersEnabled NOTIFY metersEnabledChanged)   // Levels.Subscribe while true
+    Q_PROPERTY(QString defaultChannel READ defaultChannel WRITE setDefaultChannel NOTIFY defaultChannelChanged)   // CH-5, slug or ""
 public:
     explicit MixerClient(QObject *parent = nullptr);
 
@@ -40,6 +41,8 @@ public:
     QStringList mixSlugs() const { return m_mixOrder; }
 
     Q_INVOKABLE QString channelName(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Name")).toString(); }
+    QString defaultChannel() const { return m_defaultChannel; }
+    void setDefaultChannel(const QString &slug);
     Q_INVOKABLE QString mixName(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("Name")).toString(); }
     Q_INVOKABLE bool   cellPresent(const QString &ch, const QString &mix) const { return m_cells.contains(cellKey(ch, mix)); }
     /// cubic 0..1 for the UI; the bus speaks linear
@@ -77,7 +80,8 @@ public:
     Q_INVOKABLE bool    mixOutputPresent(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("OutputPresent"), true).toBool(); }
 
 Q_SIGNALS:
-    void errorOccurred(const QString &message);   // a refused request (duplicate name, unknown device, …)
+    void errorOccurred(const QString &message);
+    void defaultChannelChanged();   // a refused request (duplicate name, unknown device, …)
     void connectedChanged();
     void serviceAvailableChanged();
     void layoutChanged();
@@ -108,6 +112,7 @@ private:
     QMap<QString, QVariantMap> m_channels, m_mixes, m_cells;   // keyed by slug / slug / "ch/mix"
     QMap<QString, QVariantMap> m_apps;                          // keyed by object path
     QMap<QString, QString> m_outputDevices, m_inputDevices;    // node.name → description (both directions)
+    QString m_defaultChannel;
     bool m_metersEnabled = false;
     QHash<QString, double> m_peaks;
     QStringList m_channelOrder, m_mixOrder;

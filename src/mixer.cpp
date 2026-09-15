@@ -377,7 +377,26 @@ QList<uint32_t> Mixer::appIds() const { auto l = m_apps.keys(); std::sort(l.begi
 std::optional<App> Mixer::app(uint32_t id) const { auto it = m_apps.constFind(id); return it == m_apps.constEnd() ? std::nullopt : std::optional<App>(*it); }
 bool Mixer::moveApp(uint32_t id, const QString &channelSlug) {
     if (!m_apps.contains(id) || !channelSlugs().contains(channelSlug)) return false;
+    const QString key = appKey(m_apps[id]);
+    if (!key.isEmpty() && !m_layout.knownApps.contains(key)) { m_layout.knownApps << key; saveLayout(); }
     return m_graph.moveStream(id, Names::channelNode(channelSlug));
+}
+// CH-5. Only apps we have NEVER routed are touched: for everything else WirePlumber's restore-target has the
+// user's last choice (CH-4) and must win — even if that choice was "system default, not kmixdeck at all".
+void Mixer::autoRouteNewApp(const App &a) {
+    if (m_layout.defaultChannel.isEmpty() || !channelSlugs().contains(m_layout.defaultChannel)) return;
+    const QString key = appKey(a);
+    if (key.isEmpty() || m_layout.knownApps.contains(key)) return;
+    if (!a.channelSlug.isEmpty()) { m_layout.knownApps << key; saveLayout(); return; }   // already on one of ours (e.g. restored)
+    if (m_graph.moveStream(a.id, Names::channelNode(m_layout.defaultChannel))) {
+        m_layout.knownApps << key; saveLayout();
+        qInfo() << "new application" << key << "→ default channel" << m_layout.defaultChannel;
+    }
+}
+bool Mixer::setDefaultChannel(const QString &slug) {
+    if (!slug.isEmpty() && !channelSlugs().contains(slug)) return false;
+    if (m_layout.defaultChannel == slug) return true;
+    m_layout.defaultChannel = slug; saveLayout(); Q_EMIT defaultChannelChanged(); return true;
 }
 QString Mixer::slugForSinkId(uint32_t sinkId) const {
     for (auto it = m_sinks.cbegin(); it != m_sinks.cend(); ++it)
@@ -409,6 +428,7 @@ QString Mixer::addMix(const QString &displayName, QString *error) {
 void Mixer::removeChannel(const QString &slug) {
     m_layout.channels.removeIf([&](const LayoutChannel &c) { return c.slug == slug; });
     m_layout.inputs.removeIf([&](const LayoutInput &i) { return i.channel == slug || i.slug == slug; });   // no orphan inputs
+    if (m_layout.defaultChannel == slug) { m_layout.defaultChannel.clear(); Q_EMIT defaultChannelChanged(); }
     saveLayout();
     destroyOurNodes([&](const QString &n) {
         return n.startsWith(Names::cellNode(slug, QString())) || n == Names::channelNode(slug)
@@ -484,7 +504,7 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         App &a = m_apps[n.id];
         a.id = n.id; a.name = n.appName.isEmpty() ? n.name : n.appName; a.binary = n.appBinary; a.mediaName = n.mediaName; a.mediaRole = n.mediaRole; a.nodeName = n.name;
         a.channelSlug = slugForSinkId(m_graph.streamSink(n.id));
-        if (isNew) Q_EMIT appAdded(n.id); else Q_EMIT appChanged(n.id);
+        if (isNew) { Q_EMIT appAdded(n.id); autoRouteNewApp(a); } else Q_EMIT appChanged(n.id);
     }
     if (layout) Q_EMIT layoutChanged();
 }

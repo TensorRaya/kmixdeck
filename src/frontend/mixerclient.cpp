@@ -66,6 +66,11 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
             for (auto it = d.cbegin(); it != d.cend(); ++it) m_outputDevices.insert(it.key(), it.value());
             Q_EMIT outputDevicesChanged();
         }
+        if (props.contains(QStringLiteral("DefaultChannel"))) {
+            const QString p = props.value(QStringLiteral("DefaultChannel")).toString();
+            const QString slug = p == QLatin1String("/") ? QString() : p.section(QLatin1Char('/'), -1);
+            if (slug != m_defaultChannel) { m_defaultChannel = slug; Q_EMIT defaultChannelChanged(); }
+        }
         if (rawProps.contains(QStringLiteral("InputDevices"))) {
             QVariant v = rawProps.value(QStringLiteral("InputDevices"));
             if (v.userType() == qMetaTypeId<QDBusVariant>()) v = v.value<QDBusVariant>().variant();
@@ -200,6 +205,10 @@ void MixerClient::onPeaks(const QVariantMap &peaks) {
 void MixerClient::setMixOutputDevice(const QString &slug, const QString &nodeName) {
     m_mixes[slug][QStringLiteral("OutputDevice")] = nodeName;
     setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("OutputDevice"), nodeName);
+}
+void MixerClient::setDefaultChannel(const QString &slug) {
+    const QString path = slug.isEmpty() ? QStringLiteral("/") : QStringLiteral("%1/channel/%2").arg(ROOT, slug);
+    setProperty(ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QStringLiteral("DefaultChannel"), QVariant::fromValue(QDBusObjectPath(path)));
 }
 void MixerClient::setMixVolume(const QString &slug, double cubic) {
     const double lin = std::pow(std::clamp(cubic, 0.0, 1.0), 3.0);

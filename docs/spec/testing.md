@@ -77,4 +77,5 @@ pytest -v tests/integration                          # same, with per-test outpu
 Every suite starts its own private PipeWire (`pw_sandbox.py`) — the host's audio is never touched.
 Found by these tests so far (kept as regression cases): D-Bus-invalid slugs with `-`, segfault on empty
 name (`sendErrorReply` on an unregistered adaptor), orphan inputs after channel removal, mix output
-loopback dying on unplug without `node.linger`, `GetManagedObjects` missing `InputDevices`.
+loopback dying on unplug without `node.linger`, `GetManagedObjects` missing `InputDevices`, segfault on
+any refused *property* write (`sendErrorReply` has no context in a property setter — see `rejectProperty`).

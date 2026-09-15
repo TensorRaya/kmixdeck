@@ -127,6 +127,9 @@ public:
     /// Route an app stream to a channel. WirePlumber remembers it (restore-target) keyed by the stream's
     /// media.role → application.id → application.name → media.name → node.name (state-stream.lua formKey).
     Q_INVOKABLE bool moveApp(uint32_t id, const QString &channelSlug);
+    /// CH-5: default channel for applications kmixdeck has never seen. Empty string = off.
+    QString defaultChannel() const { return m_layout.defaultChannel; }
+    bool    setDefaultChannel(const QString &slug);
 
     /// Layout edits (MX-1: any number of mixes; CH-2: any number of channels).
     /// Returns the new slug, or empty with *error set (empty slug, duplicate). Never invents a name.
@@ -151,6 +154,7 @@ Q_SIGNALS:
     void inputDevicesChanged();
     void inputChanged(const QString &slug);
     void inputsChanged();                       // list of inputs changed
+    void defaultChannelChanged();
 
 private:
     void onNode(const pw::NodeInfo &n);
@@ -172,6 +176,8 @@ private:
     void ensureEdgeLoopbacks();
     void ensureEdgeLoopbackForInput(const QString &slug);
     void notifyPresence();
+    void autoRouteNewApp(const App &a);
+    static QString appKey(const App &a) { return a.name.isEmpty() ? a.nodeName : a.name; }
     void destroyOurNodes(const std::function<bool(const QString &)> &match);
     QList<Device> devicesFor(const QString &mediaClass) const;
     QHash<uint32_t, App> m_apps;

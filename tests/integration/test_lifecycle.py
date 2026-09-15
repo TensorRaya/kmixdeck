@@ -233,3 +233,108 @@ def test_corrupt_layout_file_does_not_take_the_daemon_down(stack):
     st = status(stack)
     assert {m["Slug"] for m in st["mixes"]} >= {"monitor", "stream", "extra"}
     p.write_text(good)
+    stack.restart_daemon()   # the daemon must reload the restored file — leaving it running on the rebuilt-from-graph state would desync layout.json from the daemon
+
+
+# ---------------------------------------------------------------- CH-5: default channel for never-seen apps
+def _start_app(stack, name, node):
+    # WirePlumber keys its restore-target state by media.role FIRST (state-stream.lua formKey) and pw-play
+    # defaults the role to "Music" — so two test apps would inherit each other's target. Give each its own
+    # role so the key is unique per app, which is the situation CH-4/CH-5 describe.
+    return subprocess.Popen(["pw-play", "-P", f'{{ application.name="{name}" node.name="{node}" media.role="{node}" }}', str(stack.pw.tone())],
+                            env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _app(stack, name):
+    return next((a for a in stack.cli("app", "list", json_out=True) if a["Name"] == name), None)
+
+
+def _wait_channel(stack, name, path, tries=60):
+    for _ in range(tries):
+        a = _app(stack, name)
+        if a and a["Channel"] == path: return a
+        time.sleep(0.1)
+    return _app(stack, name)
+
+
+@pytest.fixture(scope="module")
+def fresh(stack):
+    """The lifecycle tests above legitimately leave the matrix in an arbitrary shape. CH-5 needs the starter
+    layout (Game/System/Voice) — own sandbox, no dependency on test order."""
+    pw = start_private_pipewire(); pw.wait_node("kmixdeck.mix.stream")
+    s = Stack(pw)
+    yield s
+    s.close(); pw.close()
+
+
+def test_ch5_new_app_lands_on_the_default_channel_known_apps_are_left_alone(fresh):
+    stack = fresh
+    assert stack.cli("channel", "default").stdout.strip() == "system", "starter layout: System is the default (CH-5)"
+    # 1) never-seen app → system, immediately, and WirePlumber remembers it
+    p = _start_app(stack, "Fresh App", "freshapp")
+    try:
+        a = _wait_channel(stack, "Fresh App", "/org/kmixdeck1/channel/system")
+        assert a["Channel"] == "/org/kmixdeck1/channel/system", f"new app not auto-routed: {a}"
+        assert "Fresh App" in layout(stack)["knownApps"]
+        # 2) the user moves it → that is remembered by WirePlumber (CH-4) …
+        stack.cli("app", "move", str(a["NodeId"]), "game")
+        assert _wait_channel(stack, "Fresh App", "/org/kmixdeck1/channel/game")["Channel"].endswith("/game")
+        from test_service_cli import wait_wireplumber_saved_target
+        wait_wireplumber_saved_target(stack, "kmixdeck.channel.game")
+    finally:
+        p.kill(); p.wait()
+    time.sleep(0.5)
+    # … and on restart the app is KNOWN → the default channel must not override the user's choice
+    p = _start_app(stack, "Fresh App", "freshapp")
+    try:
+        a = _wait_channel(stack, "Fresh App", "/org/kmixdeck1/channel/game")
+        assert a["Channel"].endswith("/game"), f"known app was re-routed to the default channel: {a}"
+    finally:
+        p.kill(); p.wait()
+
+
+def test_ch5_default_none_leaves_new_apps_on_the_system_sink(fresh):
+    stack = fresh
+    stack.cli("channel", "default", "none")
+    assert stack.cli("channel", "default").stdout.strip() == "none"
+    p = _start_app(stack, "Untouched App", "untouched")
+    try:
+        time.sleep(1.5)
+        a = _app(stack, "Untouched App")
+        assert a is not None and a["Channel"] == "/", f"with default=none kmixdeck must not touch new apps: {a}"
+    finally:
+        p.kill(); p.wait()
+    stack.cli("channel", "default", "system")
+
+
+def test_ch5_default_survives_restart_and_dies_with_its_channel(fresh):
+    stack = fresh
+    stack.cli("channel", "default", "voice")
+    stack.restart_daemon()
+    assert stack.cli("channel", "default").stdout.strip() == "voice"
+    assert stack.cli("channel", "default", "nope", check=False).returncode == 3
+    stack.cli("channel", "remove", "voice")
+    assert wait(lambda: stack.cli("channel", "default").stdout.strip() == "none"), "removing the default channel must reset the default, not leave a dangling slug"
+    stack.cli("channel", "add", "Voice"); stack.cli("channel", "default", "system")
+
+
+def test_refused_property_writes_never_kill_the_daemon(stack):
+    """Regression: a QDBusContext-less property setter calling sendErrorReply() segfaulted kmixdeckd.
+    Every writable property gets an out-of-range/unknown value; the daemon must survive and keep the old value."""
+    cases = [
+        ("/org/kmixdeck1/cell/game/stream", "org.kmixdeck1.Cell", "Volume", "d", "5.0"),
+        ("/org/kmixdeck1/channel/game", "org.kmixdeck1.Channel", "Trim", "d", "5.0"),
+        ("/org/kmixdeck1/channel/game", "org.kmixdeck1.Channel", "InputDevice", "s", "no.such.device"),
+        ("/org/kmixdeck1/mix/stream", "org.kmixdeck1.Mix", "Volume", "d", "-1"),
+        # (Mix.OutputDevice deliberately ACCEPTS unknown names: a not-yet-plugged device is a valid choice, ADR 0007)
+        ("/org/kmixdeck1", "org.kmixdeck1.Mixer", "DefaultChannel", "o", "/org/kmixdeck1/channel/nope"),
+        ("/org/kmixdeck1", "org.kmixdeck1.Mixer", "DefaultChannel", "o", "/not/a/channel"),
+    ]
+    stack.cli("cell", "set", "game", "stream", "0.5")
+    for path, iface, prop, sig, val in cases:
+        stack.busctl("set-property", "org.kmixdeck1", path, iface, prop, sig, val)
+        assert stack.daemon.poll() is None, f"daemon died on {iface}.{prop} = {val!r}"
+        assert stack.cli("status", check=False).returncode == 0, f"daemon unresponsive after {iface}.{prop} = {val!r}"
+    assert stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"] == pytest.approx(0.5)
+    assert stack.cli("channel", "default").stdout.strip() != "nope"
+    stack.cli("cell", "set", "game", "stream", "1.0")

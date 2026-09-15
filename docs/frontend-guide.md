@@ -62,6 +62,20 @@ decoration. The introspection XML in [`interfaces/`](../interfaces/) is the auth
 signal per tick (~25 Hz), keyed `channel/<slug>` and `mix/<slug>`, linear 0..1. The service only runs
 the meter graph while somebody is subscribed — call `Unsubscribe()` when your window hides.
 
+## Default channel for new applications (CH-5)
+
+`Mixer.DefaultChannel` (`o`, read/write) — object path of the channel that applications kmixdeck has
+**never routed before** are moved to when they first appear; `/` turns this off. Applications the user has
+placed once are left alone forever (WirePlumber remembers their target; kmixdeck only remembers *that* it
+has seen them, in `layout.json` → `knownApps`). Removing the default channel resets the property to `/`.
+
+## A note on refused property writes
+
+`org.freedesktop.DBus.Properties.Set` cannot return a kmixdeck error: Qt answers it before our setter runs.
+An out-of-range or unknown value is **ignored and logged** by the daemon; read the property back if you
+need to know. Methods (`SetVolumeDb`, `ToggleMute`, `MoveTo`, `AddChannel` …) do return proper errors —
+prefer them when you want feedback.
+
 ## The three things your frontend must do
 
 1. **Bootstrap** with `GetManagedObjects()` — one round trip returns every object with all

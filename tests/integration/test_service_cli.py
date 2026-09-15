@@ -208,7 +208,11 @@ def test_ch10_running_apps_are_listed_with_their_channel(stack):
     p, app = start_fake_app(stack)
     try:
         assert app["Binary"] == "fakegame" and app["MediaName"] == "BGM" and app["MediaRole"] == "Game"
-        assert app["Channel"] in ("/", "/org/kmixdeck1/channel/game")   # default sink in the sandbox is whatever WirePlumber picked
+        # CH-5: a never-seen app is placed on the default channel (System) right away
+        for _ in range(30):
+            if app["Channel"] == "/org/kmixdeck1/channel/system": break
+            time.sleep(0.1); app = next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")
+        assert app["Channel"] == "/org/kmixdeck1/channel/system", app
     finally:
         p.kill(); p.wait()
 

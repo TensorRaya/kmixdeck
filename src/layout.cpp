@@ -53,10 +53,13 @@ QJsonObject Layout::toJson() const {
         mx.append(o);
     }
     for (const auto &i : inputs) in.append(QJsonObject{{QStringLiteral("slug"), i.slug}, {QStringLiteral("name"), i.name}, {QStringLiteral("device"), i.device.toJson()}, {QStringLiteral("channel"), i.channel}});
-    return {{QStringLiteral("version"), 2}, {QStringLiteral("channels"), ch}, {QStringLiteral("mixes"), mx}, {QStringLiteral("inputs"), in}};
+    return {{QStringLiteral("version"), 2}, {QStringLiteral("channels"), ch}, {QStringLiteral("mixes"), mx}, {QStringLiteral("inputs"), in},
+            {QStringLiteral("defaultChannel"), defaultChannel}, {QStringLiteral("knownApps"), QJsonArray::fromStringList(knownApps)}};
 }
 Layout Layout::fromJson(const QJsonObject &o) {
     Layout l;
+    if (o.contains(QStringLiteral("defaultChannel"))) l.defaultChannel = o.value(QStringLiteral("defaultChannel")).toString();
+    for (const auto &v : o.value(QStringLiteral("knownApps")).toArray()) l.knownApps << v.toString();
     for (const auto &v : o.value(QStringLiteral("channels")).toArray()) { const auto c = v.toObject(); l.channels.push_back({c.value(QStringLiteral("slug")).toString(), c.value(QStringLiteral("name")).toString(), c.value(QStringLiteral("icon")).toString()}); }
     for (const auto &v : o.value(QStringLiteral("mixes")).toArray()) {
         const auto m = v.toObject(); LayoutMix lm;

@@ -67,6 +67,16 @@ ColumnLayout {
                     onTriggered: Mixer.setChannelDevice(header.channel, modelData.nodeName)
                 }
             }
+            QQC2.MenuSeparator {}
+            QQC2.MenuItem {
+                text: i18n("New applications start here")
+                icon.name: "go-jump"
+                checkable: true
+                checked: Mixer.defaultChannel === header.channel
+                onTriggered: Mixer.defaultChannel = checked ? header.channel : ""
+                QQC2.ToolTip.text: i18n("Applications kmixdeck has never seen before are placed on this channel. Ones you have moved keep their place.")
+                QQC2.ToolTip.visible: hovered
+            }
             // the configured device is unplugged → keep it selectable so the user sees the current choice
             QQC2.MenuItem {
                 visible: !header.inputPresent && header.inputDevice.length > 0

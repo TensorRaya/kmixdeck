@@ -17,6 +17,8 @@
     <property name="OutputDevices" type="a{ss}" access="read"/>
     <!-- hardware sources a channel may be fed by (ADR 0007): node.name → human description -->
     <property name="InputDevices" type="a{ss}" access="read"/>
+    <!-- CH-5: never-seen applications are moved here on first appearance. "/" disables auto-routing. -->
+    <property name="DefaultChannel" type="o" access="readwrite"/>
     <!-- Create a channel (input group). Returns the new object path. Slug derived from name. -->
     <method name="AddChannel">
       <arg name="name" type="s" direction="in"/>

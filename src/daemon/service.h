@@ -9,6 +9,7 @@
 #include <QSet>
 #include <QTimer>
 #include <QDBusContext>
+#include <QDebug>
 #include <QHash>
 #include <memory>
 #include "mixer.h"
@@ -31,6 +32,12 @@ public:
     virtual QString interfaceName() const = 0;
     virtual QVariantMap properties() const = 0;     // for GetManagedObjects / InterfacesAdded
 protected:
+    /// Property setters run through QMetaProperty::write, NOT through the D-Bus method dispatcher: there is no
+    /// QDBusContext to answer on, and calling sendErrorReply() there dereferences null (segfault — found via
+    /// `busctl set-property … Trim d 5.0`). QtDBus answers the Set call itself; the most we can do is refuse the
+    /// value and say why in the log. Value-range checks that MUST surface to the client belong on methods
+    /// (SetVolumeDb, ToggleMute, MoveTo …), which do have a context.
+    void rejectProperty(const QString &name, const QString &why) const { qWarning().noquote() << QStringLiteral("%1: refused %2 (%3)").arg(m_path, name, why); }
     QString m_path;
 };
 
@@ -186,12 +193,15 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_PROPERTY(bool Connected READ connected)
     Q_PROPERTY(StringMap OutputDevices READ outputDevices)     // a{ss}: node.name → description
     Q_PROPERTY(StringMap InputDevices READ inputDevices)
+    Q_PROPERTY(QDBusObjectPath DefaultChannel READ defaultChannel WRITE setDefaultChannel)   // CH-5; "/" = off
 public:
     MixerAdaptor(Mixer *mixer, QObject *parent);
     QString version() const;
     bool connected() const;
     StringMap outputDevices() const;
     StringMap inputDevices() const;
+    QDBusObjectPath defaultChannel() const;
+    void setDefaultChannel(const QDBusObjectPath &p);
 public Q_SLOTS:
     QDBusObjectPath AddChannel(const QString &name);
     QDBusObjectPath AddMix(const QString &name);

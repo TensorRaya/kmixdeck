@@ -29,7 +29,7 @@ QDBusObjectPath CellObject::mix() const { return QDBusObjectPath(Service::mixPat
 double CellObject::volume() const { return Mixer::cubicToLinear(m_mixer->cellVolume(m_ch, m_mix)); }
 bool CellObject::muted() const { return m_mixer->cellMuted(m_ch, m_mix); }
 void CellObject::setVolume(double linear) {
-    if (!(linear >= 0.0 && linear <= 1.0)) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("Volume must be linear 0..1")); return; }
+    if (!(linear >= 0.0 && linear <= 1.0)) { rejectProperty(QStringLiteral("Volume"), QStringLiteral("must be linear 0..1")); return; }
     m_mixer->setCellVolume(m_ch, m_mix, Mixer::linearToCubic(static_cast<float>(linear)));
 }
 void CellObject::setMuted(bool m) { m_mixer->setCellMuted(m_ch, m_mix, m); }
@@ -50,13 +50,13 @@ QString ChannelObject::name() const { return m_mixer->channelName(m_slug); }
 void ChannelObject::setName(const QString &n) { m_mixer->renameChannel(m_slug, n); }
 void ChannelObject::setIcon(const QString &i) { m_icon = i; emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("Icon"), i}}); }
 double ChannelObject::trim() const { return m_mixer->channelTrim(m_slug); }
-void ChannelObject::setTrim(double v) { if (v < 0 || v > 1) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("Trim must be 0..1")); return; } m_mixer->setChannelTrim(m_slug, v); }
+void ChannelObject::setTrim(double v) { if (v < 0 || v > 1) { rejectProperty(QStringLiteral("Trim"), QStringLiteral("must be 0..1")); return; } m_mixer->setChannelTrim(m_slug, v); }
 bool ChannelObject::muted() const { return m_mixer->channelMuted(m_slug); }
 void ChannelObject::setMuted(bool m) { m_mixer->setChannelMuted(m_slug, m); }
 void ChannelObject::ToggleMute() { m_mixer->setChannelMuted(m_slug, !m_mixer->channelMuted(m_slug)); }
 QString ChannelObject::inputDevice() const { return m_mixer->channelInputDevice(m_slug); }
 void ChannelObject::setInputDevice(const QString &d) {
-    if (!m_mixer->setChannelInputDevice(m_slug, d)) sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("unknown input device (see Mixer.InputDevices)"));
+    if (!m_mixer->setChannelInputDevice(m_slug, d)) rejectProperty(QStringLiteral("InputDevice"), QStringLiteral("unknown input device (see Mixer.InputDevices)"));
 }
 bool ChannelObject::inputPresent() const { return m_mixer->channelInputPresent(m_slug); }
 QVariantMap ChannelObject::properties() const {
@@ -75,7 +75,7 @@ void MixObject::setOutputDevice(const QString &d) { m_mixer->setMixOutputDevice(
 QString MixObject::captureSource() const { return m_mixer->mixCaptureSource(m_slug); }
 bool MixObject::outputPresent() const { return m_mixer->mixOutputPresent(m_slug); }
 double MixObject::volume() const { return m_mixer->mixVolume(m_slug); }
-void MixObject::setVolume(double v) { if (!(v >= 0.0 && v <= 1.0)) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("Volume must be linear 0..1")); return; } m_mixer->setMixVolume(m_slug, v); }
+void MixObject::setVolume(double v) { if (!(v >= 0.0 && v <= 1.0)) { rejectProperty(QStringLiteral("Volume"), QStringLiteral("must be linear 0..1")); return; } m_mixer->setMixVolume(m_slug, v); }
 bool MixObject::muted() const { return m_mixer->mixMuted(m_slug); }
 void MixObject::setMuted(bool m) { m_mixer->setMixMuted(m_slug, m); }
 void MixObject::ToggleMute() { m_mixer->setMixMuted(m_slug, !m_mixer->mixMuted(m_slug)); }
@@ -162,6 +162,18 @@ StringMap MixerAdaptor::outputDevices() const {
     }
     return m;
 }
+QDBusObjectPath MixerAdaptor::defaultChannel() const {
+    const QString s = m_mixer->defaultChannel();
+    return QDBusObjectPath(s.isEmpty() ? QStringLiteral("/") : Service::channelPath(s));
+}
+void MixerAdaptor::setDefaultChannel(const QDBusObjectPath &p) {
+    const QString prefix = Service::channelPath(QString());
+    QString slug;
+    if (p.path() == QLatin1String("/")) slug.clear();
+    else if (p.path().startsWith(prefix)) slug = p.path().mid(prefix.size());
+    else slug = QStringLiteral("?");   // not a channel path → setDefaultChannel() rejects it
+    if (!m_mixer->setDefaultChannel(slug)) static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no such channel"));
+}
 StringMap MixerAdaptor::inputDevices() const {
     StringMap m;
     for (const auto &d : m_mixer->inputDevices()) {
@@ -214,6 +226,9 @@ Service::Service(QObject *parent) : QObject(parent) {
     });
     connect(&m_mixer, &Mixer::outputDevicesChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->outputDevices() : StringMap{})}});
+    });
+    connect(&m_mixer, &Mixer::defaultChannelChanged, this, [this] {
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->defaultChannel() : QDBusObjectPath(QStringLiteral("/")))}});
     });
     connect(&m_mixer, &Mixer::inputDevicesChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->inputDevices() : StringMap{})}});
@@ -268,7 +283,8 @@ ManagedObjects Service::managedObjects() const {
     ManagedObjects out;
     out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
         {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()},
-         {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())}}}});
+         {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())},
+         {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)
         out.insert(QDBusObjectPath(it.key()), InterfaceMap{{it.value()->interfaceName(), it.value()->properties()}});
     return out;

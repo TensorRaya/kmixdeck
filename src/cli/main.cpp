@@ -153,6 +153,7 @@ int main(int argc, char *argv[]) {
         "Commands:\n"
         "  status                                     matrix overview\n"
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
+        "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
         "  mix     list|add <name>|remove <slug>|rename <slug> <name>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
         "  devices [in]                               hardware outputs a mix can play to (in: sources a channel can be fed by)\n"
         "  levels                                     live peak meters (Ctrl-C to stop)\n"
@@ -195,6 +196,12 @@ int main(int argc, char *argv[]) {
         auto pathOf = [&](const QString &slug) { return QStringLiteral("%1/%2/%3").arg(ROOT, ch ? "channel" : "mix", slug); };
         if (sub == "list") return list(objs);
         if (sub == "add") { if (!need(3)) return Usage; return printPath(QDBusReply<QDBusObjectPath>(mixer.call(ch ? "AddChannel" : "AddMix", a[2]))); }
+        if (sub == "default" && ch) {   // channel default [<slug>|none]
+            if (a.size() < 3) { const QString p = unwrap(o.mixer.value("DefaultChannel")).toString(); out << (p == "/" ? QStringLiteral("none") : p.section(QLatin1Char('/'), -1)) << "\n"; return Ok; }
+            if (a[2] != "none" && !objs.contains(pathOf(a[2]))) return fail(NotFound, QStringLiteral("no channel '%1'").arg(a[2]));
+            const QDBusObjectPath p(a[2] == "none" ? QStringLiteral("/") : pathOf(a[2]));
+            return setProp(QString::fromLatin1(ROOT), "org.kmixdeck1.Mixer", "DefaultChannel", QVariant::fromValue(p), &e) ? Ok : fail(Rejected, e);
+        }
         if (!need(3)) return Usage;
         if (!objs.contains(pathOf(a[2]))) return fail(NotFound, QStringLiteral("no %1 '%2'").arg(cmd, a[2]));
         if (sub == "remove") { QDBusMessage r = mixer.call(ch ? "RemoveChannel" : "RemoveMix", QVariant::fromValue(QDBusObjectPath(pathOf(a[2])))); return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok; }
