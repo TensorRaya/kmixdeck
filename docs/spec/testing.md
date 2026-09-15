@@ -64,3 +64,17 @@ ctest --test-dir build --output-on-failure           # all three levels
 ctest --test-dir build -L integration                # only the acoustic tests
 pytest -v tests/integration                          # same, with per-test output
 ```
+
+## Suites (one ctest each, run in parallel with `ctest -L integration -j4`)
+
+| File | Covers | Style |
+|---|---|---|
+| `test_service_cli.py` | bus contract vs shipped XML + GetManagedObjects, CLI exit codes, app routing, devices, presence, levels | bus + graph |
+| `test_audio_graph.py` | the generated PipeWire config alone (no daemon): DV-1, unity defaults, source node | graph only |
+| `test_lifecycle.py` | create / rename / remove channels + mixes under load, duplicates, bad names, empty matrix, corrupt layout | bus + graph + files |
+| `test_routing.py` | acoustic: fader isolation between mixes, trim/mute scope, parked = silent, device follows mix, +6 dB sum, capture source, hardware input, restart keeps levels | RMS measured |
+
+Every suite starts its own private PipeWire (`pw_sandbox.py`) — the host's audio is never touched.
+Found by these tests so far (kept as regression cases): D-Bus-invalid slugs with `-`, segfault on empty
+name (`sendErrorReply` on an unregistered adaptor), orphan inputs after channel removal, mix output
+loopback dying on unplug without `node.linger`, `GetManagedObjects` missing `InputDevices`.

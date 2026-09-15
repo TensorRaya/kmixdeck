@@ -6,6 +6,8 @@
 #include <QDBusMetaType>
 #include <QDBusVariant>
 #include <QDBusServiceWatcher>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
 #include <QDebug>
 #include <algorithm>
 
@@ -136,8 +138,18 @@ void MixerClient::toggleCellMute(const QString &ch, const QString &mix) {
 void MixerClient::toggleChannelMute(const QString &slug) {
     QDBusInterface(BUS, QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("ToggleMute"));
 }
-void MixerClient::addChannel(const QString &name) { QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("AddChannel"), name); }
-void MixerClient::addMix(const QString &name)     { QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("AddMix"), name); }
+// Creation can be refused (duplicate, unusable name). The daemon answers with a D-Bus error; surface it
+// instead of leaving the user staring at a dialog that closed and a matrix that did not change.
+void MixerClient::callReportingErrors(const QString &method, const QVariant &arg) {
+    auto *w = new QDBusPendingCallWatcher(QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus()).asyncCall(method, arg), this);
+    connect(w, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w) {
+        QDBusPendingReply<> r = *w;
+        if (r.isError()) Q_EMIT errorOccurred(r.error().message());
+        w->deleteLater();
+    });
+}
+void MixerClient::addChannel(const QString &name) { callReportingErrors(QStringLiteral("AddChannel"), name); }
+void MixerClient::addMix(const QString &name)     { callReportingErrors(QStringLiteral("AddMix"), name); }
 void MixerClient::removeChannel(const QString &slug) { QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("RemoveChannel"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/channel/%2").arg(ROOT, slug)))); }
 void MixerClient::removeMix(const QString &slug)     { QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("RemoveMix"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/mix/%2").arg(ROOT, slug)))); }
 

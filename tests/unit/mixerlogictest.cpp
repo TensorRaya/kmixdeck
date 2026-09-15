@@ -11,11 +11,13 @@ private Q_SLOTS:
     void slugify_data() {
         QTest::addColumn<QString>("in"); QTest::addColumn<QString>("out");
         QTest::newRow("simple")     << "Game" << "game";
-        QTest::newRow("spaces")     << "Voice Chat" << "voice-chat";
-        QTest::newRow("unicode")    << "Musik – Ünïcode" << "musik-unicode";
-        QTest::newRow("symbols")    << "OBS (Stream) #2!" << "obs-stream-2";
+        QTest::newRow("spaces")     << "Voice Chat" << "voice_chat";
+        QTest::newRow("unicode")    << "Musik – Ünïcode" << "musik_unicode";
+        QTest::newRow("symbols")    << "OBS (Stream) #2!" << "obs_stream_2";
         QTest::newRow("trim")       << "  --Mix--  " << "mix";
-        QTest::newRow("empty")      << "!!!" << "x";
+        QTest::newRow("empty")      << "!!!" << "";
+        QTest::newRow("dashes")     << "---" << "";
+        QTest::newRow("dbus-safe")  << "Mix #1 – Ünd_so" << "mix_1_und_so";
     }
     void slugify() {
         QFETCH(QString, in); QFETCH(QString, out);

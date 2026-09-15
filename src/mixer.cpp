@@ -12,9 +12,11 @@ namespace kmixdeck {
 QString Names::slugify(const QString &display) {
     QString s = display.toLower().normalized(QString::NormalizationForm_KD);
     s.remove(QRegularExpression(QStringLiteral("\\p{Mn}")));   // strip combining marks left by KD (Ü → U + ¨)
-    s.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral("-"));
-    s = s.trimmed(); while (s.startsWith(QLatin1Char('-'))) s.remove(0, 1); while (s.endsWith(QLatin1Char('-'))) s.chop(1);
-    return s.isEmpty() ? QStringLiteral("x") : s;
+    // '_' not '-': a slug ends up in D-Bus object paths, which allow only [A-Za-z0-9_] (dbus-spec). Found the hard
+    // way: "Übertragung" → "ubertragung-und-mehr" marshalled as an invalid path and the reply never left the daemon.
+    s.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral("_"));
+    while (s.startsWith(QLatin1Char('_'))) s.remove(0, 1); while (s.endsWith(QLatin1Char('_'))) s.chop(1);
+    return s;   // may be empty → callers reject (never invent a name)
 }
 
 Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
@@ -378,33 +380,50 @@ void Mixer::onStreamRouted(uint32_t streamId, uint32_t sinkId) {
     if (it->channelSlug != slug) { it->channelSlug = slug; Q_EMIT appChanged(streamId); }
 }
 
-void Mixer::addChannel(const QString &displayName) {
+QString Mixer::addChannel(const QString &displayName, QString *error) {
     const QString slug = Names::slugify(displayName);
-    if (slug.isEmpty() || m_layout.channel(slug)) return;
-    m_layout.channels.push_back({slug, displayName, {}});
+    if (slug.isEmpty()) { if (error) *error = QStringLiteral("name has no usable characters"); return {}; }
+    if (m_layout.channel(slug)) { if (error) *error = QStringLiteral("channel '%1' already exists").arg(slug); return {}; }
+    m_layout.channels.push_back({slug, displayName.trimmed(), {}});
     saveLayout(); reconcile();
+    return slug;
 }
-void Mixer::addMix(const QString &displayName) {
+QString Mixer::addMix(const QString &displayName, QString *error) {
     const QString slug = Names::slugify(displayName);
-    if (slug.isEmpty() || m_layout.mix(slug)) return;
-    m_layout.mixes.push_back({slug, displayName, {}, {}, {}});
+    if (slug.isEmpty()) { if (error) *error = QStringLiteral("name has no usable characters"); return {}; }
+    if (m_layout.mix(slug)) { if (error) *error = QStringLiteral("mix '%1' already exists").arg(slug); return {}; }
+    m_layout.mixes.push_back({slug, displayName.trimmed(), {}, {}, {}});
     saveLayout(); reconcile();
+    return slug;
 }
 void Mixer::removeChannel(const QString &slug) {
     m_layout.channels.removeIf([&](const LayoutChannel &c) { return c.slug == slug; });
+    m_layout.inputs.removeIf([&](const LayoutInput &i) { return i.channel == slug || i.slug == slug; });   // no orphan inputs
     saveLayout();
-    for (auto it = m_cells.begin(); it != m_cells.end(); ++it) if (it.key().startsWith(Names::cellNode(slug, QString()))) m_graph.destroyObject(it->id);
-    if (auto n = m_graph.node(Names::channelNode(slug))) m_graph.destroyObject(n->id);
-    m_channels.removeIf([&](const Channel &c) { return c.slug == slug; }); Q_EMIT layoutChanged();
+    destroyOurNodes([&](const QString &n) {
+        return n.startsWith(Names::cellNode(slug, QString())) || n == Names::channelNode(slug)
+            || n == EdgeNames::inputNode(slug) || n == EdgeNames::inputNode(slug) + QStringLiteral(".in");
+    });
+    m_edges.remove(EdgeNames::inputNode(slug));
+    m_channels.removeIf([&](const Channel &c) { return c.slug == slug; }); Q_EMIT layoutChanged(); Q_EMIT inputsChanged();
 }
 void Mixer::removeMix(const QString &slug) {
     m_layout.mixes.removeIf([&](const LayoutMix &m) { return m.slug == slug; });
     saveLayout();
-    for (auto it = m_cells.begin(); it != m_cells.end(); ++it) if (it.key().endsWith(QLatin1Char('.') + slug)) m_graph.destroyObject(it->id);
-    for (const char *p : {"kmixdeck.out.", "kmixdeck.source."})
-        if (auto n = m_graph.node(QLatin1String(p) + slug)) m_graph.destroyObject(n->id);
-    if (auto n = m_graph.node(Names::mixNode(slug))) m_graph.destroyObject(n->id);
+    const QString out = QStringLiteral("kmixdeck.out.") + slug, src = EdgeNames::sourceNode(slug);
+    destroyOurNodes([&](const QString &n) {
+        if (n.startsWith(QLatin1String("kmixdeck.link.")) && n.section(QLatin1Char('.'), 3, 3) == slug) return true;   // cells incl. .in
+        return n == Names::mixNode(slug) || n == out || n.startsWith(out + QLatin1Char('.')) || n == src || n.startsWith(src + QLatin1Char('.'));
+    });
+    for (auto it = m_edges.begin(); it != m_edges.end();) (it.key() == out || it.key().startsWith(out + QLatin1Char('.')) || it.key() == src) ? it = m_edges.erase(it) : ++it;
     m_mixes.removeIf([&](const Mix &m) { return m.slug == slug; }); Q_EMIT layoutChanged();
+}
+// Destroying a loopback's playback node tears the whole module down (both streams); capture nodes are
+// listed too so nothing is missed when the graph is in a half state. Snapshot first: destroy mutates m_graph.
+void Mixer::destroyOurNodes(const std::function<bool(const QString &)> &match) {
+    QList<uint32_t> ids;
+    for (const auto &n : m_graph.nodes()) if (n.name.startsWith(QLatin1String("kmixdeck.")) && match(n.name)) ids << n.id;
+    for (uint32_t id : ids) m_graph.destroyObject(id);
 }
 
 // Discover our objects from the live graph — the graph is the source of truth (DV-1).

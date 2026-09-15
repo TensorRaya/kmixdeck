@@ -12,10 +12,13 @@ find_program(PIPEWIRE_EXECUTABLE pipewire)
 find_program(WIREPLUMBER_EXECUTABLE wireplumber)
 find_program(FFMPEG_EXECUTABLE ffmpeg)
 if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMPEG_EXECUTABLE)
-    add_test(NAME integration-audio-graph
-        COMMAND ${PYTEST_EXECUTABLE} -q ${CMAKE_CURRENT_SOURCE_DIR}/integration
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
-    set_tests_properties(integration-audio-graph PROPERTIES TIMEOUT 300 LABELS "integration")
+    # One ctest per file so they run in parallel (ctest -j) and a failure names the area, not "everything".
+    foreach(suite service_cli audio_graph lifecycle routing)
+        add_test(NAME integration-${suite}
+            COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_${suite}.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
+        set_tests_properties(integration-${suite} PROPERTIES TIMEOUT 300 LABELS "integration")
+    endforeach()
 else()
     message(STATUS "Integration tests disabled (need pytest, pipewire, wireplumber, ffmpeg)")
 endif()

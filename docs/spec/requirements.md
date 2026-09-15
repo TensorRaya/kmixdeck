@@ -13,13 +13,13 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 
 | ID | Requirement | Source | Status |
 |---|---|---|---|
-| CH-1 | The app MUST provide virtual audio channels (e.g. *Game*, *System*, *Voice*, *Music*, *Browser*) that appear to the desktop as ordinary output devices, selectable in any application and in the Plasma volume applet. | owner, wavelink | 📝 |
-| CH-2 | Channels MUST be user-definable: create, rename, reorder, delete, choose icon/colour. No fixed set, no fixed count. | owner | 📝 |
+| CH-1 | The app MUST provide virtual audio channels (e.g. *Game*, *System*, *Voice*, *Music*, *Browser*) that appear to the desktop as ordinary output devices, selectable in any application and in the Plasma volume applet. | owner, wavelink | ✅ starter layout + `channel add`; test_lifecycle, test_routing (mic → voice) |
+| CH-2 | Channels MUST be user-definable: create, rename, reorder, delete, choose icon/colour. No fixed set, no fixed count. | owner | ✅ create/rename/delete via bus+CLI+UI (test_lifecycle); reorder + icon/colour: 📝 still open |
 | CH-3 | Physical inputs (microphones, capture cards, line-in, Bluetooth) MUST be usable as channels alongside virtual ones — as `Input` objects attached to a channel (ADR 0007 D2). | wavelink; ADR 0007 | ✅ test_ch3_* — `kmixdeck channel input voice fake.mic`, `Channel.InputDevice`, `kmixdeck.in.voice` in graph |
 | CH-4 | An application MUST be assignable to a channel from within the app (drag-and-drop or picker); the assignment MUST persist across app restarts, PipeWire restarts and reboots. | owner, wavelink; tests `test_ch4_move_app_to_channel_is_immediate_and_audible`, `test_ch4_routing_survives_app_restart`, `test_ch4_routing_survives_pipewire_restart` (WirePlumber restore-target, keyed by node.name) | ✅ |
 | CH-5 | New, never-seen applications MUST land on a user-chosen default channel (default: *System*). | owner | 📝 |
 | CH-6 | Assignment MUST survive PipeWire renaming or re-creating an app's node (see Sonusmix #38); matching MUST NOT rely on volatile node IDs alone. | platform | 📝 |
-| CH-7 | Each channel MUST have: mute, gain trim, level meter (peak + RMS), clip indicator. | wavelink | 📝 |
+| CH-7 | Each channel MUST have: mute, gain trim, level meter (peak + RMS), clip indicator. | wavelink | ✅ Trim/Mute on Channel (test_routing: trim −20 dB reaches all mixes, mute silences all) + peak meter (UX-6); RMS/clip: 📝 |
 | CH-8 | Channels MAY be grouped/linked so one fader moves several channels. | wavelink | 📝 |
 | CH-9 | Deleting a channel or mix MUST be undoable (Wave Link 3.2 added undo after user complaints). | wavelink #12 | 📝 |
 | CH-10 | The app picker MUST group applications by category and show which channel each running app is on; apps without a recognisable PipeWire node (Sonusmix #37: mpv) MUST still be listed via their client/application name. | wavelink #10, users; test `test_ch10_running_apps_are_listed_with_their_channel`; `org.kmixdeck1.App` objects; `kmixdeck app list` | ✅ |
@@ -63,7 +63,7 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 | CT-4 | The app MUST integrate with the Plasma system tray (StatusNotifierItem): quick mute, mix switch, level indication. | owner; KStatusNotifierItem with per-channel mute toggles, per-mix mute, icon reflects mute state, closing the window keeps the tray; level indication still missing; registered with the real `StatusNotifierWatcher` on Plasma 6.7 (2026-09-15); level indication still missing | 🔶 |
 | CT-5 | Volumes shown in kmixdeck and in the Plasma volume applet MUST agree (no two truths). | platform | 📝 |
 | CT-6 | OBS SHOULD see each mix as a cleanly named capture device, and MAY additionally see each channel separately (for multi-track recording). | owner; `kmixdeck.source.<mix>` Audio/Source per mix, description 'kmixdeck <Mix> Mix' (generated conf + reconcile); test `test_mx3a_output_device_persists_in_generated_conf`; per-channel capture (MAY) not done ; OBS 'Stream Mix (kmixdeck)' input on the laptop, tone level in == OBS meter level | ✅ |
-| CT-7 | Settings backup/restore and export MUST be available; a corrupt entry MUST NOT invalidate the whole config (Wave Link 3.3 fixed exactly this). | wavelink #24, L9 | 📝 |
+| CT-7 | Settings backup/restore and export MUST be available; a corrupt entry MUST NOT invalidate the whole config (Wave Link 3.3 fixed exactly this). | wavelink #24, L9 | ✅ corrupt layout.json → daemon still starts, rebuilds from graph (test_lifecycle::test_corrupt_layout_file_does_not_take_the_daemon_down); export/import 📝 |
 
 ## 5. Devices & audio behaviour
 
@@ -71,7 +71,7 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 |---|---|---|---|
 | DV-1 | The app MUST NOT sit in the audio path as a process. Audio MUST keep flowing when the UI is closed or crashes. | owner; test `test_graph_comes_up_from_config_alone` (graph from config, no app process); test `test_dv1_layout_survives_without_the_daemon` (daemon killed, PipeWire restarted, graph still there from generated conf; reconcile creates nothing twice) | ✅ |
 | DV-2 | Added latency per hop (channel → mix → device) MUST be ≤ one PipeWire quantum at the session's rate; the design MUST avoid unnecessary resampling. | owner; test `test_cell_nodes_run_in_one_graph_cycle` (all nodes RUNNING in one graph cycle, DSP 1–3 µs) | ✅ |
-| DV-3 | Hot-plug: when the monitor output device disappears (headset unplugged, Bluetooth drops), the mix MUST fall back to a user-defined device and return automatically when it reappears. | users | 📝 |
+| DV-3 | Hot-plug: when the monitor output device disappears (headset unplugged, Bluetooth drops), the mix MUST fall back to a user-defined device and return automatically when it reappears. | users | ✅ test_dv9_dv12_*: output unplugged → parked on kmixdeck.null, resumes on replug; test_routing: parked = silent on default sink |
 | DV-4 | Sample rate and quantum SHOULD follow the PipeWire session; the app MUST NOT force its own rate. | platform | 📝 |
 | DV-5 | Configuration MUST be plain files under `$XDG_CONFIG_HOME`, human-readable, diff-able, and MUST restore the full graph on login without user action. | owner; `layout.json` + generated `pipewire.conf.d/90-kmixdeck.conf` on every edit (QSaveFile, atomic) | ✅ |
 | DV-6 | Sleep/wake and device re-enumeration MUST NOT lose routing or require a restart (Wave Link 3.x release notes list repeated fixes here; VoiceMeeter forum: crackling after updates). | wavelink #44, users | 📝 |

@@ -163,6 +163,16 @@ private:
 };
 
 // ---- org.kmixdeck1.Mixer (root) --------------------------------------------------------
+/// The registered root object. QDBusContext only works on the object that was registerObject()'ed — an
+/// adaptor calling sendErrorReply() on itself dereferences a null context (segfault, found by test
+/// test_add_channel_with_empty_or_symbol_only_name_is_rejected). Adaptors reach the context through this.
+class RootObject : public QObject, public QDBusContext {
+    Q_OBJECT
+public:
+    using QObject::QObject;
+    void replyError(const QString &name, const QString &msg) { if (calledFromDBus()) sendErrorReply(name, msg); }
+};
+
 class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "org.kmixdeck1.Mixer")
@@ -205,7 +215,7 @@ private:
     ManagedObjects managedObjects() const;
 
     Mixer m_mixer;
-    QObject m_root;
+    RootObject m_root;
     MixerAdaptor *m_mixerAdaptor = nullptr;
     LevelsAdaptor *m_levelsAdaptor = nullptr;
     ObjectManagerAdaptor *m_om = nullptr;

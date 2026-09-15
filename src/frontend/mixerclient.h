@@ -73,6 +73,7 @@ public:
     Q_INVOKABLE bool    mixOutputPresent(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("OutputPresent"), true).toBool(); }
 
 Q_SIGNALS:
+    void errorOccurred(const QString &message);   // a refused request (duplicate name, unknown device, …)
     void connectedChanged();
     void serviceAvailableChanged();
     void layoutChanged();
@@ -93,6 +94,7 @@ private Q_SLOTS:
     void onNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
 
 private:
+    void callReportingErrors(const QString &method, const QVariant &arg);
     static QString cellKey(const QString &ch, const QString &mix) { return ch + QLatin1Char('/') + mix; }
     void refresh();                    // GetManagedObjects → rebuild mirror
     void absorb(const QString &path, const QString &iface, const QVariantMap &props, bool *layout);

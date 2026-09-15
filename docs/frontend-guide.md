@@ -78,7 +78,7 @@ the meter graph while somebody is subscribed — call `Unsubscribe()` when your 
   - dB: `20·log10(v)`; 0.5 → −6.02 dB, 0.25 → −12.04 dB, 0 → −∞.
   - If you want a Plasma-like fader feel, display `cbrt(v)` and write `x³` (cubic curve).
 - Slugs (`game`, `stream`) are stable IDs; `Name` is the display string and may change.
-- Paths are lowercase `[a-z0-9-]`, so they are safe in URLs, config files and shell.
+- Paths are lowercase `[a-z0-9_]` (D-Bus object-path alphabet), so they are safe in URLs, config files and shell.
 - Errors come back as D-Bus errors (`org.freedesktop.DBus.Error.InvalidArgs` for out-of-range).
 
 ## Lifecycle you can rely on

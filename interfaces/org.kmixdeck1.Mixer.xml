@@ -5,7 +5,7 @@
   This file IS the contract between kmixdeckd and every frontend. Rules:
   - additions are fine within version 1; removing or changing a member = org.kmixdeck2.
   - volumes on the bus are LINEAR 0..1 (PipeWire's unit). Cubic/dB mapping is presentation.
-  - slugs are stable identifiers ([a-z0-9-]+), display names may change (DV-7).
+  - slugs are stable identifiers ([a-z0-9_]+, the D-Bus object-path alphabet), display names may change (DV-7).
 -->
 <node>
   <!-- Root object: /org/kmixdeck1 -->

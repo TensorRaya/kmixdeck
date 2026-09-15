@@ -62,12 +62,12 @@ class PwDaemon:
                        env=self.env, check=True, capture_output=True)
         time.sleep(0.3)
 
-    def restart(self) -> None:
-        """Restart pipewire + wireplumber inside the sandbox (persistence tests)."""
+    def restart(self, wait_for: str | None = "kmixdeck.mix.stream") -> None:
+        """Restart pipewire + wireplumber inside the sandbox (persistence tests). wait_for=None: just come up."""
         self._stop_procs()
         time.sleep(0.3)
         self._start_procs()
-        self.wait_node("kmixdeck.mix.stream")
+        self.wait_node(wait_for or "kmixdeck.null", timeout=8.0)
 
     # ---- audio measurement
     def rms_db(self, wav: Path) -> float:

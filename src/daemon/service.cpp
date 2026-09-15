@@ -164,10 +164,26 @@ StringMap MixerAdaptor::inputDevices() const {
     }
     return m;
 }
-QDBusObjectPath MixerAdaptor::AddChannel(const QString &name) { m_mixer->addChannel(name); return QDBusObjectPath(Service::channelPath(Names::slugify(name))); }
-QDBusObjectPath MixerAdaptor::AddMix(const QString &name) { m_mixer->addMix(name); return QDBusObjectPath(Service::mixPath(Names::slugify(name))); }
-void MixerAdaptor::RemoveChannel(const QDBusObjectPath &p) { m_mixer->removeChannel(p.path().section(QLatin1Char('/'), -1)); }
-void MixerAdaptor::RemoveMix(const QDBusObjectPath &p) { m_mixer->removeMix(p.path().section(QLatin1Char('/'), -1)); }
+QDBusObjectPath MixerAdaptor::AddChannel(const QString &name) {
+    QString err; const QString slug = m_mixer->addChannel(name, &err);
+    if (slug.isEmpty()) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), err); return QDBusObjectPath(QStringLiteral("/")); }
+    return QDBusObjectPath(Service::channelPath(slug));
+}
+QDBusObjectPath MixerAdaptor::AddMix(const QString &name) {
+    QString err; const QString slug = m_mixer->addMix(name, &err);
+    if (slug.isEmpty()) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), err); return QDBusObjectPath(QStringLiteral("/")); }
+    return QDBusObjectPath(Service::mixPath(slug));
+}
+void MixerAdaptor::RemoveChannel(const QDBusObjectPath &p) {
+    const QString slug = p.path().section(QLatin1Char('/'), -1);
+    if (!p.path().startsWith(Service::channelPath(QString())) || !m_mixer->channelSlugs().contains(slug)) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no such channel")); return; }
+    m_mixer->removeChannel(slug);
+}
+void MixerAdaptor::RemoveMix(const QDBusObjectPath &p) {
+    const QString slug = p.path().section(QLatin1Char('/'), -1);
+    if (!p.path().startsWith(Service::mixPath(QString())) || !m_mixer->mixSlugs().contains(slug)) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no such mix")); return; }
+    m_mixer->removeMix(slug);
+}
 void MixerAdaptor::Save() { if (!m_mixer->saveLayout()) qWarning() << "Save(): could not write layout"; }
 
 // ---- Service

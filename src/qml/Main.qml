@@ -59,6 +59,7 @@ Kirigami.ApplicationWindow {
     Component.onCompleted: Mixer.metersEnabled = visible
 
     AddDialog { id: addDialog }
+    Connections { target: Mixer; function onErrorOccurred(message) { root.showPassiveNotification(message, "long") } }
     function addDialogOpen(kind) { addDialog.open(kind) }
 
     footer: QQC2.ToolBar {

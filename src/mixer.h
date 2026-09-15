@@ -9,13 +9,14 @@
 #include <QVector>
 #include <QString>
 #include <optional>
+#include <functional>
 #include "pipewire/graph.h"
 #include "pipewire/meters.h"
 #include "layout.h"
 
 namespace kmixdeck {
 
-/// Naming convention from ADR 0002. A slug is [a-z0-9-]+ derived once from the display name
+/// Naming convention from ADR 0002. A slug is [a-z0-9_]+ (D-Bus path safe) derived once, empty = invalid, from the display name
 /// and never changed afterwards (DV-7), so renames never move volumes.
 struct Names {
     static QString channelNode(const QString &slug) { return QStringLiteral("kmixdeck.channel.") + slug; }
@@ -123,8 +124,9 @@ public:
     Q_INVOKABLE bool moveApp(uint32_t id, const QString &channelSlug);
 
     /// Layout edits (MX-1: any number of mixes; CH-2: any number of channels).
-    Q_INVOKABLE void addChannel(const QString &displayName);
-    Q_INVOKABLE void addMix(const QString &displayName);
+    /// Returns the new slug, or empty with *error set (empty slug, duplicate). Never invents a name.
+    QString addChannel(const QString &displayName, QString *error = nullptr);
+    QString addMix(const QString &displayName, QString *error = nullptr);
     Q_INVOKABLE void removeChannel(const QString &slug);
     Q_INVOKABLE void removeMix(const QString &slug);
 
@@ -165,6 +167,7 @@ private:
     void ensureEdgeLoopbacks();
     void ensureEdgeLoopbackForInput(const QString &slug);
     void notifyPresence();
+    void destroyOurNodes(const std::function<bool(const QString &)> &match);
     QList<Device> devicesFor(const QString &mediaClass) const;
     QHash<uint32_t, App> m_apps;
     Layout m_layout;
