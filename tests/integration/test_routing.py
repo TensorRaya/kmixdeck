@@ -309,14 +309,15 @@ def test_ch12_multi_assign_relays_only_that_app(stack):
     """CH-12: an app on game+voice is heard in both channels — but the relay must carry ONLY that app.
     Measured on boreas 2026-09-16: a relay capturing the primary channel's monitor dragged every other app of
     that channel along. So: A → game+voice, B → game only; mute A; voice must go silent while game stays hot."""
-    from test_service_cli import FAKE_APP
+    from test_service_cli import FAKE_APP, current_sink_of
     b_props = FAKE_APP.replace("FakeGame", "OtherGame").replace("fakegame", "othergame")
     a = subprocess.Popen(["pw-play", "-P", FAKE_APP, str(stack.pw.tone())], env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     b = subprocess.Popen(["pw-play", "-P", b_props, str(stack.pw.tone())], env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
+        # both on the bus AND linked by WirePlumber (see start_fake_app: moving an unlinked stream is not remembered)
         for _ in range(100):
             names = {x["Name"] for x in stack.cli("app", "list", json_out=True)}
-            if {"FakeGame", "OtherGame"} <= names: break
+            if {"FakeGame", "OtherGame"} <= names and current_sink_of(stack) and current_sink_of(stack, "othergame-out"): break
             time.sleep(0.1)
         assert {"FakeGame", "OtherGame"} <= names, names
         stack.cli("app", "move", "OtherGame", "game")

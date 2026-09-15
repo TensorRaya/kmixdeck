@@ -591,6 +591,7 @@ bool Mixer::assignApp(uint32_t id, const QStringList &wantedIn, bool cumulative)
         it->channels.clear(); saveLayout(); Q_EMIT appChanged(id); return true;
     }
     if (!m_graph.moveStream(id, m_layout.channelEntry(want.first()))) return false;
+    m_pendingAutoRoute.remove(id);   // an explicit assignment wins over CH-5 auto-routing that may still be pending
     if (la) { removeAppRelays(*la); la->channels = want; la->nodeName = it->nodeName; }
     else { m_layout.apps.push_back({key, it->nodeName, want}); la = m_layout.app(key); }
     if (!m_layout.knownApps.contains(key)) m_layout.knownApps << key;   // CH-5: this app has an explicit home now
@@ -897,10 +898,11 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         App &a = m_apps[n.id];
         a.id = n.id; a.name = n.appName.isEmpty() ? n.name : n.appName; a.binary = n.appBinary; a.mediaName = n.mediaName; a.mediaRole = n.mediaRole; a.nodeName = n.name;
         a.iconName = n.iconName; a.running = (n.state == QLatin1String("running"));   // UX-10: is it making sound right now
-        a.channels = slugForSinkId(m_graph.streamSink(n.id)) == QString()
-                         ? QStringList{} : QStringList{slugForSinkId(m_graph.streamSink(n.id))};
-        if (const LayoutApp *la = m_layout.app(appKey(a)); la && !la->channels.isEmpty() && a.channels.isEmpty())
-            a.channels = la->channels;   // CH-6: node was re-created, WirePlumber has not linked it yet
+        // Layout is the authority once it has an entry (CH-4/CH-12): the live link may still point at the old sink
+        // while WirePlumber moves the stream — a nodeChanged in that window must not overwrite the assignment.
+        // No layout entry → follow whatever the graph says (unassigned apps, WirePlumber restore).
+        if (const LayoutApp *la = m_layout.app(appKey(a)); la && !la->channels.isEmpty()) a.channels = la->channels;
+        else { const QString live = slugForSinkId(m_graph.streamSink(n.id)); a.channels = live.isEmpty() ? QStringList{} : QStringList{live}; }
         if (isNew) { Q_EMIT appAdded(n.id); autoRouteNewApp(a); } else Q_EMIT appChanged(n.id);
     }
     if (layout) Q_EMIT layoutChanged();
