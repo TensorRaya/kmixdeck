@@ -13,5 +13,9 @@
     <property name="NodeName" type="s" access="read"/>
     <!-- false while OutputDevice is set but the device is unplugged; the mix is parked and comes back by itself (DV-9..12) -->
     <property name="OutputPresent" type="b" access="read"/>
+    <!-- master fader of the mix (MX-6), linear 0..1: applies to every hardware output and to CaptureSource alike -->
+    <property name="Volume" type="d" access="readwrite"/>
+    <property name="Muted" type="b" access="readwrite"/>
+    <method name="ToggleMute"/>
   </interface>
 </node>

@@ -98,6 +98,8 @@ class MixObject : public ExportedObject {
     Q_PROPERTY(QString CaptureSource READ captureSource CONSTANT)
     Q_PROPERTY(QString NodeName READ nodeName CONSTANT)
     Q_PROPERTY(bool OutputPresent READ outputPresent)
+    Q_PROPERTY(double Volume READ volume WRITE setVolume)   // master, linear 0..1 (MX-6)
+    Q_PROPERTY(bool Muted READ muted WRITE setMuted)
 public:
     MixObject(Mixer *mixer, const QString &slug, QObject *parent);
     QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.Mix"); }
@@ -109,6 +111,10 @@ public:
     QString captureSource() const;
     QString nodeName() const { return Names::mixNode(m_slug); }
     bool outputPresent() const;
+    double volume() const; void setVolume(double);
+    bool muted() const; void setMuted(bool);
+public Q_SLOTS:
+    void ToggleMute();
 private:
     Mixer *m_mixer; QString m_slug, m_icon;
 };

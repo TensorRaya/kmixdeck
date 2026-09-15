@@ -201,6 +201,14 @@ void MixerClient::setMixOutputDevice(const QString &slug, const QString &nodeNam
     m_mixes[slug][QStringLiteral("OutputDevice")] = nodeName;
     setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("OutputDevice"), nodeName);
 }
+void MixerClient::setMixVolume(const QString &slug, double cubic) {
+    const double lin = std::pow(std::clamp(cubic, 0.0, 1.0), 3.0);
+    m_mixes[slug][QStringLiteral("Volume")] = lin;
+    setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Volume"), lin);
+}
+void MixerClient::toggleMixMute(const QString &slug) {
+    QDBusInterface(BUS, QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("ToggleMute"));
+}
 void MixerClient::renameChannel(const QString &slug, const QString &name) { setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Name"), name); }
 void MixerClient::renameMix(const QString &slug, const QString &name) { setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Name"), name); }
 void MixerClient::moveApp(const QString &appPath, const QString &channelSlug) {

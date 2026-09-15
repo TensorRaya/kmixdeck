@@ -35,11 +35,11 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 | MX-3 | A mix MUST be routable to (a) a physical output device (headphones, speakers), (b) a virtual capture device that other software (OBS, Discord, a recorder) can pick as its input, or (c) both. | owner, wavelink; (b) covered by `test_graph_comes_up_from_config_alone` (`kmixdeck.source.stream`), (a)/(c) open; tests `test_mx3a_mix_output_follows_device_and_is_audible` (tone measured on the device), `test_mx3a_output_none_unlinks_and_unknown_device_is_rejected`, `test_mx3a_output_device_persists_in_generated_conf`; every mix also exposes `kmixdeck.source.<slug>` | ✅ |
 | MX-4 | Default setup on first run SHOULD create two mixes: *Monitor* → default output device, *Stream* → virtual capture device. | owner | 📝 |
 | MX-5 | Mixes MUST be nameable, reorderable, colour-coded; the UI MUST scale to ≥ 8 mixes without hiding faders. | owner | 📝 |
-| MX-6 | Each mix MUST have a master fader, mute and meter. | wavelink | 📝 |
+| MX-6 | Each mix MUST have a master fader, mute and meter. | wavelink | ✅ Mix.Volume/Muted/ToggleMute on the bus, `kmixdeck mix volume|mute`, master slider + mute in the column header; test_routing::test_mix_master_* (−20 dB reaches device, mute silences, other mix untouched) |
 | MX-7 | Per-channel fader per mix MUST include a *link to another mix* toggle (e.g. "Stream follows Monitor for this channel") that can be broken at any time. | wavelink | 📝 |
 | MX-8 | A mix MAY be duplicated as a starting point for a new mix. | owner | 📝 |
 | MX-9 | A mix MUST be sendable to several hardware outputs at once (e.g. headphones + speakers) — `Mix.Outputs` list, one loopback per output (ADR 0007 D2). | wavelink #5; ADR 0007 | 📝 |
-| MX-10 | Muted mixes MUST be unmistakable in the UI (Wave Link: header turns red). | wavelink #8 | 📝 |
+| MX-10 | Muted mixes MUST be unmistakable in the UI (Wave Link: header turns red). | wavelink #8 | ✅ muted mix: header turns red (negativeBackgroundColor + border), title "… — MUTED", pressed mute button; screenshot-verified |
 
 ## 3. Microphone & effects
 

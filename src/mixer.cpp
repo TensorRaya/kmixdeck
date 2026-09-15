@@ -135,6 +135,16 @@ void Mixer::setChannelMuted(const QString &slug, bool muted) {
     auto it = m_sinks.find(Names::channelNode(slug)); if (it == m_sinks.end()) return;
     it->mute = muted; m_graph.setVolume(it->id, it->volume, muted); Q_EMIT channelChanged(slug);
 }
+double Mixer::mixVolume(const QString &slug) const { auto it = m_sinks.constFind(Names::mixNode(slug)); return it == m_sinks.constEnd() ? 1.0 : it->volume; }
+bool   Mixer::mixMuted(const QString &slug) const  { auto it = m_sinks.constFind(Names::mixNode(slug)); return it == m_sinks.constEnd() ? false : it->mute; }
+void Mixer::setMixVolume(const QString &slug, double linear) {
+    auto it = m_sinks.find(Names::mixNode(slug)); if (it == m_sinks.end()) return;
+    it->volume = static_cast<float>(std::clamp(linear, 0.0, 1.0)); m_graph.setVolume(it->id, it->volume, it->mute); Q_EMIT mixChanged(slug);
+}
+void Mixer::setMixMuted(const QString &slug, bool muted) {
+    auto it = m_sinks.find(Names::mixNode(slug)); if (it == m_sinks.end()) return;
+    it->mute = muted; m_graph.setVolume(it->id, it->volume, muted); Q_EMIT mixChanged(slug);
+}
 void Mixer::renameChannel(const QString &slug, const QString &name) { for (auto &c : m_channels) if (c.slug == slug) { c.name = name; Q_EMIT channelChanged(slug); } if (auto *l = m_layout.channel(slug)) { l->name = name; saveLayout(); } }
 void Mixer::renameMix(const QString &slug, const QString &name)     { for (auto &m : m_mixes) if (m.slug == slug) { m.name = name; Q_EMIT mixChanged(slug); } if (auto *l = m_layout.mix(slug)) { l->name = name; saveLayout(); } }
 

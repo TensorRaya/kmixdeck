@@ -45,6 +45,7 @@ Kirigami.ScrollablePage {
                 required property string modelData
                 Layout.preferredWidth: page.cellW
                 Layout.minimumWidth: page.cellW
+                Layout.maximumWidth: page.cellW      // header must never widen its column past the cells below (UX-1)
                 Layout.fillWidth: false
                 mix: modelData
             }

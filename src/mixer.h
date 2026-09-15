@@ -68,6 +68,11 @@ public:
     Q_INVOKABLE bool   channelMuted(const QString &slug) const;
     Q_INVOKABLE void   setChannelTrim(const QString &slug, double linear);
     Q_INVOKABLE void   setChannelMuted(const QString &slug, bool muted);
+    /// Mix master (MX-6): volume/mute on the mix sink itself → hits every output AND the capture source at once.
+    Q_INVOKABLE double mixVolume(const QString &slug) const;
+    Q_INVOKABLE bool   mixMuted(const QString &slug) const;
+    Q_INVOKABLE void   setMixVolume(const QString &slug, double linear);
+    Q_INVOKABLE void   setMixMuted(const QString &slug, bool muted);
     Q_INVOKABLE void   renameChannel(const QString &slug, const QString &name);
     Q_INVOKABLE void   renameMix(const QString &slug, const QString &name);
     Q_INVOKABLE QString mixCaptureSource(const QString &slug) const;

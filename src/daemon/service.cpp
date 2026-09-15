@@ -74,10 +74,15 @@ QString MixObject::outputDevice() const { return m_mixer->mixOutputDevice(m_slug
 void MixObject::setOutputDevice(const QString &d) { m_mixer->setMixOutputDevice(m_slug, d); }
 QString MixObject::captureSource() const { return m_mixer->mixCaptureSource(m_slug); }
 bool MixObject::outputPresent() const { return m_mixer->mixOutputPresent(m_slug); }
+double MixObject::volume() const { return m_mixer->mixVolume(m_slug); }
+void MixObject::setVolume(double v) { if (!(v >= 0.0 && v <= 1.0)) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("Volume must be linear 0..1")); return; } m_mixer->setMixVolume(m_slug, v); }
+bool MixObject::muted() const { return m_mixer->mixMuted(m_slug); }
+void MixObject::setMuted(bool m) { m_mixer->setMixMuted(m_slug, m); }
+void MixObject::ToggleMute() { m_mixer->setMixMuted(m_slug, !m_mixer->mixMuted(m_slug)); }
 QVariantMap MixObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), m_icon},
             {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("CaptureSource"), captureSource()}, {QStringLiteral("NodeName"), nodeName()},
-            {QStringLiteral("OutputPresent"), outputPresent()}};
+            {QStringLiteral("OutputPresent"), outputPresent()}, {QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()}};
 }
 
 // ---- App

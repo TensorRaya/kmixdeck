@@ -70,6 +70,10 @@ public:
     Q_INVOKABLE void   setChannelDevice(const QString &slug, const QString &deviceNode);
     Q_INVOKABLE QString channelDevice(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("InputDevice")).toString(); }
     Q_INVOKABLE bool    channelInputPresent(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("InputPresent"), true).toBool(); }
+    Q_INVOKABLE double  mixVolume(const QString &slug) const { return std::cbrt(m_mixes.value(slug).value(QStringLiteral("Volume"), 1.0).toDouble()); }
+    Q_INVOKABLE bool    mixMuted(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("Muted"), false).toBool(); }
+    Q_INVOKABLE void    setMixVolume(const QString &slug, double cubic);
+    Q_INVOKABLE void    toggleMixMute(const QString &slug);
     Q_INVOKABLE bool    mixOutputPresent(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("OutputPresent"), true).toBool(); }
 
 Q_SIGNALS:

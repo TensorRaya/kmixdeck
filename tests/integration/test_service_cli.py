@@ -113,6 +113,10 @@ def test_cli_level_syntax_and_exit_codes(stack):
     assert stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"] == pytest.approx(0.125)
     assert stack.cli("cell", "get", "nope", "stream", check=False).returncode == 3     # not found
     assert stack.cli("cell", "set", "game", "stream", "2.0", check=False).returncode == 1  # usage
+    for over in ("+3dB", "0.1dB", "101%", "1.0001"):
+        assert stack.cli("cell", "set", "game", "stream", over, check=False).returncode == 1, f"{over} is above unity and must be refused, not clamped"
+    for edge in ("0dB", "100%", "1", "-200dB", "0%", "0"):
+        assert stack.cli("cell", "set", "game", "stream", edge).returncode == 0, f"{edge} is a valid boundary"
     assert stack.cli("bogus", check=False).returncode == 1
     stack.cli("cell", "set", "game", "stream", "1.0")
 

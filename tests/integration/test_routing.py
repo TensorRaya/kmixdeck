@@ -176,3 +176,30 @@ def test_levels_survive_daemon_restart_exactly(stack, tone):
     assert stack.pw.level_at("kmixdeck.mix.monitor") < SILENT, "mute must survive too"
     c = stack.cli("cell", "get", "game", "stream", json_out=True)
     assert c["Volume"] == pytest.approx(10 ** (-18 / 20), abs=0.003)
+
+
+def test_mix_master_fader_and_mute_hit_outputs_and_capture_source(stack, tone):
+    """MX-6: the mix master sits on the mix sink → one control for every output and for OBS's capture source."""
+    stack.cli("mix", "output", "stream", "fake.headphones")
+    for _ in range(40):
+        if out_link_target(stack, "stream") == "fake.headphones": break
+        time.sleep(0.1)
+    settle()
+    base_dev = stack.pw.level_at("fake.headphones")
+    assert base_dev > HOT
+    stack.cli("mix", "volume", "stream", "-20dB"); settle()
+    dev = stack.pw.level_at("fake.headphones")
+    assert base_dev - 24 < dev < base_dev - 16, f"master -20 dB must reach the device: {base_dev:.1f} → {dev:.1f}"
+    assert stack.pw.level_at("kmixdeck.mix.monitor") > HOT, "the other mix is untouched"
+    m = next(m for m in stack.cli("mix", "list", json_out=True) if m["Slug"] == "stream")
+    assert m["Volume"] == pytest.approx(0.1, abs=0.003) and m["Muted"] is False
+    stack.cli("mix", "mute", "stream", "on"); settle()
+    assert stack.pw.level_at("fake.headphones") < SILENT
+    assert stack.cli("cell", "get", "game", "stream", json_out=True)["Muted"] is False, "cells keep their own state under a mix mute"
+    # ToggleMute is atomic (hotkey / Stream Deck path)
+    stack.busctl("call", "org.kmixdeck1", "/org/kmixdeck1/mix/stream", "org.kmixdeck1.Mix", "ToggleMute")
+    settle()
+    assert stack.pw.level_at("fake.headphones") > HOT - 20
+    stack.cli("mix", "volume", "stream", "1.0")
+    stack.cli("mix", "output", "stream", "none")
+    assert stack.cli("mix", "volume", "stream", "+3dB", check=False).returncode in (1, 4), "above unity must be refused"
