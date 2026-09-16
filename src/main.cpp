@@ -94,6 +94,12 @@ int main(int argc, char *argv[])
         if (engine.rootObjects().isEmpty()) return 1;
         auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         const QStringList gestures = parser.values(gestureArg);
+        const QString openG = parser.value(openArg);
+        if (!parser.isSet(probeArg)) QTimer::singleShot(900, &app, [win, openG] {
+            if (openG == QLatin1String("apps")) QMetaObject::invokeMethod(win, "showApps");
+            else if (openG == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
+            else if (openG == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
+        });
         QTimer::singleShot(1200, &app, [win, gestures] {
             for (const QString &g : gestures) {
                 const QString op = g.section(QLatin1Char(':'), 0, 0), rest = g.section(QLatin1Char(':'), 1);
@@ -102,11 +108,12 @@ int main(int argc, char *argv[])
                 if (op == QLatin1String("connect") && a.size() == 4) QMetaObject::invokeMethod(win, "gestureConnect", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]), Q_ARG(QVariant, a[3]));
                 else if (op == QLatin1String("remove") && a.size() == 3) QMetaObject::invokeMethod(win, "gestureRemove", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]));
                 else if (op == QLatin1String("drop") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureDrop", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
+                else if (op == QLatin1String("monitors") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureMonitors", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 fprintf(stdout, "gesture %s -> %s\n", qPrintable(g), qPrintable(ret.toString().isEmpty() ? QStringLiteral("ok") : ret.toString()));
             }
             fflush(stdout);
         });
-        QTimer::singleShot(2200, &app, [] { QCoreApplication::exit(0); });
+        if (!parser.isSet(probeArg)) QTimer::singleShot(2200, &app, [] { QCoreApplication::exit(0); });
     }
     if (parser.isSet(probeArg)) {
         if (engine.rootObjects().isEmpty()) return 1;
@@ -118,7 +125,7 @@ int main(int argc, char *argv[])
             else if (open == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
             else if (open == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
         });
-        QTimer::singleShot(1800, &app, [win, probes] {
+        QTimer::singleShot(2000, &app, [win, probes] {
             for (const QString &p : probes) { QVariant ret; QMetaObject::invokeMethod(win, "probe", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, p)); fprintf(stdout, "probe %s = %s\n", qPrintable(p), qPrintable(ret.toString())); }
             fflush(stdout); QCoreApplication::exit(0);
         });

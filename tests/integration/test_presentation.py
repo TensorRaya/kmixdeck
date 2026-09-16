@@ -185,3 +185,28 @@ def test_ux11_drop_on_channel_row_assigns_the_app(stack):
         assert "voice" in now and all(c in now for c in before), f"drop must ADD voice, keep {before}: {now}"
     finally:
         p.kill(); p.wait()
+
+
+def test_dv27_monitors_column_is_hidden_by_default_and_shows_listening_device_with_its_mixes(stack):
+    """DV-27: the patchbay's Monitors column is opt-in; once shown it names the listening device (UX-2) and lists
+    every mix routed there with its master level; a mix NOT routed there is absent; no device → hint."""
+    from test_service_cli import make_fake_sink
+    stack.cli("listen", "none", check=False)
+    hidden = kde(stack, "--probe", "monitorsColumn.visible", open_page="patchbay")
+    assert hidden["monitorsColumn.visible"] == "false", hidden
+    none = kde(stack, "--gesture", "monitors:on", "--probe", "monitorsColumn.visible", "--probe", "monitorsDevice.text", open_page="patchbay")
+    assert none["monitorsColumn.visible"] == "true" and "No listening device" in none["monitorsDevice.text"], none
+    make_fake_sink(stack, "fake.cans", "Fake Cans")
+    stack.cli("listen", "fake.cans")
+    stack.cli("mix", "output", "stream", "fake.cans"); stack.cli("mix", "volume", "stream", "0.5")
+    for _ in range(50):
+        if "fake.cans" in stack.cli("mix", "outputs", "stream", json_out=True): break
+        time.sleep(0.1)
+    got = kde(stack, "--gesture", "monitors:on", "--probe", "monitorsDevice.text", "--probe", "monitorsMix/stream.text", "--probe", "monitorsVolume/stream.value", "--probe", "monitorsMix/monitor.text", open_page="patchbay")
+    assert got["monitorsDevice.text"] == "Fake Cans", got
+    assert got["monitorsMix/stream.text"] == "Stream", got
+    assert got["monitorsMix/monitor.text"].startswith("<not found"), f"monitor mix is not routed to the cans: {got}"
+    # the slider value is the same cubic level the mixer page shows (MixerClient::mixVolume)
+    ui_level = float(got["monitorsVolume/stream.value"]); daemon_lin = 0.5
+    assert abs(ui_level ** 3 - daemon_lin) < 0.05, f"slider {ui_level} → linear {ui_level ** 3} ≠ {daemon_lin}"
+    stack.cli("mix", "volume", "stream", "1.0"); stack.cli("mix", "output", "stream", "none"); stack.cli("listen", "none", check=False)

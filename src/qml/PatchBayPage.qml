@@ -15,6 +15,15 @@ Kirigami.ScrollablePage {
 
     // the shared view model (AR-9); rebuilt on every daemon change, coalesced so a burst of signals = one rebuild
     property var model: Mixer.patchbay()
+    property bool showMonitors: false          // DV-27: the Monitors column is opt-in, like Loopback's "Show Monitors"
+    actions: [
+        Kirigami.Action {
+            text: page.showMonitors ? i18n("Hide Monitors") : i18n("Show Monitors")
+            icon.name: "audio-headphones"
+            checkable: true; checked: page.showMonitors
+            onTriggered: { page.showMonitors = !page.showMonitors; Qt.callLater(page.remeasure) }
+        }
+    ]
     readonly property var cards: model.cards
     readonly property var wires: model.wires
     signal remeasure()
@@ -34,7 +43,8 @@ Kirigami.ScrollablePage {
     readonly property int jackAir: Kirigami.Units.gridUnit * 0.6
     readonly property int avail: (page.flickable ? page.flickable.width : page.width) - Kirigami.Units.largeSpacing * 2 - jackAir * 2
     // four columns (Loopback: Sources · Channels · Mixes · Outputs), three wire gaps that take what is left
-    readonly property int colW: Math.max(Kirigami.Units.gridUnit * 9, Math.min(Kirigami.Units.gridUnit * 13, (avail - 3 * Kirigami.Units.gridUnit * 3) / 4))
+    readonly property int nCols: page.showMonitors ? 5 : 4
+    readonly property int colW: Math.max(Kirigami.Units.gridUnit * 9, Math.min(Kirigami.Units.gridUnit * 13, (avail - (nCols - 1) * Kirigami.Units.gridUnit * 3) / nCols))
     readonly property int edgeW: Math.max(Kirigami.Units.gridUnit * 3, (avail - 4 * colW) / 3)
     readonly property int gap: Kirigami.Units.smallSpacing * 2
 
@@ -216,6 +226,71 @@ Kirigami.ScrollablePage {
                     required property var modelData
                     info: modelData
                     onClicked: applicationWindow().showMixer()
+                }
+            }
+        }
+
+        // DV-27 column 5 (optional): Monitors — what I am listening on and which mixes reach it, with their level
+        ColumnLayout {
+            visible: page.showMonitors
+            objectName: "monitorsColumn"
+            Layout.preferredWidth: page.colW; Layout.minimumWidth: page.colW; Layout.maximumWidth: page.colW; Layout.alignment: Qt.AlignTop
+            Layout.leftMargin: page.edgeW
+            spacing: page.gap
+            Kirigami.Heading { level: 4; text: i18n("Monitors"); opacity: 0.7 }
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: monBody.implicitHeight + Kirigami.Units.largeSpacing * 2
+                radius: Kirigami.Units.smallSpacing * 1.5
+                color: Kirigami.Theme.alternateBackgroundColor
+                border.width: 1; border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
+                opacity: page.model.monitors && page.model.monitors.present ? 1 : 0.55
+                ColumnLayout {
+                    id: monBody
+                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: Kirigami.Units.largeSpacing }
+                    spacing: Kirigami.Units.smallSpacing
+                    RowLayout {
+                        Kirigami.Icon { source: "audio-headphones"; Layout.preferredWidth: Kirigami.Units.iconSizes.small; Layout.preferredHeight: width }
+                        QQC2.Label {
+                            objectName: "monitorsDevice"
+                            Layout.fillWidth: true; elide: Text.ElideRight; font.weight: Font.DemiBold
+                            text: page.model.monitors && page.model.monitors.device.length > 0 ? page.model.monitors.description : i18n("No listening device")
+                        }
+                    }
+                    QQC2.Label {
+                        visible: !page.model.monitors || page.model.monitors.device.length === 0
+                        Layout.fillWidth: true; wrapMode: Text.Wrap; opacity: 0.7; font: Kirigami.Theme.smallFont
+                        text: i18n("Choose it in the mixer's \"I hear\" bar. Mixes routed there appear here with their level.")
+                    }
+                    Repeater {
+                        model: page.model.monitors ? page.model.monitors.mixes : []
+                        delegate: ColumnLayout {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: 2
+                            RowLayout {
+                                Kirigami.Icon { source: modelData.icon; Layout.preferredWidth: Kirigami.Units.iconSizes.small; Layout.preferredHeight: width; opacity: modelData.muted ? 0.4 : 1 }
+                                QQC2.Label { objectName: "monitorsMix/" + modelData.mix; Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.muted ? i18n("%1 (muted)", modelData.title) : modelData.title }
+                                QQC2.Label { text: Math.round(modelData.volume * 100) + " %"; opacity: 0.7; font: Kirigami.Theme.smallFont }
+                            }
+                            QQC2.Slider {
+                                objectName: "monitorsVolume/" + modelData.mix
+                                Layout.fillWidth: true
+                                from: 0; to: 1; value: modelData.volume
+                                onMoved: Mixer.setMixVolume(modelData.mix, value)
+                            }
+                            LevelMeter {
+                                id: monMeter
+                                Layout.fillWidth: true; Layout.preferredHeight: 3; horizontal: true
+                                Connections { target: Mixer; function onPeaksChanged() { monMeter.peak = Mixer.peak(modelData.meterKey) } }
+                            }
+                        }
+                    }
+                    QQC2.Label {
+                        visible: page.model.monitors && page.model.monitors.device.length > 0 && page.model.monitors.mixes.length === 0
+                        Layout.fillWidth: true; wrapMode: Text.Wrap; opacity: 0.7; font: Kirigami.Theme.smallFont
+                        text: i18n("No mix is routed to this device — drag a wire from a mix to it.")
+                    }
                 }
             }
         }

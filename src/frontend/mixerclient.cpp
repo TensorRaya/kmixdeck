@@ -414,7 +414,23 @@ QVariantMap MixerClient::patchbay() const {
         else for (const QVariant &pv : ports) { const auto pm = pv.toMap(); const QString pos = pm.value(QStringLiteral("position")).toString(); rows << row(pos, pm.value(QStringLiteral("label")).toString(), QStringLiteral("dev/") + node, true, false, used.value(node + QLatin1Char('|') + pos)); }
         card(QStringLiteral("outdev/") + node, QStringLiteral("output"), deviceDescription(node), node == m_listeningDevice ? QStringLiteral("audio-headphones") : QStringLiteral("audio-speakers"), true, present, rows, node);
     }
-    return {{QStringLiteral("cards"), cards}, {QStringLiteral("wires"), wires}};
+    // DV-27 "Monitors": what the user is listening on (UX-2) and which mixes reach it — one row per mix on the
+    // listening device with its master level, so the patchbay can answer "why do I hear X" without the mixer page.
+    // Hidden behind a button in the UI; the model always carries it.
+    QVariantList monitors;
+    if (!m_listeningDevice.isEmpty()) {
+        for (const QString &m : m_mixOrder) {
+            bool onIt = false;
+            for (const QString &ref : mixOutputs(m)) if (ref.section(QLatin1Char(':'), 0, 0).section(QLatin1Char('>'), 0, 0) == m_listeningDevice) onIt = true;
+            if (!onIt) continue;
+            monitors.push_back(QVariantMap{{QStringLiteral("id"), QStringLiteral("monitor/") + m}, {QStringLiteral("mix"), m}, {QStringLiteral("title"), mixName(m)},
+                                           {QStringLiteral("icon"), mixIcon(m)}, {QStringLiteral("volume"), mixVolume(m)}, {QStringLiteral("muted"), mixMuted(m)},
+                                           {QStringLiteral("meterKey"), QStringLiteral("out/") + m}});
+        }
+    }
+    return {{QStringLiteral("cards"), cards}, {QStringLiteral("wires"), wires},
+            {QStringLiteral("monitors"), QVariantMap{{QStringLiteral("device"), m_listeningDevice}, {QStringLiteral("description"), m_listeningDevice.isEmpty() ? QString() : deviceDescription(m_listeningDevice)},
+                                                     {QStringLiteral("present"), m_outputDevices.contains(m_listeningDevice)}, {QStringLiteral("mixes"), monitors}}}};
 }
 QVariantList MixerClient::inputDevices() const {
     QVariantList out;

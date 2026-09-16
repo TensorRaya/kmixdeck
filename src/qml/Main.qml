@@ -90,6 +90,7 @@ Kirigami.ApplicationWindow {
         const v = it[prop]
         return v === undefined ? "<no property " + prop + ">" : String(v)
     }
+    function gestureMonitors(on) { if (patchBayPage) patchBayPage.showMonitors = (on === "on" || on === "true" || on === "1"); return "" }
     function gestureDrop(appPath, channel) {
         function find(item) {
             if (!item) return null

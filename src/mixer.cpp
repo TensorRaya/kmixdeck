@@ -784,6 +784,10 @@ void Mixer::finishAutoRoute(uint32_t id) {
     if (m_layout.defaultChannel.isEmpty() || !channelSlugs().contains(m_layout.defaultChannel)) return;
     if (m_graph.moveStream(id, m_layout.channelEntry(m_layout.defaultChannel))) {
         m_layout.knownApps << key; saveLayout();
+        // The app IS on the default channel from now on — say so immediately. WirePlumber's relink comes a moment
+        // later; until then App.Channels read [] and a drop onto a second channel merged with nothing and REPLACED
+        // the default (test_ux11 red in the suite only, 2026-09-16: the first run of a fake app hit this window).
+        it->channels = QStringList{m_layout.defaultChannel}; Q_EMIT appChanged(id);
         qInfo() << "new application" << key << "→ default channel" << m_layout.defaultChannel;
     }
 }
