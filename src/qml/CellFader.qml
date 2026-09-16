@@ -57,7 +57,7 @@ Item {
             onMoved: Mixer.setCellVolume(cell.channel, cell.mix, value)
             onReset: Mixer.setCellVolume(cell.channel, cell.mix, 1.0)
             QQC2.ToolTip.visible: pressed || hovered
-            QQC2.ToolTip.delay: pressed ? 0 : 600
+            QQC2.ToolTip.delay: pressed ? 0 : 900
             QQC2.ToolTip.text: isFinite(cell.toDb(value)) ? i18n("%1 dB", cell.toDb(value).toFixed(1)) : i18n("−∞ dB")
         }
 

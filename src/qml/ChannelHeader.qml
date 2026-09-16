@@ -114,13 +114,19 @@ Item {
             onToggled: { checked = Qt.binding(() => header.muted); Mixer.toggleChannelMute(header.channel) }
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
         }
-        // the channel's level (ADR 0006) — gain lives in the crosspoints (ADR 0002), so no fader here
+        // the channel's level (ADR 0006) — gain lives in the crosspoints (ADR 0002), so no fader here.
+        // Vertical and clearly a meter: the 3 px horizontal bar read as a broken/empty fader on the laptop
+        // screenshot (2026-09-16) whenever the channel was silent.
         LevelMeter {
             id: chMeter
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 3
-            Layout.preferredHeight: 3
-            horizontal: true
-            opacity: peak > 0.001 ? 1 : 0.35
+            Layout.preferredWidth: Kirigami.Units.smallSpacing * 1.5
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 1.8
+            Layout.alignment: Qt.AlignVCenter
+            horizontal: false
+            opacity: peak > 0.001 ? 1 : 0.5
+            QQC2.ToolTip.text: i18n("Channel level (what every mix receives)")
+            QQC2.ToolTip.visible: chMeterHover.hovered
+            HoverHandler { id: chMeterHover }
             Connections { target: Mixer; function onPeaksChanged() { chMeter.peak = header.muted ? 0 : Mixer.peak("channel/" + header.channel) } }
         }
 

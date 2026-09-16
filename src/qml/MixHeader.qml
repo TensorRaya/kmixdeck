@@ -97,6 +97,9 @@ QQC2.Control {
                                : i18ncp("@label number of hardware outputs of a mix", "%1 output", "%1 outputs", header.outputs.length)
                     return header.outputPresent ? name : i18nc("@label %1 device name(s), unplugged", "%1 — unplugged", name)
                 }
+                // UX-2: this mix is what I hear → say so, the device name alone is long and gets elided
+                readonly property bool heard: header.outputs.indexOf(Mixer.listeningDevice) >= 0 && Mixer.listeningDevice.length > 0
+                font.weight: heard ? Font.DemiBold : Font.Normal
                 TapHandler { onTapped: outMenu.popup() }
                 HoverHandler { id: outHover; cursorShape: Qt.PointingHandCursor }
                 QQC2.ToolTip.text: header.outputPresent
