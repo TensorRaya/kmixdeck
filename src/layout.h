@@ -53,7 +53,7 @@ struct DeviceRef {
     }
 };
 
-struct LayoutChannel { QString slug, name, icon; fx::Chain fx; };
+struct LayoutChannel { QString slug, name, icon; fx::Chain fx; double pan = 0.0; };   // DV-22: −1 = left … 0 = centre … +1 = right
 /// A physical input feeding a channel (mic, capture card, BT headset mic) — ADR 0007 D2.
 struct LayoutInput   { QString slug, name; DeviceRef device; QString channel; };
 struct LayoutMix     {

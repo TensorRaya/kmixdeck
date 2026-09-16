@@ -117,6 +117,36 @@ Item {
             onToggled: { checked = Qt.binding(() => header.muted); Mixer.toggleChannelMute(header.channel) }
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
         }
+        // DV-22 pan: a small dial, double-click = centre. Text below reads L40 / C / R100 so the position is
+        // legible without reading the needle. Only meaningful with an input; hidden for apps-only channels.
+        ColumnLayout {
+            visible: header.inputDevice.length > 0
+            spacing: 0
+            Layout.alignment: Qt.AlignVCenter
+            QQC2.Dial {
+                id: panDial
+                objectName: "channelPan/" + header.channel
+                from: -1; to: 1; stepSize: 0.05
+                value: Mixer.channelPan(header.channel)
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 1.6
+                Layout.preferredHeight: width
+                wheelEnabled: true
+                onMoved: Mixer.setChannelPan(header.channel, value)
+                Connections { target: Mixer; function onChannelChanged(slug) { if (slug === header.channel && !panDial.pressed) panDial.value = Mixer.channelPan(header.channel) } }
+                TapHandler { onDoubleTapped: Mixer.setChannelPan(header.channel, 0) }
+                QQC2.ToolTip.text: i18n("Pan — double-click for centre")
+                QQC2.ToolTip.visible: hovered
+            }
+            QQC2.Label {
+                Layout.alignment: Qt.AlignHCenter
+                font: Kirigami.Theme.smallFont
+                opacity: 0.8
+                text: {
+                    const v = Math.round(panDial.value * 100)
+                    return v === 0 ? i18nc("@label pan centre", "C") : v < 0 ? i18nc("@label pan left %1 percent", "L%1", -v) : i18nc("@label pan right %1 percent", "R%1", v)
+                }
+            }
+        }
         // the channel's level (ADR 0006) — gain lives in the crosspoints (ADR 0002), so no fader here.
         // Vertical and clearly a meter: the 3 px horizontal bar read as a broken/empty fader on the laptop
         // screenshot (2026-09-16) whenever the channel was silent.

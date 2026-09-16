@@ -61,6 +61,8 @@ void ChannelObject::setName(const QString &n) { m_mixer->renameChannel(m_slug, n
 QString ChannelObject::icon() const { return m_mixer->channelIcon(m_slug); }
 void ChannelObject::setIcon(const QString &i) { m_mixer->setChannelIcon(m_slug, i); }
 double ChannelObject::trim() const { return m_mixer->channelTrim(m_slug); }
+double ChannelObject::pan() const { return m_mixer->channelPan(m_slug); }
+void ChannelObject::setPan(double v) { if (v < -1 || v > 1) { rejectProperty(QStringLiteral("Pan"), QStringLiteral("must be -1..1")); return; } m_mixer->setChannelPan(m_slug, v); }
 void ChannelObject::setTrim(double v) { if (v < 0 || v > 1) { rejectProperty(QStringLiteral("Trim"), QStringLiteral("must be 0..1")); return; } m_mixer->setChannelTrim(m_slug, v); }
 bool ChannelObject::muted() const { return m_mixer->channelMuted(m_slug); }
 void ChannelObject::setMuted(bool m) { m_mixer->setChannelMuted(m_slug, m); }
@@ -87,7 +89,7 @@ bool ChannelObject::SetFxControl(const QString &control, double value) {
 }
 QVariantMap ChannelObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), icon()},
-            {QStringLiteral("Trim"), trim()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("NodeName"), nodeName()},
+            {QStringLiteral("Trim"), trim()}, {QStringLiteral("Pan"), pan()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("NodeName"), nodeName()},
             {QStringLiteral("InputDevice"), inputDevice()}, {QStringLiteral("InputPresent"), inputPresent()},
             {QStringLiteral("Inputs"), inputs()}, {QStringLiteral("FxChain"), fxChainJson()}};
 }

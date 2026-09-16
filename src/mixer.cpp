@@ -324,13 +324,33 @@ void Mixer::setCellMuted(const QString &ch, const QString &mix, bool muted) {
 
 double Mixer::channelTrim(const QString &slug) const { auto it = m_sinks.constFind(Names::channelNode(slug)); return it == m_sinks.constEnd() ? 1.0 : it->volume; }
 bool   Mixer::channelMuted(const QString &slug) const { auto it = m_sinks.constFind(Names::channelNode(slug)); return it == m_sinks.constEnd() ? false : it->mute; }
+// DV-22: trim and pan meet on the channel sink's two channelVolumes. Constant-power pan law (−3 dB centre is NOT
+// applied: pan 0 leaves both sides at trim, so an un-panned channel measures exactly as before).
+// "Balance" law: the side you pan TOWARDS stays at trim, the other side fades with cos — centre = both at trim,
+// hard L = [1, 0], hard R = [0, 1], −0.5 = [1, 0.71]. Symmetric by construction (the earlier ×√2-clamped
+// constant-power version read [0, 0.54] at hard right — measured 2026-09-16).
+static void panGains(double pan, float &l, float &r) {
+    const double p = std::clamp(pan, -1.0, 1.0);
+    l = p <= 0 ? 1.f : static_cast<float>(std::cos(p * M_PI / 2.0));
+    r = p >= 0 ? 1.f : static_cast<float>(std::cos(-p * M_PI / 2.0));
+}
+void Mixer::applyChannelGain(const QString &slug) {
+    auto it = m_sinks.find(Names::channelNode(slug)); if (it == m_sinks.end()) return;
+    float l, r; panGains(channelPan(slug), l, r);
+    m_graph.setVolumeLR(it->id, it->volume * l, it->volume * r, it->mute);
+}
+double Mixer::channelPan(const QString &slug) const { const auto *c = m_layout.channel(slug); return c ? c->pan : 0.0; }
+void Mixer::setChannelPan(const QString &slug, double pan) {
+    auto *c = m_layout.channel(slug); if (!c) return;
+    c->pan = std::clamp(pan, -1.0, 1.0); saveLayout(); applyChannelGain(slug); Q_EMIT channelChanged(slug);
+}
 void Mixer::setChannelTrim(const QString &slug, double linear) {
     auto it = m_sinks.find(Names::channelNode(slug)); if (it == m_sinks.end()) return;
-    it->volume = static_cast<float>(std::clamp(linear, 0.0, 1.0)); m_graph.setVolume(it->id, it->volume, it->mute); Q_EMIT channelChanged(slug);
+    it->volume = static_cast<float>(std::clamp(linear, 0.0, 1.0)); applyChannelGain(slug); Q_EMIT channelChanged(slug);
 }
 void Mixer::setChannelMuted(const QString &slug, bool muted) {
     auto it = m_sinks.find(Names::channelNode(slug)); if (it == m_sinks.end()) return;
-    it->mute = muted; m_graph.setVolume(it->id, it->volume, muted); Q_EMIT channelChanged(slug);
+    it->mute = muted; applyChannelGain(slug); Q_EMIT channelChanged(slug);
 }
 double Mixer::mixVolume(const QString &slug) const { auto it = m_sinks.constFind(Names::mixNode(slug)); return it == m_sinks.constEnd() ? 1.0 : it->volume; }
 bool   Mixer::mixMuted(const QString &slug) const  { auto it = m_sinks.constFind(Names::mixNode(slug)); return it == m_sinks.constEnd() ? false : it->mute; }
@@ -999,6 +1019,7 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         const bool isNew = !m_sinks.contains(n.name);
         m_sinks[n.name] = n;
         if (isNew && !m_pendingCellState.isEmpty()) restorePendingCellStates();   // undo of a channel: trim/mute
+        if (isNew && channelPan(slug) != 0.0) applyChannelGain(slug);              // DV-22: pan lives in the layout, the node comes later
         bool found = false; for (auto &c : m_channels) if (c.slug == slug) { found = true; if (c.name.isEmpty()) c.name = n.description; }
         if (!found) { m_channels.push_back({slug, n.description, {}, true}); layout = true; }
         Q_EMIT channelChanged(slug);

@@ -68,6 +68,8 @@ public:
     Q_INVOKABLE void   setCellFollows(const QString &ch, const QString &mix, const QString &followsSlug);
     Q_INVOKABLE void   toggleChannelMute(const QString &slug);
     Q_INVOKABLE bool   channelMuted(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Muted")).toBool(); }
+    Q_INVOKABLE double channelPan(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Pan")).toDouble(); }   // DV-22
+    Q_INVOKABLE void   setChannelPan(const QString &slug, double pan);
     Q_INVOKABLE void   addChannel(const QString &name);
     /// CH-13: one picker for every source. kind = "app" (ref = app object path), "device" (ref = input node.name)
     /// or "" (apps only). Creates the channel, then assigns the app / sets the input on the new channel.

@@ -9,6 +9,8 @@
     <property name="Icon" type="s" access="readwrite"/>
     <!-- channel-wide trim before all mixes, linear 0..1 (CH-7); NOT the per-mix fader -->
     <property name="Trim" type="d" access="readwrite"/>
+    <!-- DV-22: stereo position of the channel, -1 (left) … 0 (centre) … +1 (right); constant-power law on the channel sink; persisted -->
+    <property name="Pan" type="d" access="readwrite"/>
     <property name="Muted" type="b" access="readwrite"/>
     <!-- PipeWire node.name, for tools that want to link things themselves -->
     <property name="NodeName" type="s" access="read"/>

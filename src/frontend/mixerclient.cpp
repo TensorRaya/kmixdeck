@@ -157,6 +157,9 @@ void MixerClient::onNameOwnerChanged(const QString &name, const QString &, const
     }
 }
 
+void MixerClient::setChannelPan(const QString &slug, double pan) {   // DV-22
+    setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Pan"), std::clamp(pan, -1.0, 1.0));
+}
 void MixerClient::setProperty(const QString &path, const QString &iface, const QString &name, const QVariant &v) {
     QDBusInterface props(BUS, path, QStringLiteral("org.freedesktop.DBus.Properties"), QDBusConnection::sessionBus());
     props.asyncCall(QStringLiteral("Set"), iface, name, QVariant::fromValue(QDBusVariant(v)));

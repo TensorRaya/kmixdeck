@@ -158,6 +158,7 @@ int main(int argc, char *argv[]) {
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
         "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
         "  channel inputs <slug>                 all wires into a channel (ADR 0009 B1); input-add|input-remove <slug> <ref>\n"
+        "  channel pan <slug> [<-1..1>|L|C|R]    stereo position of the channel (DV-22)\n"
         "  mix     list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|move <slug> <index|up|down|top|bottom>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
         "  mix     outputs <slug>                 list all hardware outputs of a mix (MX-9)\n"
         "  mix     output-add|output-remove <slug> <node.name>\n"
@@ -303,6 +304,13 @@ int main(int argc, char *argv[]) {
             return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
         }
         if (sub == "trim" && ch) { if (!need(4)) return Usage; double l; if (!parseLevel(a[3], &l)) return fail(Usage, "bad level"); return setProp(pathOf(a[2]), iface, "Trim", l, &e) ? Ok : fail(Rejected, e); }
+        if (sub == "pan" && ch) {   // DV-22: channel pan <slug> [<-1..1>|L|C|R]
+            if (a.size() == 3) { out << QString::number(unwrap(objs.value(pathOf(a[2])).value("Pan")).toDouble()) << "\n"; return Ok; }
+            bool okd = false; double v = a[3].toDouble(&okd);
+            if (!okd) { const QString w = a[3].toUpper(); v = w == "L" ? -1 : w == "R" ? 1 : w == "C" ? 0 : 2; }
+            if (v < -1 || v > 1) return fail(Usage, "pan is -1..1, L, C or R");
+            return setProp(pathOf(a[2]), iface, "Pan", v, &e) ? Ok : fail(Rejected, e);
+        }
         if (sub == "mute" && ch) { bool b; if (!parseBool(a, 3, &b)) return fail(Usage, "on|off"); return setProp(pathOf(a[2]), iface, "Muted", b, &e) ? Ok : fail(Rejected, e); }
         if (sub == "input" && ch) {   // channel input <slug> [<node[:POS,POS]>|none] — ADR 0009 refs
             if (a.size() < 4) { const QString ref = unwrap(objs.value(pathOf(a[2])).value("InputDevice")).toString(); if (g_json) out << QJsonDocument(QJsonObject{{"InputDevice", ref}}).toJson(); else out << (ref.isEmpty() ? QStringLiteral("none") : ref) << "\n"; return Ok; }

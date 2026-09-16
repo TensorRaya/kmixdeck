@@ -141,6 +141,10 @@ public:
     bool    channelInputPresent(const QString &channel) const;
     bool    setChannelInputDevice(const QString &channel, const QString &ref);   // ref = node[:POS,POS] (ADR 0009)
     // ADR 0009 B1 — wires: a channel may take several inputs (one loopback edge each). Refs in wire order.
+    // DV-22: pan of a channel, −1..+1, constant-power law on the channel sink's L/R volumes; persisted in the layout
+    double channelPan(const QString &slug) const;
+    void   setChannelPan(const QString &slug, double pan);
+    void   applyChannelGain(const QString &slug);   // trim × pan → L/R volumes on the sink
     QStringList channelInputs(const QString &channel) const;
     QString     addChannelInput(const QString &channel, const QString &ref);      // returns the wire's input slug, "" on refusal
     bool        removeChannelInput(const QString &channel, const QString &ref);

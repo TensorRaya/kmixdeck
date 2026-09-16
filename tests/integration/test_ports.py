@@ -407,3 +407,47 @@ def test_dv13_hotplug_new_multiport_device_is_listed_wired_replugged_and_persist
     hear("AUX2", "L"); hear("AUX4", "R")
 
     stack.cli("channel", "remove", "hot"); destroy_node(stack, dev)
+
+
+def test_dv22_pan_moves_a_mono_source_between_the_sides_and_persists(stack):
+    """DV-22: a one-port (mono) input lands centre by default; `channel pan` moves it — hard left = right side silent,
+    hard right = left silent, centre = both equal; pan survives a daemon restart and is applied when the node returns."""
+    ui = stack.cli("devices", "virtual", "add", "Pan Ui24R", "--in", "2", "--out", "2").stdout.strip()
+    stack.pw.wait_node(ui)
+    for _ in range(50):
+        if ui in stack.cli("devices", "in", json_out=True): break
+        time.sleep(0.1)
+    stack.cli("channel", "add", "Panner"); stack.cli("channel", "input", "panner", f"{ui}:AUX1")
+    stack.pw.wait_node("kmixdeck.in.panner.in"); time.sleep(0.8)
+    stack.cli("cell", "set", "panner", "stream", "1.0"); stack.cli("cell", "mute", "panner", "stream", "off")
+    def lr(): return stack.pw.level_at_port("kmixdeck.channel.panner", "monitor_FL"), stack.pw.level_at_port("kmixdeck.channel.panner", "monitor_FR")
+    p = stack.pw.play_into_port(ui, "input_AUX1")
+    try:
+        l, r = wait_level(lambda: lr()[0], lambda v: v > HOT), lr()[1]
+        assert l > HOT and r > HOT and abs(l - r) < 1.5, f"centre must be equal both sides: L={l} R={r}"
+        assert stack.cli("channel", "pan", "panner").stdout.strip() == "0"
+        stack.cli("channel", "pan", "panner", "L"); time.sleep(0.6)
+        l, r = wait_level(lambda: lr()[0], lambda v: v > HOT), lr()[1]
+        assert l > HOT and r < SILENT, f"hard left: L={l} R={r}"
+        stack.cli("channel", "pan", "panner", "1"); time.sleep(0.6)
+        r, l = wait_level(lambda: lr()[1], lambda v: v > HOT), lr()[0]
+        assert r > HOT and l < SILENT, f"hard right: L={l} R={r}"
+        stack.cli("channel", "pan", "panner", "-0.5"); time.sleep(0.9)
+        l, r = lr()
+        assert l > HOT and r > HOT and l - r > 2.5, f"half left: L louder by ≈ 3 dB: L={l} R={r}"
+        assert stack.cli("channel", "pan", "panner", "2", check=False).returncode != 0
+    finally:
+        p.kill(); p.wait()
+    # persists and is re-applied to the fresh node after a restart
+    stack.restart_daemon()
+    assert stack.cli("channel", "pan", "panner").stdout.strip() == "-0.5"
+    stack.pw.wait_node("kmixdeck.in.panner.in"); time.sleep(1.0)
+    p = stack.pw.play_into_port(ui, "input_AUX1")
+    try:
+        wait_level(lambda: lr()[0], lambda v: v > HOT); time.sleep(0.6)   # let both meters settle on the steady tone
+        diffs = []
+        for _ in range(4): l, r = lr(); diffs.append(l - r); time.sleep(0.3)
+        assert l > HOT and r > HOT and max(diffs) > 2.5, f"pan must survive restart (cos(π/4) = −3 dB): L={l} R={r} diffs={diffs}"
+    finally:
+        p.kill(); p.wait()
+    stack.cli("channel", "remove", "panner"); stack.cli("devices", "virtual", "remove", "pan_ui24r")

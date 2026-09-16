@@ -122,7 +122,10 @@ struct Graph::Impl {
             case SPA_PROP_channelVolumes: {
                 float vols[SPA_AUDIO_MAX_CHANNELS];
                 uint32_t n = spa_pod_copy_array(&p->value, SPA_TYPE_Float, vols, SPA_AUDIO_MAX_CHANNELS);
-                if (n > 0 && vols[0] != np->info.volume) { np->info.volume = vols[0]; changed = true; }
+                // DV-22: with a pan applied the two channelVolumes differ; the node's "volume" for us is the louder
+                // side (= trim), otherwise a hard-right pan would read back as trim 0 and the next write mutes both.
+                float v = 0.f; for (uint32_t i = 0; i < n; i++) v = std::max(v, vols[i]);
+                if (n > 0 && v != np->info.volume) { np->info.volume = v; changed = true; }
                 break;
             }
             default: break;
@@ -317,13 +320,14 @@ std::optional<NodeInfo> Graph::node(const QString &name) const {
     return std::nullopt;
 }
 
-void Graph::setVolume(uint32_t nodeId, float linear, bool mute) {
+void Graph::setVolume(uint32_t nodeId, float linear, bool mute) { setVolumeLR(nodeId, linear, linear, mute); }
+void Graph::setVolumeLR(uint32_t nodeId, float left, float right, bool mute) {
     pw_thread_loop_lock(d->loop);
     auto it = d->nodes.find(nodeId);
     if (it != d->nodes.end()) {
         uint8_t buffer[1024];
         spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
-        float vols[2] = {linear, linear};
+        float vols[2] = {left, right};
         const spa_pod *param = static_cast<const spa_pod *>(spa_pod_builder_add_object(&b,
             SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
             SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, 2, vols),

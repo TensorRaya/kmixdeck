@@ -73,6 +73,8 @@ public:
     /// Set channelVolumes + mute on a node (ADR 0002: the cell fader is the loopback playback stream).
     /// Linear volume 0..1 (cubic mapping is the UI's business).
     void setVolume(uint32_t nodeId, float linear, bool mute);
+    /// DV-22: distinct L/R gains (pan) — same Props param, two values
+    void setVolumeLR(uint32_t nodeId, float left, float right, bool mute);
 
     /// Create a null sink (channel or mix). Returns immediately; node appears via nodeAdded().
     void createNullSink(const QString &name, const QString &description, bool passive);

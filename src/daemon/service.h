@@ -74,6 +74,7 @@ class ChannelObject : public ExportedObject {
     Q_PROPERTY(QString Name READ name WRITE setName)
     Q_PROPERTY(QString Icon READ icon WRITE setIcon)
     Q_PROPERTY(double Trim READ trim WRITE setTrim)
+    Q_PROPERTY(double Pan READ pan WRITE setPan)     // DV-22: −1..+1
     Q_PROPERTY(bool Muted READ muted WRITE setMuted)
     Q_PROPERTY(QString NodeName READ nodeName CONSTANT)
     Q_PROPERTY(QString InputDevice READ inputDevice WRITE setInputDevice)
@@ -88,6 +89,7 @@ public:
     QString name() const; void setName(const QString &);
     QString icon() const; void setIcon(const QString &i);
     double trim() const; void setTrim(double);
+    double pan() const; void setPan(double);
     bool muted() const; void setMuted(bool);
     QString nodeName() const { return Names::channelNode(m_slug); }
     QString inputDevice() const; void setInputDevice(const QString &);
