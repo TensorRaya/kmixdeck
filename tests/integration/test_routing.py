@@ -43,6 +43,10 @@ def tone(stack):
 def settle(): time.sleep(0.4)
 
 
+def node_names(stack):
+    return [l.split('"')[1] for l in subprocess.run(["pw-cli", "ls", "Node"], env=stack.pw.env, capture_output=True, text=True).stdout.splitlines() if "node.name" in l]
+
+
 def test_fader_in_one_mix_never_leaks_into_the_other(stack, tone):
     stack.cli("cell", "set", "game", "stream", "0.0"); settle()
     assert stack.pw.level_at("kmixdeck.mix.stream") < SILENT
@@ -337,7 +341,14 @@ def test_ch12_multi_assign_relays_only_that_app(stack):
         assert any(x["key"] == "FakeGame" and x["channels"] == ["game", "voice"] for x in layout["apps"]), layout.get("apps")
         conf = (Path(stack.pw.runtime_dir) / "config" / "pipewire" / "pipewire.conf.d" / "90-kmixdeck.conf").read_text()
         assert 'node.name = "kmixdeck.relay.FakeGame.voice.in"' in conf and 'node.target = "fakegame-out"' in conf, conf
-        stack.restart_daemon()
+        # After a restart WITHOUT the app running there must be NO relay: a relay whose capture side waits for an
+        # absent node left its playback half linked to the channel and stalled the channel→mix path (monitor
+        # recordings empty, found 2026-09-16 — this test's leftovers broke every later test in the session).
+        stack.restart_daemon(); time.sleep(1.5)
+        assert not [n for n in node_names(stack) if n.startswith("kmixdeck.relay.")], "relay must not exist while its app is gone"
+        assert stack.pw.level_at("kmixdeck.mix.monitor") > HOT, "channel→mix path must be alive after the restart"
+        # …and it comes back the moment the app node appears again, capturing the app node (not the channel sink)
+        a = subprocess.Popen(["pw-play", "-P", FAKE_APP, str(stack.pw.tone())], env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         rin = stack.pw.wait_node("kmixdeck.relay.FakeGame.voice.in", timeout=10)
         assert rin["info"]["props"].get("node.target") == "fakegame-out", rin["info"]["props"]
     finally:

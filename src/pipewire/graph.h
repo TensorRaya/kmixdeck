@@ -26,7 +26,8 @@ struct NodeInfo {
     QString description;   // node.description (display)
     QString mediaClass;    // Audio/Sink, Stream/Output/Audio, ...
     QString mediaName;     // media.name (WirePlumber stream-restore key)
-    QString target;        // node.target if set
+    QString target;             // live routing target (target.object metadata / property) — what WirePlumber acts on
+    QString configuredTarget;   // node.target from the stream's own props (static, what the config asked for)        // node.target if set
     QString appName;       // application.name
     QString appBinary;     // application.process.binary
     QString mediaRole;     // media.role (WirePlumber keys stream state by this FIRST — see ADR 0006)

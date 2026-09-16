@@ -78,6 +78,7 @@ struct Graph::Impl {
             np->info.mediaClass = prop(info->props, PW_KEY_MEDIA_CLASS);
             np->info.mediaName = prop(info->props, PW_KEY_MEDIA_NAME);
             np->info.target = prop(info->props, PW_KEY_TARGET_OBJECT);
+            np->info.configuredTarget = prop(info->props, PW_KEY_NODE_TARGET);
             np->info.appName = prop(info->props, PW_KEY_APP_NAME);
             np->info.appBinary = prop(info->props, PW_KEY_APP_PROCESS_BINARY);
             np->info.mediaRole = prop(info->props, PW_KEY_MEDIA_ROLE);

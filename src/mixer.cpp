@@ -617,9 +617,17 @@ bool Mixer::assignApp(uint32_t id, const QStringList &wantedIn, bool cumulative)
 // Trade-off: the app's node passes to the second channel unprocessed by the primary channel's fx (FX-3).
 void Mixer::ensureAppRelays(const LayoutApp &a) {
     if (a.channels.size() < 2 || a.nodeName.isEmpty()) return;
+    // Only while the app's node exists. A relay whose capture side lingers on an absent node is not "silent":
+    // its playback half stays linked to the channel while the capture half is suspended, and that half-open
+    // loopback stalled the whole channel→mix path (monitor recordings empty, 2026-09-16). The relay is layout,
+    // so it comes back the moment the app node appears (onNode → ensureAppRelays).
+    if (!m_graph.node(a.nodeName)) { removeAppRelays(a); return; }
     for (int n = 1; n < a.channels.size(); ++n) {
         const QString node = EdgeNames::relayNode(a.key, a.channels[n]);
-        if (const auto in = m_graph.node(node + QStringLiteral(".in")); in && in->target == a.nodeName && m_graph.node(node)) continue;
+        // Until 2026-09-16 `NodeInfo::target` only read target.object, never node.target → this test was always
+        // false, the relay was destroyed and re-created on EVERY daemon start, and that churn left the channel's
+        // monitor ports silent for downstream captures (test_ux12_* red after test_ch12_* in one session).
+        if (const auto in = m_graph.node(node + QStringLiteral(".in")); in && (in->target == a.nodeName || in->configuredTarget == a.nodeName) && m_graph.node(node)) continue;
         // present but capturing the wrong node (older renderer captured the channel sink) → rebuild
         if (const auto in = m_graph.node(node + QStringLiteral(".in"))) m_graph.destroyObject(in->id);
         if (const auto out = m_graph.node(node)) m_graph.destroyObject(out->id);
@@ -928,6 +936,8 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         if (const LayoutApp *la = m_layout.app(appKey(a)); la && !la->channels.isEmpty()) a.channels = la->channels;
         else { const QString live = slugForSinkId(m_graph.streamSink(n.id)); a.channels = live.isEmpty() ? QStringList{} : QStringList{live}; }
         if (isNew) { Q_EMIT appAdded(n.id); autoRouteNewApp(a); } else Q_EMIT appChanged(n.id);
+        // CH-12: the app node is here → its relays may exist now (they are torn down while the node is absent)
+        if (isNew) if (const LayoutApp *la = m_layout.app(appKey(a)); la && la->channels.size() > 1) ensureAppRelays(*la);
     }
     if (layout) Q_EMIT layoutChanged();
 }
@@ -937,6 +947,8 @@ void Mixer::onNodeRemoved(uint32_t id) {
     m_pendingAutoRoute.remove(id);
     if (m_apps.remove(id)) Q_EMIT appRemoved(id);
     if (name.isEmpty()) return;
+    // CH-12 relays follow the app node: gone → tear the relay down (see ensureAppRelays for why a lingering one hurts)
+    for (const auto &la : m_layout.apps) if (la.nodeName == name && la.channels.size() > 1) removeAppRelays(la);
     if (m_edges.remove(name)) for (const auto &m : m_mixes) if (name == EdgeNames::outputNode(m.slug, 0) || name == EdgeNames::sourceNode(m.slug)) { Q_EMIT mixChanged(m.slug); break; }
     if (m_devices.remove(name)) { Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged(); applyFallbacks(); notifyPresence(); }   // DV-9: absence → grey out + park outputs
     bool layout = false;
