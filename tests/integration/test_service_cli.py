@@ -638,3 +638,59 @@ def test_ch13_add_channel_from_source_app_and_device(stack):
     layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
     assert any(i["channel"] == "picked_mic" and i["device"]["node"] == "fake.mic" for i in layout["inputs"]), layout["inputs"]
     stack.cli("channel", "remove", "picked_app"); stack.cli("channel", "remove", "picked_mic")
+
+
+METER_TRACE = r"""
+import sys, json, time
+from gi.repository import GLib, Gio
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+trace = []
+def on(conn, sender, path, iface, sig, params):
+    trace.append((time.monotonic(), dict(params.unpack()[0])))
+bus.signal_subscribe("org.kmixdeck1", "org.kmixdeck1.Levels", "Peaks", "/org/kmixdeck1", None, Gio.DBusSignalFlags.NONE, on)
+bus.call_sync("org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Subscribe", None, None, Gio.DBusCallFlags.NONE, 5000, None)
+loop = GLib.MainLoop(); GLib.timeout_add(int(float(sys.argv[1]) * 1000), loop.quit); loop.run()
+bus.call_sync("org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Unsubscribe", None, None, Gio.DBusCallFlags.NONE, 5000, None)
+print(json.dumps(trace))
+"""
+
+
+def test_ux16_meter_ballistics_no_dropouts_hold_and_slow_fall(stack):
+    """UX-16: with a steady tone, no tick may read 0 on a metered key (laptop 2026-09-16: 'Stream-Fader fällt kurz auf
+    null'); after the tone stops the value holds ≥ 300 ms and then falls ≈ 20 dB/s instead of snapping to 0."""
+    import math
+    stack.cli("cell", "set", "game", "monitor", "1.0"); stack.cli("cell", "mute", "game", "monitor", "off")
+    play = stack.pw.play_into("kmixdeck.channel.game")
+    time.sleep(0.6)
+    try:
+        r = subprocess.run(["/usr/bin/python3", "-c", METER_TRACE, "4.0"], env=stack.env, capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, r.stderr
+        trace = json.loads(r.stdout.strip().splitlines()[-1])
+    finally:
+        pass
+    # kill the tone half-way through a second trace to see hold + fall
+    r2 = subprocess.Popen(["/usr/bin/python3", "-c", METER_TRACE, "3.0"], env=stack.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    time.sleep(1.0); play.kill(); play.wait(); t_stop = time.monotonic()
+    out, err = r2.communicate(timeout=30)
+    trace2 = json.loads(out.strip().splitlines()[-1])
+    def db(v): return 20 * math.log10(v) if v > 0 else -100
+    # (1) steady tone: every tick carries signal on channel/game and cell/game/monitor, none is 0
+    keys = ["channel/game", "cell/game/monitor", "mix/monitor"]
+    ticks = [t for t in trace if all(k in t[1] for k in keys)]
+    assert len(ticks) >= 80, f"expected ≥ 80 ticks in 4 s at 25 Hz, got {len(ticks)}"
+    for k in keys:
+        vals = [t[1][k] for t in ticks[5:]]
+        zeros = sum(1 for v in vals if v == 0)
+        assert zeros == 0, f"{k}: {zeros} of {len(vals)} ticks dropped to 0 with a steady tone"
+        spread = max(db(v) for v in vals) - min(db(v) for v in vals)
+        assert spread < 3.0, f"{k}: steady tone but meter spread {spread:.1f} dB"
+    # (2) after the tone stops: hold, then fall ≈ 20 dB/s (accept 12–30 dB/s)
+    after = [(ts, d["channel/game"]) for ts, d in trace2 if ts > t_stop and "channel/game" in d]
+    assert len(after) >= 30, len(after)
+    peak0 = after[0][1]
+    held = [v for ts, v in after if ts - t_stop < 0.28]
+    assert all(db(v) > db(peak0) - 1.0 for v in held), f"value did not hold for 300 ms: {[round(db(v),1) for v in held]}"
+    later = [(ts, v) for ts, v in after if 0.6 <= ts - t_stop <= 1.4 and v > 0]
+    assert len(later) >= 10, later
+    slope = (db(later[0][1]) - db(later[-1][1])) / (later[-1][0] - later[0][0])
+    assert 12 <= slope <= 30, f"fall rate {slope:.1f} dB/s, expected ≈ 20"

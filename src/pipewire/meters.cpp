@@ -6,6 +6,7 @@
 #include <spa/param/audio/format-utils.h>
 #include <QMutex>
 #include <QMutexLocker>
+#include <atomic>
 #include <cmath>
 
 namespace kmixdeck::pw {
@@ -14,7 +15,9 @@ struct MeterStream {
     pw_stream *stream = nullptr;
     spa_hook listener{};
     QString target;
-    float peak = 0.f;        // written on the RT/data thread, read+reset on publish (guarded by mutex)
+    std::atomic<float> peak{0.f};   // RT thread: max-accumulate; publisher: exchange(0) — no lost tick either way
+    float shown = 0.f;              // UX-16 ballistics (publisher thread only): instant rise, hold, then ≈ 20 dB/s fall
+    int holdTicks = 0;
 };
 
 struct Meters::Impl {
@@ -30,9 +33,13 @@ struct Meters::Impl {
         if (d->data) {
             const unsigned n = d->chunk->size / sizeof(float);
             const auto *f = static_cast<const float *>(d->data);
-            float p = m->peak;
+            float p = 0.f;
             for (unsigned i = 0; i < n; i++) p = std::max(p, std::fabs(f[i]));
-            m->peak = p;   // single writer; the publisher only reads+resets under the mutex, a lost update is one tick
+            // max-accumulate against whatever the publisher has not consumed yet: two buffers in one tick keep the
+            // louder one, a tick with no buffer keeps nothing (the publisher's exchange(0) then reads 0 and the
+            // ballistics below hold the last value instead of dropping to silence)
+            float cur = m->peak.load(std::memory_order_relaxed);
+            while (p > cur && !m->peak.compare_exchange_weak(cur, p, std::memory_order_relaxed)) {}
         }
         pw_stream_queue_buffer(m->stream, b);
     }
@@ -104,11 +111,26 @@ void Meters::setTargets(const QStringList &nodeNames) {
 
 QStringList Meters::targets() const { QMutexLocker l(&d->mutex); return d->streams.keys(); }
 
+// UX-16: meter ballistics live HERE so every frontend shows the same thing (CLI, KDE, tray).
+//  - rise: instant to the new peak
+//  - hold: kHoldTicks (≈ 320 ms) at the peak
+//  - fall: kFallDbPerTick (20 dB/s at 25 Hz = 0.8 dB per tick), like a PPM (IEC 60268-18)
+//  - a tick whose stream delivered no buffer (timer/graph phase drift) is NOT silence: the hold/fall continues.
 void Meters::publish() {
+    static constexpr int kHoldTicks = 8;
+    static constexpr float kFallFactor = 0.912f;     // 10^(-0.8/20)
+    static constexpr float kFloor = 1e-4f;           // −80 dBFS → 0
     QHash<QString, float> out;
     {
         QMutexLocker l(&d->mutex);
-        for (auto it = d->streams.cbegin(); it != d->streams.cend(); ++it) { out.insert(it.key(), it.value()->peak); it.value()->peak = 0.f; }
+        for (auto it = d->streams.cbegin(); it != d->streams.cend(); ++it) {
+            MeterStream *m = it.value();
+            const float raw = m->peak.exchange(0.f, std::memory_order_relaxed);
+            if (raw >= m->shown) { m->shown = raw; m->holdTicks = kHoldTicks; }
+            else if (m->holdTicks > 0) { m->holdTicks--; }
+            else { m->shown *= kFallFactor; if (m->shown < kFloor) m->shown = 0.f; }
+            out.insert(it.key(), m->shown);
+        }
     }
     Q_EMIT peaks(out);
 }

@@ -40,7 +40,10 @@ QQC2.Slider {
             }
             Rectangle {   // live level inside the fill — brighter green, clipped at the knob
                 width: fader.knobD / 2 + Math.min(fader.peakFrac, fader.visualPosition) * (parent.width - fader.knobD); height: parent.height; radius: height / 2
-                color: fader.peakDb > -6 ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.positiveTextColor
+                // UX-16: same bands + hysteresis as LevelMeter (red only when it really clips the top band)
+                property int band: 0
+                Connections { target: fader; function onPeakDbChanged() { const d = fader.peakDb; if (band === 0 && d > -18) band = d > -6 ? 2 : 1; else if (band === 1) { if (d > -6) band = 2; else if (d < -20) band = 0 } else if (band === 2 && d < -8) band = d < -20 ? 0 : 1 } }
+                color: band === 2 ? Kirigami.Theme.negativeTextColor : band === 1 ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.positiveTextColor
                 visible: fader.enabled
                 Behavior on width { NumberAnimation { duration: 40 } }
             }
