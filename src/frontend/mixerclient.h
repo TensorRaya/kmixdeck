@@ -32,6 +32,7 @@ class MixerClient : public QObject {
     Q_PROPERTY(QVariantList inputDevices READ inputDevices NOTIFY inputDevicesChanged)   // hardware sources a channel can be fed by
     Q_PROPERTY(bool metersEnabled READ metersEnabled WRITE setMetersEnabled NOTIFY metersEnabledChanged)   // Levels.Subscribe while true
     Q_PROPERTY(QString defaultChannel READ defaultChannel WRITE setDefaultChannel NOTIFY defaultChannelChanged)   // CH-5, slug or ""
+    Q_PROPERTY(QString listeningDevice READ listeningDevice WRITE setListeningDevice NOTIFY listeningDeviceChanged)   // UX-2, node.name or ""
     Q_PROPERTY(QString undoDescription READ undoDescription NOTIFY undoChanged)   // CH-9
 public:
     explicit MixerClient(QObject *parent = nullptr);
@@ -43,6 +44,8 @@ public:
 
     Q_INVOKABLE QString channelName(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Name")).toString(); }
     QString defaultChannel() const { return m_defaultChannel; }
+    QString listeningDevice() const { return m_listeningDevice; }
+    void setListeningDevice(const QString &node);
     QString undoDescription() const { return m_undoDescription; }
     Q_INVOKABLE void undo();
     void setDefaultChannel(const QString &slug);
@@ -124,6 +127,7 @@ public:
 Q_SIGNALS:
     void errorOccurred(const QString &message);
     void defaultChannelChanged();
+    void listeningDeviceChanged();
     void undoChanged();   // a refused request (duplicate name, unknown device, …)
     void connectedChanged();
     void serviceAvailableChanged();
@@ -157,7 +161,7 @@ private:
     QVariantList m_fxTypes; QVariantMap m_fxPresets;           // FX catalog + presets, read once
     QMap<QString, QVariantMap> m_apps;                          // keyed by object path
     QMap<QString, QString> m_outputDevices, m_inputDevices;    // node.name → description (both directions)
-    QString m_defaultChannel, m_undoDescription;
+    QString m_defaultChannel, m_undoDescription, m_listeningDevice;
     bool m_metersEnabled = false;
     QHash<QString, double> m_peaks;
     QStringList m_channelOrder, m_mixOrder;

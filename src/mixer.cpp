@@ -657,6 +657,10 @@ void Mixer::finishAutoRoute(uint32_t id) {
         qInfo() << "new application" << key << "→ default channel" << m_layout.defaultChannel;
     }
 }
+void Mixer::setListeningDevice(const QString &node) {
+    if (m_layout.listeningDevice == node) return;
+    m_layout.listeningDevice = node; saveLayout(); Q_EMIT listeningDeviceChanged();
+}
 bool Mixer::setDefaultChannel(const QString &slug) {
     if (!slug.isEmpty() && !channelSlugs().contains(slug)) return false;
     if (m_layout.defaultChannel == slug) return true;

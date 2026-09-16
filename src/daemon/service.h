@@ -194,9 +194,11 @@ private Q_SLOTS:
     void onNameOwnerChangedSlot(const QString &name, const QString &oldOwner, const QString &newOwner) { onNameOwnerChanged(name, oldOwner, newOwner); }
 private:
     void syncTargets();
+    QString meterKey(const QString &nodeName) const;
     void onNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
     Mixer *m_mixer;
     QSet<QString> m_subscribers;      // unique bus names
+    QHash<QString, uint32_t> m_appNodes;   // UX-13: app node name → app id (bus key app/<id>)
     QTimer m_teardown;                // grace period after the last unsubscribe
 };
 
@@ -219,6 +221,7 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_PROPERTY(StringMap OutputDevices READ outputDevices)     // a{ss}: node.name → description
     Q_PROPERTY(StringMap InputDevices READ inputDevices)
     Q_PROPERTY(QDBusObjectPath DefaultChannel READ defaultChannel WRITE setDefaultChannel)   // CH-5; "/" = off
+    Q_PROPERTY(QString ListeningDevice READ listeningDevice WRITE setListeningDevice)         // UX-2; node.name or ""
     Q_PROPERTY(QString UndoDescription READ undoDescription)   // CH-9: "" = nothing to undo, else e.g. channel “Music”
     Q_PROPERTY(QStringList ChannelOrder READ channelOrder)     // UX-9: display order, slugs
     Q_PROPERTY(QStringList MixOrder READ mixOrder)
@@ -232,6 +235,8 @@ public:
     StringMap inputDevices() const;
     QDBusObjectPath defaultChannel() const;
     void setDefaultChannel(const QDBusObjectPath &p);
+    QString listeningDevice() const { return m_mixer->listeningDevice(); }
+    void setListeningDevice(const QString &node) { m_mixer->setListeningDevice(node); }
     QString undoDescription() const { return m_mixer->undoDescription(); }
     QString fxTypes() const;
     QString fxPresets() const;

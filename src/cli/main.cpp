@@ -170,6 +170,7 @@ int main(int argc, char *argv[]) {
         "  fx      control <channel|mix> <slug> <node:Control> <value>   live tweak, no reload\n"
         "  app     list|move <id|name> <channel>          running application streams\n"
         "  app     assign <id|name> <ch>[,<ch>...]   CH-12: several channels at once (first = primary)\n"
+        "  listen  [<node.name>|none]            UX-2: the device I listen on + which mixes play there\n"
         "  audition <channel|mix> <slug>|none    UX-12: solo one entity on the main output; none restores\n"
         "  watch                                      print property changes as they happen\n\n"
         "Levels: linear 0..1, or NdB (e.g. -12dB), or N% (UI/cubic scale). Exit codes: 0 ok, 1 usage, 2 no service, 3 not found, 4 rejected."));
@@ -381,6 +382,15 @@ int main(int argc, char *argv[]) {
             return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
         }
         return fail(Usage, "app list | app move <id|name> <channel> | app assign <id|name> <ch>[,<ch>…]");
+    }
+    if (cmd == "listen") {   // UX-2: listen [<node.name>|none] — the device I hear on; "what am I hearing" = mixes routed to it
+        if (a.size() < 2) {
+            const QString dev = unwrap(o.mixer.value("ListeningDevice")).toString();
+            QStringList heard; for (auto it = o.mixes.cbegin(); it != o.mixes.cend(); ++it) if (it.value().value("Outputs").toStringList().contains(dev)) heard << it.value().value("Slug").toString();
+            if (g_json) { out << QJsonDocument(QJsonObject{{"device", dev}, {"mixes", QJsonArray::fromStringList(heard)}}).toJson(QJsonDocument::Compact) << "\n"; return Ok; }
+            out << (dev.isEmpty() ? QStringLiteral("none") : dev) << "  " << (heard.isEmpty() ? QStringLiteral("(no mix routed here)") : heard.join(QLatin1String(", "))) << "\n"; return Ok;
+        }
+        return setProp(QString::fromLatin1(ROOT), "org.kmixdeck1.Mixer", "ListeningDevice", a[1] == "none" ? QString() : a[1], &e) ? Ok : fail(Rejected, e);
     }
     if (cmd == "audition") {   // UX-12: hold one entity on the main output; `none` restores
         if (!need(2)) return Usage;

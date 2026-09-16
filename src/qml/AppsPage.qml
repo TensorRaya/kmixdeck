@@ -65,17 +65,18 @@ Kirigami.ScrollablePage {
                     }
                 }
 
-                // UX-10: running dot — this stream currently produces sound
-                Rectangle {
+                // UX-13: the app's own level — "who is talking right now" (running dot stays as the fallback colour)
+                LevelMeter {
+                    id: appMeter
+                    horizontal: true
                     Layout.alignment: Qt.AlignVCenter
-                    Layout.preferredWidth: Kirigami.Units.smallSpacing * 1.5
-                    Layout.preferredHeight: width
-                    radius: width
-                    visible: row.modelData.running
-                    color: Kirigami.Theme.positiveTextColor
-                    QQC2.ToolTip.text: i18n("Playing")
-                    QQC2.ToolTip.visible: dotHover.hovered
-                    HoverHandler { id: dotHover }
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 4
+                    Layout.preferredHeight: Kirigami.Units.smallSpacing * 1.5
+                    opacity: peak > 0.001 ? 1 : (row.modelData.running ? 0.5 : 0.25)
+                    Connections { target: Mixer; function onPeaksChanged() { appMeter.peak = Mixer.peak("app/" + row.modelData.nodeId) } }
+                    QQC2.ToolTip.text: row.modelData.running ? i18n("Playing") : i18n("Silent")
+                    QQC2.ToolTip.visible: meterHover.hovered
+                    HoverHandler { id: meterHover }
                 }
 
                 QQC2.ComboBox {

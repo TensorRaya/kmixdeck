@@ -40,14 +40,20 @@ struct Meters::Impl {
 
     MeterStream *create(const QString &target) {
         auto *m = new MeterStream; m->target = target;
+        // Sinks (channels, mixes) are metered on their monitor ports (capture.sink). Everything that is itself an
+        // output stream — cells, edges, app nodes (UX-13) — is captured directly: no capture.sink, or WirePlumber
+        // looks for a sink of that name and finds none.
+        const auto ni = graph->node(target);
+        const bool isSink = ni && ni->mediaClass == QLatin1String("Audio/Sink");
         auto *props = pw_properties_new(
             PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture", PW_KEY_MEDIA_ROLE, "Music",
-            PW_KEY_STREAM_MONITOR, "true", PW_KEY_STREAM_CAPTURE_SINK, "true",
+            PW_KEY_STREAM_MONITOR, "true",
             PW_KEY_TARGET_OBJECT, target.toUtf8().constData(),
             "resample.peaks", "true",
             PW_KEY_NODE_NAME, "kmixdeck.meter", PW_KEY_NODE_DESCRIPTION, "kmixdeck level meter",
             PW_KEY_NODE_PASSIVE, "true", PW_KEY_NODE_DONT_RECONNECT, "true", "node.dont-fallback", "true",
             nullptr);
+        if (isSink) pw_properties_set(props, PW_KEY_STREAM_CAPTURE_SINK, "true");
         pw_properties_setf(props, PW_KEY_NODE_RATE, "1/%d", kRateHz);
         pw_properties_setf(props, PW_KEY_NODE_LATENCY, "1/%d", kRateHz);
         m->stream = pw_stream_new(graph->core(), "kmixdeck meter", props);

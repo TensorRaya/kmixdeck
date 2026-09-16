@@ -161,6 +161,9 @@ public:
     Q_INVOKABLE bool assignApp(uint32_t id, const QStringList &channelSlugs, bool cumulative = false);
     /// CH-5: default channel for applications kmixdeck has never seen. Empty string = off.
     QString defaultChannel() const { return m_layout.defaultChannel; }
+    /// UX-2: listening device (node.name), persisted in the layout. Any string accepted — the device may be unplugged.
+    QString listeningDevice() const { return m_layout.listeningDevice; }
+    void setListeningDevice(const QString &node);
     bool    setDefaultChannel(const QString &slug);
 
     /// UX-12 solo audition: while a channel or mix is auditioned, exactly that entity plays to the main output;
@@ -197,6 +200,7 @@ Q_SIGNALS:
     void inputChanged(const QString &slug);
     void inputsChanged();                       // list of inputs changed
     void defaultChannelChanged();
+    void listeningDeviceChanged();
     void undoChanged();
 
 private:

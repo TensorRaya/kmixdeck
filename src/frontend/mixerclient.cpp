@@ -69,6 +69,10 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
             for (auto it = d.cbegin(); it != d.cend(); ++it) m_outputDevices.insert(it.key(), it.value());
             Q_EMIT outputDevicesChanged();
         }
+        if (props.contains(QStringLiteral("ListeningDevice"))) {
+            const QString d = props.value(QStringLiteral("ListeningDevice")).toString();
+            if (d != m_listeningDevice) { m_listeningDevice = d; Q_EMIT listeningDeviceChanged(); }
+        }
         if (props.contains(QStringLiteral("DefaultChannel"))) {
             const QString p = props.value(QStringLiteral("DefaultChannel")).toString();
             const QString slug = p == QLatin1String("/") ? QString() : p.section(QLatin1Char('/'), -1);
@@ -190,6 +194,7 @@ QVariantList MixerClient::apps() const {
                                   {QStringLiteral("mediaName"), a.value(QStringLiteral("MediaName"))},
                                   {QStringLiteral("icon"), a.value(QStringLiteral("Icon"))},                       // UX-10
                                   {QStringLiteral("running"), a.value(QStringLiteral("Running"))},                // UX-10
+                                  {QStringLiteral("nodeId"), a.value(QStringLiteral("NodeId"))},                  // UX-13: meter key app/<id>
                                   {QStringLiteral("allChannels"), a.value(QStringLiteral("Channels"))},           // CH-12
                                   {QStringLiteral("channel"), chPath.startsWith(QStringLiteral("%1/channel/").arg(ROOT)) ? chPath.section(QLatin1Char('/'), -1) : QString()}});
     }
@@ -232,6 +237,9 @@ void MixerClient::setMixOutputDevice(const QString &slug, const QString &nodeNam
     setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("OutputDevice"), nodeName);
 }
 void MixerClient::undo() { callReportingErrors(QStringLiteral("Undo"), QVariant()); }
+void MixerClient::setListeningDevice(const QString &node) {
+    setProperty(ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QStringLiteral("ListeningDevice"), node);
+}
 void MixerClient::setDefaultChannel(const QString &slug) {
     const QString path = slug.isEmpty() ? QStringLiteral("/") : QStringLiteral("%1/channel/%2").arg(ROOT, slug);
     setProperty(ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QStringLiteral("DefaultChannel"), QVariant::fromValue(QDBusObjectPath(path)));

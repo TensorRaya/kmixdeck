@@ -51,6 +51,8 @@ struct Layout {
     QVector<LayoutApp> apps;                       // CH-12: remembered per-app channel assignments
     /// CH-5: where a never-seen application lands. Empty = leave it on the system default (no auto-routing).
     QString defaultChannel = QStringLiteral("system");
+    /// UX-2: the device the user listens on (node.name). The mix routed to it is "what I hear". Empty = not chosen.
+    QString listeningDevice;
     /// Apps kmixdeck has routed at least once — keyed by application.name (falls back to node.name).
     /// WirePlumber restores THEIR target itself; this set only exists to tell "new" from "known".
     QStringList knownApps;

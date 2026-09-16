@@ -36,10 +36,73 @@ Kirigami.ScrollablePage {
 
     // ScrollablePage puts this into a Flickable; the Flickable only scrolls vertically when contentWidth <= width,
     // so bind our width to the page and let the mix panels share what is left of it.
+    ColumnLayout {
+        width: page.flickable ? page.flickable.width : page.width
+        spacing: page.gap
+        visible: page.channels.length > 0 && page.mixes.length > 0
+
+    // ---- UX-2 "what am I hearing": my listening device + the mix that plays there. One click switches the mix.
+    // The device list is the same as in every mix's Outputs menu; changing the device here re-points the
+    // currently heard mix (or the first mix) to it, so this bar and the mix headers never disagree (CT-5 spirit).
+    Panel {
+        id: hearing
+        Layout.fillWidth: true
+        // remembered per user session in the layout-independent UI settings; default: the first device that any mix plays to
+        property string device: Mixer.listeningDevice
+        readonly property var hearingMixes: page.mixes.filter(m => Mixer.mixOutputs(m).indexOf(hearing.device) >= 0)
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.margins: Kirigami.Units.smallSpacing * 2
+            spacing: Kirigami.Units.largeSpacing
+            Kirigami.Icon { source: "audio-headphones"; Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium; Layout.preferredHeight: width }
+            QQC2.Label { text: i18nc("@label what am I hearing", "I hear:"); font.bold: true }
+            // mix selector: exactly the mixes as toggle buttons, checked = plays on my device
+            Repeater {
+                model: page.mixes
+                delegate: QQC2.ToolButton {
+                    required property string modelData
+                    text: Mixer.mixName(modelData)
+                    icon.name: Mixer.mixIcon(modelData).length > 0 ? Mixer.mixIcon(modelData) : "audio-speakers"
+                    checkable: true
+                    checked: hearing.hearingMixes.indexOf(modelData) >= 0
+                    enabled: hearing.device.length > 0
+                    QQC2.ToolTip.text: checked ? i18n("%1 plays on %2", text, Mixer.deviceDescription(hearing.device))
+                                               : i18n("Listen to %1 on %2", text, Mixer.deviceDescription(hearing.device))
+                    QQC2.ToolTip.visible: hovered
+                    // one click = this mix on my device, every other mix off it (exclusive by default; MX-9 stays
+                    // reachable through the mix header for the "headphones AND speakers" case)
+                    onClicked: {
+                        for (const m of hearing.hearingMixes) if (m !== modelData) Mixer.toggleMixOutput(m, hearing.device)
+                        if (!checked) Mixer.toggleMixOutput(modelData, hearing.device)
+                        checked = Qt.binding(() => hearing.hearingMixes.indexOf(modelData) >= 0)
+                    }
+                }
+            }
+            Item { Layout.fillWidth: true }
+            QQC2.Label { text: i18nc("@label", "on"); opacity: 0.7 }
+            QQC2.ComboBox {
+                id: devBox
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 16
+                model: Mixer.outputDevices
+                textRole: "description"
+                valueRole: "nodeName"
+                displayText: hearing.device.length > 0 ? Mixer.deviceDescription(hearing.device) : i18nc("@item no listening device chosen", "Choose your headphones…")
+                currentIndex: Mixer.outputDevices.findIndex(d => d.nodeName === hearing.device)
+                onActivated: (index) => {
+                    const dev = Mixer.outputDevices[index].nodeName
+                    const heard = hearing.hearingMixes.length > 0 ? hearing.hearingMixes : [page.mixes[0]]
+                    for (const m of heard) { if (hearing.device.length > 0 && Mixer.mixOutputs(m).indexOf(hearing.device) >= 0) Mixer.toggleMixOutput(m, hearing.device); if (Mixer.mixOutputs(m).indexOf(dev) < 0) Mixer.toggleMixOutput(m, dev) }
+                    Mixer.listeningDevice = dev
+                }
+                QQC2.ToolTip.text: i18n("The device you listen on. Mixes are sent to it from here; the same choice appears in each mix's Outputs menu.")
+                QQC2.ToolTip.visible: hovered
+            }
+        }
+    }
+
     RowLayout {
         id: desk
-        visible: page.channels.length > 0 && page.mixes.length > 0
-        width: page.flickable ? page.flickable.width : page.width
+        Layout.fillWidth: true
         spacing: page.gap
 
         // ---- channel panel: one dark panel, rows separated by hairlines
@@ -109,6 +172,7 @@ Kirigami.ScrollablePage {
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
         }
     }
+    }   // ColumnLayout (hearing bar + desk)
 
     // A dark rounded panel — the only container in this UI. Kirigami colours so it follows Breeze/BreezeDark.
     // Children go into the ColumnLayout; the panel takes the layout's implicit size (no anchors.fill cycle).

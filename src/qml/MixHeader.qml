@@ -45,7 +45,9 @@ QQC2.Control {
             horizontal: true
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: 3; rightMargin: 3; bottomMargin: 2 }
             height: 3
-            Connections { target: Mixer; function onPeaksChanged() { mixMeter.peak = header.masterMuted ? 0 : Mixer.peak("mix/" + header.mix) } }
+            // UX-13: what actually leaves towards the device (post master fader/mute) — out/<mix>; falls back to the
+            // mix sink while the output edge is not metered yet
+            Connections { target: Mixer; function onPeaksChanged() { const o = Mixer.peak("out/" + header.mix); mixMeter.peak = header.masterMuted ? 0 : (o > 0 ? o : Mixer.peak("mix/" + header.mix)) } }
         }
     }
     TapHandler { acceptedButtons: Qt.RightButton; onTapped: mixCtxMenu.popup() }

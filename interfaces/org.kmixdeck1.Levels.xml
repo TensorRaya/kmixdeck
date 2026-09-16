@@ -16,8 +16,14 @@
     <method name="Subscribe"/>
     <!-- stop meters for this caller; the last unsubscribe tears the meter streams down -->
     <method name="Unsubscribe"/>
-    <!-- once per tick while Subscribers > 0: key "channel/<slug>" or "mix/<slug>" → peak, linear 0..1
-         (dB = 20*log10(v); 0 means silence / -inf). One dictionary per tick regardless of layout size. -->
+    <!-- once per tick while Subscribers > 0: key → peak, linear 0..1 (dB = 20*log10(v); 0 means silence / -inf).
+         One dictionary per tick regardless of layout size. Keys (UX-13, every entity has a meter):
+           channel/<slug>        channel sink (pre-fader, post trim)
+           mix/<slug>            mix sink (sum of its cells, pre master)
+           cell/<ch>/<mix>       post-fader signal of that cell
+           in/<slug>             what the hardware input delivers into its channel
+           out/<mix>             what leaves the mix towards its device (post master)
+           app/<nodeId>          the application's own output — "who is talking right now" -->
     <signal name="Peaks">
       <arg name="peaks" type="a{sd}"/>
     </signal>

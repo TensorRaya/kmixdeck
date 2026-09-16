@@ -19,6 +19,9 @@
     <property name="InputDevices" type="a{ss}" access="read"/>
     <!-- CH-5: never-seen applications are moved here on first appearance. "/" disables auto-routing. -->
     <property name="DefaultChannel" type="o" access="readwrite"/>
+    <!-- UX-2: the device (node.name) the user listens on; "" = not chosen. The mix whose Outputs contain it is
+         "what I hear". Persisted in the layout so every frontend shows the same answer. -->
+    <property name="ListeningDevice" type="s" access="readwrite"/>
     <!-- CH-9: the last RemoveChannel/RemoveMix can be undone (layout, links, inputs, outputs AND every fader).
          UndoDescription is "" when there is nothing, else a human string like: channel “Music”. -->
     <property name="UndoDescription" type="s" access="read"/>

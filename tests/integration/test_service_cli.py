@@ -480,10 +480,11 @@ def test_ux6_levels_signal_carries_peaks_of_the_tone(stack):
 def test_ux6_subscriber_that_dies_is_forgotten(stack):
     """A client that exits without Unsubscribe must not leave meters running (NameOwnerChanged)."""
     p = subprocess.Popen(["/usr/bin/python3", "-c", METER_LISTENER, "30"], env=stack.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # UX-13: 3 channels + 2 mixes + 6 cells + 2 mix outputs (+ one per running app, none here)
     for _ in range(50):
-        if meter_nodes(stack) >= 5: break
+        if meter_nodes(stack) >= 13: break
         time.sleep(0.1)
-    assert meter_nodes(stack) == 5, "one meter stream per channel and per mix"
+    assert meter_nodes(stack) == 13, "one meter stream per channel, mix, cell and mix output"
     assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Subscribers").stdout.strip() == "u 1"
     p.kill(); p.wait()
     for _ in range(80):
@@ -562,3 +563,53 @@ def test_dv9_dv12_unplug_greys_out_and_replug_restores(stack):
     stack.cli("mix", "output", "stream", "none")
     stack.cli("channel", "input", "voice", "none")
     assert wait_prop(stack, "channel", "voice", "InputDevice", "") == ""
+
+
+def test_ux13_every_entity_has_a_meter(stack):
+    """UX-13: cells, outputs and the app itself are metered, not only channels and mixes. Tone from a real app on
+    game: app/<id> hot, cell/game/monitor hot, cell/game/stream at −40 dB shows ≈ 40 dB less, out/monitor hot."""
+    stack.cli("cell", "set", "game", "monitor", "1.0"); stack.cli("cell", "set", "game", "stream", "-40dB")
+    stack.cli("cell", "mute", "game", "monitor", "off"); stack.cli("cell", "mute", "game", "stream", "off")
+    p, app = start_fake_app(stack)
+    try:
+        stack.cli("app", "move", "FakeGame", "game")
+        assert wait_sink(stack, "kmixdeck.channel.game") == "kmixdeck.channel.game"
+        time.sleep(0.5)
+        r = subprocess.run(["/usr/bin/python3", "-c", METER_LISTENER, "2.5", "unsubscribe"], env=stack.env, capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, r.stderr
+        peaks = json.loads(r.stdout.strip().splitlines()[-1])
+    finally:
+        p.kill(); p.wait()
+        stack.cli("cell", "set", "game", "stream", "1.0")
+    def db(v): return 20 * math.log10(v) if v > 0 else float("-inf")
+    key = f"app/{app['NodeId']}"
+    assert key in peaks and db(peaks[key]) > -30, (key, peaks)
+    assert db(peaks["cell/game/monitor"]) > -30, peaks
+    assert db(peaks["cell/game/monitor"]) - 45 < db(peaks["cell/game/stream"]) < db(peaks["cell/game/monitor"]) - 35, peaks
+    assert db(peaks["out/monitor"]) > -30, peaks
+    assert peaks.get("cell/voice/monitor", 0) == 0, peaks
+    for _ in range(80):
+        if meter_nodes(stack) == 0: break
+        time.sleep(0.1)
+    assert meter_nodes(stack) == 0
+
+
+def test_ux2_listening_device_is_one_truth(stack):
+    """UX-2: ListeningDevice is layout state on the bus (not a UI preference), any frontend reads the same answer;
+    `kmixdeck listen` shows device + the mixes routed there."""
+    if "fake.headphones" not in stack.cli("devices", json_out=True):
+        make_fake_sink(stack, "fake.headphones", "Fake Headphones")
+        for _ in range(30):
+            if "fake.headphones" in stack.cli("devices", json_out=True): break
+            time.sleep(0.1)
+    stack.cli("listen", "fake.headphones")
+    assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", "ListeningDevice").stdout.strip() == 's "fake.headphones"'
+    stack.cli("mix", "output", "monitor", "fake.headphones")
+    j = stack.cli("listen", json_out=True)
+    assert j == {"device": "fake.headphones", "mixes": ["monitor"]}, j
+    data = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
+    assert data["listeningDevice"] == "fake.headphones"
+    stack.restart_daemon()
+    assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", "ListeningDevice").stdout.strip() == 's "fake.headphones"'
+    stack.cli("listen", "none"); stack.cli("mix", "output", "monitor", "none")
+    assert stack.cli("listen").stdout.startswith("none")

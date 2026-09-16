@@ -52,9 +52,8 @@ Item {
             Layout.fillWidth: true
             value: cell.value
             enabled: !cell.muted && cell.present
-            peak: cell.muted ? 0 : channelPeak * Math.pow(cell.value, 3)
-            property double channelPeak: 0
-            Connections { target: Mixer; function onPeaksChanged() { slider.channelPeak = Mixer.peak("channel/" + cell.channel) } }
+            // UX-13: the cell's own post-fader meter (daemon key cell/<ch>/<mix>) — not an estimate from the channel
+            Connections { target: Mixer; function onPeaksChanged() { slider.peak = cell.muted ? 0 : Mixer.peak("cell/" + cell.channel + "/" + cell.mix) } }
             onMoved: Mixer.setCellVolume(cell.channel, cell.mix, value)
             onReset: Mixer.setCellVolume(cell.channel, cell.mix, 1.0)
             QQC2.ToolTip.visible: pressed || hovered

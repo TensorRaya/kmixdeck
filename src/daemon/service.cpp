@@ -187,16 +187,13 @@ LevelsAdaptor::LevelsAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdapt
     connect(m_mixer->meters(), &pw::Meters::peaks, this, [this](const QHash<QString, float> &p) {
         if (m_subscribers.isEmpty()) return;
         QVariantMap out;
-        for (auto it = p.cbegin(); it != p.cend(); ++it) {
-            const QString n = it.key();   // kmixdeck.channel.<slug> / kmixdeck.mix.<slug> → channel/<slug> / mix/<slug>
-            QString key = n.startsWith(QLatin1String("kmixdeck.channel.")) ? QStringLiteral("channel/") + n.mid(17)
-                        : n.startsWith(QLatin1String("kmixdeck.mix."))     ? QStringLiteral("mix/") + n.mid(13) : n;
-            out.insert(key, static_cast<double>(it.value()));
-        }
+        for (auto it = p.cbegin(); it != p.cend(); ++it) out.insert(meterKey(it.key()), static_cast<double>(it.value()));
         Q_EMIT Peaks(out);
     });
-    // layout changes while subscribed → meter the new set
+    // layout / app set changes while subscribed → meter the new set (UX-13: apps come and go)
     connect(m_mixer, &Mixer::layoutChanged, this, [this] { if (!m_subscribers.isEmpty()) syncTargets(); });
+    connect(m_mixer, &Mixer::appAdded,   this, [this](uint32_t) { if (!m_subscribers.isEmpty()) syncTargets(); });
+    connect(m_mixer, &Mixer::appRemoved, this, [this](uint32_t) { if (!m_subscribers.isEmpty()) syncTargets(); });
     // subscribers that leave the bus without Unsubscribe()
     QDBusConnection::sessionBus().connect(QStringLiteral("org.freedesktop.DBus"), QStringLiteral("/org/freedesktop/DBus"),
         QStringLiteral("org.freedesktop.DBus"), QStringLiteral("NameOwnerChanged"), this, SLOT(onNameOwnerChangedSlot(QString,QString,QString)));
@@ -219,11 +216,29 @@ void LevelsAdaptor::onNameOwnerChanged(const QString &name, const QString &, con
     if (m_subscribers.isEmpty()) m_teardown.start();
     emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Levels"), {{QStringLiteral("Subscribers"), subscribers()}});
 }
+// UX-13: one meter per visible entity. Node name → bus key:
+//   kmixdeck.channel.<s>      → channel/<s>          kmixdeck.mix.<s>          → mix/<s>
+//   kmixdeck.link.<c>.<m>     → cell/<c>/<m>  (post-fader: the cell loopback's playback side)
+//   kmixdeck.in.<s>           → in/<s>        (what the hardware input delivers)
+//   kmixdeck.out.<m>[.n]      → out/<m>       (what leaves towards the device, post master)
+//   <app node, by id>         → app/<id>      (the application's own output — "who is talking")
+QString LevelsAdaptor::meterKey(const QString &n) const {
+    if (n.startsWith(QLatin1String("kmixdeck.channel."))) return QStringLiteral("channel/") + n.mid(17);
+    if (n.startsWith(QLatin1String("kmixdeck.mix.")))     return QStringLiteral("mix/") + n.mid(13);
+    if (n.startsWith(QLatin1String("kmixdeck.link.")))    { const auto p = n.mid(14).split(QLatin1Char('.')); if (p.size() == 2) return QStringLiteral("cell/%1/%2").arg(p[0], p[1]); }
+    if (n.startsWith(QLatin1String("kmixdeck.in.")))      return QStringLiteral("in/") + n.mid(12);
+    if (n.startsWith(QLatin1String("kmixdeck.out.")))     return QStringLiteral("out/") + n.mid(13).section(QLatin1Char('.'), 0, 0);
+    if (const uint32_t id = m_appNodes.value(n, 0)) return QStringLiteral("app/%1").arg(id);
+    return n;
+}
 void LevelsAdaptor::syncTargets() {
-    QStringList t;
+    QStringList t; m_appNodes.clear();
     if (!m_subscribers.isEmpty()) {
         for (const auto &c : m_mixer->channelSlugs()) t << Names::channelNode(c);
-        for (const auto &m : m_mixer->mixSlugs()) t << Names::mixNode(m);
+        for (const auto &m : m_mixer->mixSlugs()) { t << Names::mixNode(m); t << EdgeNames::outputNode(m, 0); }
+        for (const auto &c : m_mixer->channelSlugs()) for (const auto &m : m_mixer->mixSlugs()) t << Names::cellNode(c, m);
+        for (const auto &i : m_mixer->inputSlugs()) t << EdgeNames::inputNode(i);
+        for (uint32_t id : m_mixer->appIds()) if (const auto a = m_mixer->app(id); a && !a->nodeName.isEmpty()) { t << a->nodeName; m_appNodes.insert(a->nodeName, id); }
     }
     m_mixer->meters()->setTargets(t);
 }
@@ -340,6 +355,9 @@ Service::Service(QObject *parent) : QObject(parent) {
     connect(&m_mixer, &Mixer::undoChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("UndoDescription"), m_mixer.undoDescription()}});
     });
+    connect(&m_mixer, &Mixer::listeningDeviceChanged, this, [this] {
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("ListeningDevice"), m_mixer.listeningDevice()}});
+    });
     connect(&m_mixer, &Mixer::defaultChannelChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->defaultChannel() : QDBusObjectPath(QStringLiteral("/")))}});
     });
@@ -397,7 +415,7 @@ ManagedObjects Service::managedObjects() const {
     out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
         {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()},
          {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())},
-         {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}, {QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()},
+         {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("ListeningDevice"), m_mixer.listeningDevice()}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}, {QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()},
          {QStringLiteral("FxTypes"), m_mixerAdaptor->fxTypes()}, {QStringLiteral("FxPresets"), m_mixerAdaptor->fxPresets()}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)
         out.insert(QDBusObjectPath(it.key()), InterfaceMap{{it.value()->interfaceName(), it.value()->properties()}});
