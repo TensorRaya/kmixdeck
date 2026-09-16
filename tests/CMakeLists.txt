@@ -8,6 +8,8 @@ ecm_add_test(unit/mixerlogictest.cpp
 
 # Frontend smoke: every QML file must load (offscreen, no daemon needed — the client shows "not reachable").
 add_test(NAME frontend-qml-loads COMMAND kmixdeck-kde --self-test)
+# VF-2: every ✅ requirement names an existing test (tools/sot-audit.py)
+add_test(NAME sot-audit COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/sot-audit.py)
 set_tests_properties(frontend-qml-loads PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_LOGGING_RULES=*.debug=false" TIMEOUT 60 FAIL_REGULAR_EXPRESSION "failed to load component;is not a type;unavailable")
 
 # Integration tests: private PipeWire daemon per session (pytest). Skipped if tools are missing.
