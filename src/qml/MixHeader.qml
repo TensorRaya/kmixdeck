@@ -20,8 +20,8 @@ QQC2.Control {
     property bool hasFx: Mixer.fxEnabled("mix", mix)
     property string iconName: Mixer.mixIcon(mix)
     padding: 0
-    // Narrow card (laptop, 3 mixes): listen + FX buttons fold into the ⋮ menu so the device line keeps ≥ 6 gu and
-    // the master fader stays usable. Measured 2026-09-16 at 353 px: seven items left "RØDE…" for the device.
+    // Narrow card (laptop, 3 mixes): the FX button folds into the ⋮ menu (it is there anyway) so the device line keeps
+    // room. The listen button NEVER folds — hold-to-listen is a primary control (Michel, 2026-09-16).
     readonly property bool compact: width < Kirigami.Units.gridUnit * 24
 
     Connections {
@@ -56,7 +56,6 @@ QQC2.Control {
         }
     }
     TapHandler { acceptedButtons: Qt.RightButton; onTapped: mixCtxMenu.popup() }
-    Timer { id: auditionTimer; interval: 3000; onTriggered: Mixer.stopAudition() }
 
     contentItem: RowLayout {
         spacing: Kirigami.Units.smallSpacing
@@ -145,7 +144,6 @@ QQC2.Control {
         }
         // UX-12 listen: hold = only this mix reaches the headphones, release restores everything
         QQC2.ToolButton {
-            visible: !header.compact
             icon.name: "audio-headphones"
             display: QQC2.AbstractButton.IconOnly
             text: i18n("Listen to this mix")
@@ -189,11 +187,6 @@ QQC2.Control {
         }
         QQC2.MenuItem { text: i18n("Outputs…"); icon.name: "audio-headphones"; onTriggered: outMenu.popup() }
         QQC2.MenuItem { text: i18n("Effects…"); icon.name: "view-media-equalizer"; onTriggered: applicationWindow().fxPanelOpen("mix", header.mix) }
-        QQC2.MenuItem {   // compact fallback for the hold-to-listen button (UX-12): 3 s solo, then everything is restored
-            visible: header.compact
-            text: i18n("Listen for 3 seconds"); icon.name: "audio-headphones"
-            onTriggered: { Mixer.audition("mix", header.mix); auditionTimer.restart() }
-        }
         QQC2.MenuSeparator {}
         QQC2.MenuItem { text: i18n("Remove mix"); icon.name: "edit-delete"; onTriggered: Mixer.removeMix(header.mix) }
     }

@@ -17,6 +17,10 @@ Kirigami.ScrollablePage {
         Kirigami.Action { text: i18n("Add mix");     icon.name: "list-add"; onTriggered: applicationWindow().addDialogOpen("mix") }
     ]
 
+    // UX-15: the routing view asks us to show one cell; the CellFader registers itself under "ch|mix"
+    property var cellItems: ({})
+    function highlightCell(channel, mix) { const c = cellItems[channel + "|" + mix]; if (c) c.pulse() }
+
     readonly property var channels: Mixer.channelSlugs
     readonly property var mixes: Mixer.mixSlugs
     readonly property int rowH: Kirigami.Units.gridUnit * 3.6          // ≈ 66 px @ 18 px gridUnit, like Wave Link
@@ -155,6 +159,8 @@ Kirigami.ScrollablePage {
                             Layout.preferredHeight: page.rowH
                             channel: modelData; mix: mixPanel.modelData
                             first: index === 0
+                            Component.onCompleted: page.cellItems[channel + "|" + mix] = this
+                            Component.onDestruction: delete page.cellItems[channel + "|" + mix]
                         }
                     }
             }

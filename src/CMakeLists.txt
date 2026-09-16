@@ -44,6 +44,7 @@ ecm_add_qml_module(kmixdeck-kde
         qml/CellFader.qml
         qml/AddDialog.qml
         qml/AppsPage.qml
+        qml/RoutingPage.qml
         qml/MixHeader.qml
         qml/ChannelHeader.qml
         qml/RenameDialog.qml

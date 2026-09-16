@@ -40,6 +40,12 @@ Kirigami.ApplicationWindow {
                 checked: root.pageStack.currentItem === appsPage
                 onTriggered: { root.pageStack.clear(); root.pageStack.push(appsPage) }
             },
+            Kirigami.Action {   // UX-15
+                text: i18n("Routing")
+                icon.name: "view-list-tree"
+                checked: root.pageStack.currentItem === routingPage
+                onTriggered: { root.pageStack.clear(); root.pageStack.push(routingPage) }
+            },
             Kirigami.Action { separator: true },
             Kirigami.Action {
                 text: i18n("About kmixdeck")
@@ -50,9 +56,13 @@ Kirigami.ApplicationWindow {
     }
 
     // Pages are kept alive so switching does not lose scroll/fader state.
-    MixerPage { id: mixerPage; visible: false }
-    AppsPage  { id: appsPage;  visible: false }
+    MixerPage   { id: mixerPage;   visible: false }
+    AppsPage    { id: appsPage;    visible: false }
+    RoutingPage { id: routingPage; visible: false }
     pageStack.initialPage: mixerPage
+    function showMixer(channel, mix) { root.pageStack.clear(); root.pageStack.push(mixerPage); if (channel) mixerPage.highlightCell(channel, mix) }
+    function showApps() { root.pageStack.clear(); root.pageStack.push(appsPage) }
+    function showRouting() { root.pageStack.clear(); root.pageStack.push(routingPage) }
 
     // Meters cost CPU in the daemon (ADR 0006): only while the window is actually shown.
     onVisibleChanged: Mixer.metersEnabled = visible

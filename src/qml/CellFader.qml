@@ -31,11 +31,16 @@ Item {
     function toDb(v) { return v <= 0 ? -Infinity : 60 * Math.log10(v) }   // cubic → dB; 1.0 = 0 dB
 
     Rectangle { visible: !cell.first; anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: Kirigami.Units.largeSpacing; rightMargin: Kirigami.Units.largeSpacing } height: 1; color: Qt.alpha(Kirigami.Theme.textColor, 0.10) }
+    // UX-15: "jump to this fader" from the routing view — a short highlight pulse so the eye finds the row
+    property bool highlighted: false
+    Rectangle { anchors.fill: parent; radius: Kirigami.Units.smallSpacing; color: Kirigami.Theme.highlightColor; opacity: cell.highlighted ? 0.25 : 0; Behavior on opacity { NumberAnimation { duration: 250 } } }
+    Timer { id: unhighlight; interval: 1800; onTriggered: cell.highlighted = false }
+    function pulse() { cell.highlighted = true; unhighlight.restart(); slider.forceActiveFocus() }
     HoverHandler { id: hover }
 
     RowLayout {
         anchors { fill: parent; leftMargin: Kirigami.Units.smallSpacing * 1.5; rightMargin: Kirigami.Units.smallSpacing * 1.5 }
-        spacing: Kirigami.Units.smallSpacing
+        spacing: Kirigami.Units.smallSpacing * 2   // fader cap → link button had 5 px on the laptop (2026-09-16)
 
         QQC2.ToolButton {
             icon.name: cell.muted ? "audio-volume-muted" : "audio-volume-high"
