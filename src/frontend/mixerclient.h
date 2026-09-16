@@ -101,6 +101,10 @@ public:
     // Card ids: "app/<path>", "dev/<node>", "ch/<slug>", "mix/<slug>", "out/<mix>/<ref>". Row pos for stereo cards is "L"/"R".
     Q_INVOKABLE QVariantMap patchbay() const;
     Q_INVOKABLE QStringList channelInputs(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Inputs")).toStringList(); }
+    // Patchbay gestures. connectJacks: drag from one jack to another → the right daemon call, or "" on success /
+    // a human reason when the pair makes no sense (same column, device→device …). removeWire: click on a wire.
+    Q_INVOKABLE QString connectJacks(const QString &fromCard, const QString &fromPos, const QString &toCard, const QString &toPos);
+    Q_INVOKABLE void removeWire(const QVariantMap &wire);
     Q_INVOKABLE void addChannelInput(const QString &slug, const QString &ref);
     Q_INVOKABLE void removeChannelInput(const QString &slug, const QString &ref);
     bool metersEnabled() const { return m_metersEnabled; }

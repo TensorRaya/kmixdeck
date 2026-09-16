@@ -295,3 +295,43 @@ def test_dv25_several_wires_into_one_channel_from_two_devices(stack):
     assert stack.cli("channel", "input", "duo").stdout.strip() == f"{rc}:AUX1>R"
     stack.cli("channel", "remove", "duo")
     stack.cli("devices", "virtual", "remove", "wire_ui24r"); stack.cli("devices", "virtual", "remove", "wire_rode")
+
+
+def test_dv24_patchbay_gestures_reach_the_daemon(stack):
+    """DV-24: the patchbay's drag (jack → jack) and click (on a wire) are the same calls the UI makes; driven through
+    `kmixdeck-kde --gesture` so we can prove they change the daemon, not just the picture."""
+    from test_service_cli import BIN
+    kde = BIN / "kmixdeck-kde"
+    if not kde.exists(): pytest.skip("kmixdeck-kde not built")
+    ui = stack.cli("devices", "virtual", "add", "Gesture Ui24R", "--in", "4", "--out", "4").stdout.strip()
+    stack.pw.wait_node(ui); stack.pw.wait_node(ui + ".out")
+    for _ in range(50):
+        if ui in stack.cli("devices", "in", json_out=True) and (ui + ".out") in stack.cli("devices", json_out=True): break
+        time.sleep(0.1)
+    stack.cli("channel", "add", "Deck")
+    env = dict(stack.env); env["QT_QPA_PLATFORM"] = "offscreen"
+
+    def gesture(*specs):
+        args = [str(kde)]
+        for s in specs: args += ["--gesture", s]
+        r = subprocess.run(args, env=env, capture_output=True, text=True, timeout=30)
+        return [l for l in r.stdout.splitlines() if l.startswith("gesture ")]
+
+    # drag Ui24R AUX2 → Deck's R jack; drag Deck R → mix stream (unmute the send); drag stream L → Ui24R out AUX3
+    out = gesture(f"connect:dev/{ui}|AUX2|ch/deck|R", "connect:ch/deck|R|mix/stream|R", f"connect:mix/stream|L|outdev/{ui}.out|AUX3")
+    assert all(l.endswith("-> ok") for l in out), out
+    time.sleep(0.6)
+    assert stack.cli("channel", "inputs", "deck", json_out=True) == [f"{ui}:AUX2>R"]
+    assert stack.cli("cell", "get", "deck", "stream", json_out=True)["Muted"] is False
+    assert f"{ui}.out:AUX3>L" in stack.cli("mix", "outputs", "stream", json_out=True)
+    # nonsense pairs are refused with a reason, and nothing changes
+    out = gesture(f"connect:dev/{ui}|AUX1|dev/{ui}|AUX2", f"connect:dev/{ui}|AUX1|mix/stream|L")
+    assert not any(l.endswith("-> ok") for l in out), out
+    assert stack.cli("channel", "inputs", "deck", json_out=True) == [f"{ui}:AUX2>R"]
+    # click on the wires → gone again
+    out = gesture(f"remove:input|deck|{ui}:AUX2>R", f"remove:output|stream|{ui}.out:AUX3>L", "remove:cell|deck|stream")
+    time.sleep(0.6)
+    assert stack.cli("channel", "inputs", "deck", json_out=True) == []
+    assert f"{ui}.out:AUX3>L" not in stack.cli("mix", "outputs", "stream", json_out=True)
+    assert stack.cli("cell", "get", "deck", "stream", json_out=True)["Muted"] is True
+    stack.cli("channel", "remove", "deck"); stack.cli("devices", "virtual", "remove", "gesture_ui24r")

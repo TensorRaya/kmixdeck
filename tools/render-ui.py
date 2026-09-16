@@ -12,7 +12,7 @@ try:
     make_fake_source(s, "fake.mic", "RØDECaster Pro II Secondary")
     make_fake_sink(s, "fake.headphones", "RØDECaster Pro II Speaker")
     # DV-23: the daemon's own virtual multichannel device (Ui24R stand-in, AUX1..AUX8 in and out)
-    ui = s.cli("devices", "virtual", "add", "Soundcraft Ui24R", "--in", "8", "--out", "8").stdout.strip()
+    ui = s.cli("devices", "virtual", "add", "Soundcraft Ui24R", "--in", "32", "--out", "32").stdout.strip()
     s.pw.wait_node(ui); s.pw.wait_node(ui + ".out")
     for _ in range(30):
         if "fake.headphones" in s.cli("devices", json_out=True): break

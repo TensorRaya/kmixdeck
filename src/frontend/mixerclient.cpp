@@ -3,6 +3,7 @@
 #include "mixerclient.h"
 #include <KLocalizedString>
 #include <QDBusInterface>
+#include <QSet>
 #include <QDBusReply>
 #include <QDBusMetaType>
 #include <QDBusVariant>
@@ -277,6 +278,42 @@ void MixerClient::removeChannelInput(const QString &slug, const QString &ref) {
     QDBusInterface(BUS, QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("RemoveInput"), ref);
 }
 
+QString MixerClient::connectJacks(const QString &fromCard0, const QString &fromPos0, const QString &toCard0, const QString &toPos0) {
+    // normalise direction: signal flows source → channel → mix → output; accept the drag either way round
+    auto rank = [](const QString &c) { return c.startsWith(QLatin1String("app/")) || c.startsWith(QLatin1String("dev/")) ? 0 : c.startsWith(QLatin1String("ch/")) ? 1 : c.startsWith(QLatin1String("mix/")) ? 2 : 3; };
+    QString fromCard = fromCard0, fromPos = fromPos0, toCard = toCard0, toPos = toPos0;
+    if (rank(fromCard) > rank(toCard)) { std::swap(fromCard, toCard); std::swap(fromPos, toPos); }
+    if (rank(fromCard) == rank(toCard)) return i18n("Connect a source to a channel, a channel to a mix, or a mix to an output.");
+    const QString fromId = fromCard.section(QLatin1Char('/'), 1), toId = toCard.section(QLatin1Char('/'), 1);
+    if (fromCard.startsWith(QLatin1String("app/")) && toCard.startsWith(QLatin1String("ch/"))) {
+        assignApp(fromId.startsWith(QLatin1Char('/')) ? fromId : QLatin1Char('/') + fromId, {toId}, true); return {};
+    }
+    if (fromCard.startsWith(QLatin1String("dev/")) && toCard.startsWith(QLatin1String("ch/"))) {
+        // one connector → one side of the channel (L or R); the side is where the drag ended
+        addChannelInput(toId, makeDeviceRef(fromId, {fromPos}, toPos == QLatin1String("L") || toPos == QLatin1String("R") ? toPos : QString())); return {};
+    }
+    if (fromCard.startsWith(QLatin1String("ch/")) && toCard.startsWith(QLatin1String("mix/"))) { setCellMuted(fromId, toId, false); return {}; }
+    if (fromCard.startsWith(QLatin1String("mix/")) && toCard.startsWith(QLatin1String("outdev/"))) {
+        QDBusInterface(BUS, QStringLiteral("%1/mix/%2").arg(ROOT, fromId), QStringLiteral("org.kmixdeck1.Mix"), QDBusConnection::sessionBus())
+            .asyncCall(QStringLiteral("AddOutput"), makeDeviceRef(toId, {toPos}, fromPos == QLatin1String("L") || fromPos == QLatin1String("R") ? fromPos : QString()));
+        return {};
+    }
+    if (fromCard.startsWith(QLatin1String("mix/")) && toCard.startsWith(QLatin1String("out/"))) return i18n("The capture device of a mix is always connected.");
+    if (fromCard.startsWith(QLatin1String("dev/")) && toCard.startsWith(QLatin1String("mix/"))) return i18n("A device feeds a channel, not a mix — add a channel first.");
+    return i18n("These two cannot be wired.");
+}
+void MixerClient::removeWire(const QVariantMap &w) {
+    const QString kind = w.value(QStringLiteral("kind")).toString();
+    if (kind == QLatin1String("input")) removeChannelInput(w.value(QStringLiteral("channel")).toString(), w.value(QStringLiteral("ref")).toString());
+    else if (kind == QLatin1String("output")) QDBusInterface(BUS, QStringLiteral("%1/mix/%2").arg(ROOT, w.value(QStringLiteral("mix")).toString()), QStringLiteral("org.kmixdeck1.Mix"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("RemoveOutput"), w.value(QStringLiteral("ref")).toString());
+    else if (kind == QLatin1String("cell")) setCellMuted(w.value(QStringLiteral("channel")).toString(), w.value(QStringLiteral("mix")).toString(), true);
+    else if (kind == QLatin1String("app")) {
+        const QString app = w.value(QStringLiteral("app")).toString(), ch = w.value(QStringLiteral("channel")).toString();
+        QStringList rest = m_apps.value(app).value(QStringLiteral("Channels")).toStringList(); rest.removeAll(ch);
+        assignApp(app, rest, false);
+    }
+}
+
 QVariantMap MixerClient::patchbay() const {
     QVariantList cards, wires;
     auto row = [](const QString &pos, const QString &label, const QString &meterKey, bool jackIn, bool jackOut, const QString &usedBy = QString()) {
@@ -336,19 +373,17 @@ QVariantMap MixerClient::patchbay() const {
                                             {QStringLiteral("ref"), QString()}, {QStringLiteral("kind"), QStringLiteral("cell")}, {QStringLiteral("muted"), muted}, {QStringLiteral("gain"), cellVolume(c, m)}, {QStringLiteral("meterKey"), QStringLiteral("cell/") + c + QLatin1Char('/') + m}, {QStringLiteral("channel"), c}, {QStringLiteral("mix"), m}});
         }
     }
-    // --- column 3: mixes (jacks both sides) and their outputs (jacks left)
+    // --- column 3: mixes (jacks both sides), then ONE card per output device with ALL its connectors (DV-24/26),
+    //     plus one capture card per mix. Wires: mix L/R → device rows.
+    QSet<QString> outDevs;
     for (const QString &m : m_mixOrder) {
         card(QStringLiteral("mix/") + m, QStringLiteral("mix"), mixName(m), mixIcon(m), !mixMuted(m), true,
              {row(QStringLiteral("L"), QStringLiteral("L"), QStringLiteral("mix/") + m, true, true), row(QStringLiteral("R"), QStringLiteral("R"), QStringLiteral("mix/") + m, true, true)});
         for (const QString &ref : mixOutputs(m)) {
             const QString node = refNode(ref); const QStringList pos = refPositions(ref); const QString side = refSide(ref);
             const bool present = m_outputDevices.contains(node);
-            const QString oid = QStringLiteral("out/") + m + QLatin1Char('/') + ref;
-            QVariantList rows;
-            const QVariantList ports = devicePorts(node);
-            if (pos.isEmpty()) rows << row(QStringLiteral("FL"), QStringLiteral("L"), QStringLiteral("out/") + m, true, false) << row(QStringLiteral("FR"), QStringLiteral("R"), QStringLiteral("out/") + m, true, false);
-            else for (const QString &p : pos) { QString l = p; for (const QVariant &pv : ports) if (pv.toMap().value(QStringLiteral("position")) == p) { l = pv.toMap().value(QStringLiteral("label")).toString(); break; } rows << row(p, l, QStringLiteral("out/") + m, true, false); }
-            card(oid, QStringLiteral("output"), deviceDescription(node), node == m_listeningDevice ? QStringLiteral("audio-headphones") : QStringLiteral("audio-speakers"), true, present, rows, node);
+            outDevs.insert(node);
+            const QString oid = QStringLiteral("outdev/") + node;
             auto wire = [&](const QString &fromSide, const QString &toPos) {
                 wires.push_back(QVariantMap{{QStringLiteral("from"), QVariantMap{{QStringLiteral("card"), QStringLiteral("mix/") + m}, {QStringLiteral("pos"), fromSide}}}, {QStringLiteral("to"), QVariantMap{{QStringLiteral("card"), oid}, {QStringLiteral("pos"), toPos}}},
                                             {QStringLiteral("ref"), ref}, {QStringLiteral("kind"), QStringLiteral("output")}, {QStringLiteral("muted"), mixMuted(m) || !present}, {QStringLiteral("meterKey"), QStringLiteral("out/") + m}, {QStringLiteral("mix"), m}});
@@ -358,13 +393,23 @@ QVariantMap MixerClient::patchbay() const {
             else if (!side.isEmpty()) wire(side, pos[0]);
             else { wire(QStringLiteral("L"), pos[0]); wire(QStringLiteral("R"), pos[0]); }   // whole mix folded into one port
         }
-        // the mix's capture device (for OBS) — always there
         const QString cid = QStringLiteral("out/") + m + QStringLiteral("/capture");
         card(cid, QStringLiteral("capture"), i18n("Capture: %1", mixName(m)), QStringLiteral("camera-video"), true, true,
              {row(QStringLiteral("L"), QStringLiteral("L"), QStringLiteral("mix/") + m, true, false), row(QStringLiteral("R"), QStringLiteral("R"), QStringLiteral("mix/") + m, true, false)});
         for (const QString &side : {QStringLiteral("L"), QStringLiteral("R")})
             wires.push_back(QVariantMap{{QStringLiteral("from"), QVariantMap{{QStringLiteral("card"), QStringLiteral("mix/") + m}, {QStringLiteral("pos"), side}}}, {QStringLiteral("to"), QVariantMap{{QStringLiteral("card"), cid}, {QStringLiteral("pos"), side}}},
                                         {QStringLiteral("ref"), QString()}, {QStringLiteral("kind"), QStringLiteral("capture")}, {QStringLiteral("muted"), mixMuted(m)}, {QStringLiteral("meterKey"), QStringLiteral("mix/") + m}, {QStringLiteral("mix"), m}});
+    }
+    // every known output device gets a card (wired or not) — that is the patchbay's point: you see the free jacks
+    for (auto it = m_outputDevices.cbegin(); it != m_outputDevices.cend(); ++it) outDevs.insert(it.key());
+    QStringList outList = outDevs.values(); std::sort(outList.begin(), outList.end(), [this](const QString &a, const QString &b) { return deviceDescription(a).localeAwareCompare(deviceDescription(b)) < 0; });
+    for (const QString &node : outList) {
+        const bool present = m_outputDevices.contains(node);
+        QVariantList rows;
+        const QVariantList ports = devicePorts(node);
+        if (ports.isEmpty()) { rows << row(QStringLiteral("FL"), QStringLiteral("L"), QStringLiteral("dev/") + node, true, false, used.value(node + QStringLiteral("|FL"))) << row(QStringLiteral("FR"), QStringLiteral("R"), QStringLiteral("dev/") + node, true, false, used.value(node + QStringLiteral("|FR"))); }
+        else for (const QVariant &pv : ports) { const auto pm = pv.toMap(); const QString pos = pm.value(QStringLiteral("position")).toString(); rows << row(pos, pm.value(QStringLiteral("label")).toString(), QStringLiteral("dev/") + node, true, false, used.value(node + QLatin1Char('|') + pos)); }
+        card(QStringLiteral("outdev/") + node, QStringLiteral("output"), deviceDescription(node), node == m_listeningDevice ? QStringLiteral("audio-headphones") : QStringLiteral("audio-speakers"), true, present, rows, node);
     }
     return {{QStringLiteral("cards"), cards}, {QStringLiteral("wires"), wires}};
 }

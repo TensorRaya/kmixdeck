@@ -72,6 +72,12 @@ Kirigami.ApplicationWindow {
     function showApps() { root.pageStack.clear(); root.pageStack.push(appsPage) }
     function showRouting() { root.pageStack.clear(); root.pageStack.push(routingPage) }
     function showPatchbay() { root.pageStack.clear(); root.pageStack.push(patchBayPage) }
+    // test hooks for the patchbay gestures (--gesture): same calls the drag / the wire click make
+    function gestureConnect(fc, fp, tc, tp) { return Mixer.connectJacks(fc, fp, tc, tp) }
+    function gestureRemove(kind, owner, ref) {
+        const w = kind === "input" ? { kind: "input", channel: owner, ref: ref } : kind === "output" ? { kind: "output", mix: owner, ref: ref } : kind === "cell" ? { kind: "cell", channel: owner, mix: ref } : { kind: "app", app: owner, channel: ref }
+        Mixer.removeWire(w); return ""
+    }
 
     // Meters cost CPU in the daemon (ADR 0006): only while the window is actually shown.
     onVisibleChanged: Mixer.metersEnabled = visible

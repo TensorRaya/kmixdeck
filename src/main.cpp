@@ -51,13 +51,14 @@ int main(int argc, char *argv[])
     const QCommandLineOption shot(QStringLiteral("screenshot"), QStringLiteral("Render the window to <file>.png and exit (works offscreen)."), QStringLiteral("file"));
     const QCommandLineOption openArg(QStringLiteral("open"), QStringLiteral("With --screenshot: open this dialog first (channel|mix)."), QStringLiteral("what"));
     const QCommandLineOption sizeArg(QStringLiteral("size"), QStringLiteral("With --screenshot: window size WxH (default 1280x760)."), QStringLiteral("wxh"));
-    parser.addOption(selfTest); parser.addOption(shot); parser.addOption(openArg); parser.addOption(sizeArg);
+    const QCommandLineOption gestureArg(QStringLiteral("gesture"), QStringLiteral("Patchbay gesture to perform, then exit (tests)."), QStringLiteral("spec"));
+    parser.addOption(selfTest); parser.addOption(shot); parser.addOption(openArg); parser.addOption(sizeArg); parser.addOption(gestureArg);
     parser.process(app);
     about.processCommandLine(&parser);
 
     // one instance; a second launch raises the window — except for the headless modes, which must run next to a
     // live UI (2026-09-16: --screenshot silently exited 0 because Unique handed the call to the running instance)
-    const bool headless = parser.isSet(selfTest) || parser.isSet(shot);
+    const bool headless = parser.isSet(selfTest) || parser.isSet(shot) || parser.isSet(gestureArg);
     KDBusService service(headless ? KDBusService::Multiple | KDBusService::NoExitOnFailure : KDBusService::Unique);
 
     // One client shared by QML (as the "Mixer" singleton) and by the KDE integration (tray, shortcuts).
@@ -83,7 +84,27 @@ int main(int argc, char *argv[])
         win->resize(1152, 676); win->show();   // laptop size: bindings that only run once items are laid out
         QTimer::singleShot(900, &app, [win] { QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, QStringLiteral("channel"))); });
         QTimer::singleShot(1500, &app, [win] { QMetaObject::invokeMethod(win, "showRouting"); });
-        QTimer::singleShot(2400, &app, [&qmlWarnings] { QCoreApplication::exit(qmlWarnings > 0 ? 2 : 0); });
+        QTimer::singleShot(2100, &app, [win] { QMetaObject::invokeMethod(win, "showPatchbay"); });
+        QTimer::singleShot(3000, &app, [&qmlWarnings] { QCoreApplication::exit(qmlWarnings > 0 ? 2 : 0); });
+    }
+    // --gesture "connect:<fromCard>|<fromPos>|<toCard>|<toPos>" / "remove:<kind>|<channel|mix>|<ref>" — the patchbay's
+    // drag/click, driven from the shell so the integration tests can prove the gestures reach the daemon (DV-24).
+    if (parser.isSet(gestureArg)) {
+        if (engine.rootObjects().isEmpty()) return 1;
+        auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        const QStringList gestures = parser.values(gestureArg);
+        QTimer::singleShot(1200, &app, [win, gestures] {
+            for (const QString &g : gestures) {
+                const QString op = g.section(QLatin1Char(':'), 0, 0), rest = g.section(QLatin1Char(':'), 1);
+                const QStringList a = rest.split(QLatin1Char('|'));
+                QVariant ret;
+                if (op == QLatin1String("connect") && a.size() == 4) QMetaObject::invokeMethod(win, "gestureConnect", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]), Q_ARG(QVariant, a[3]));
+                else if (op == QLatin1String("remove") && a.size() == 3) QMetaObject::invokeMethod(win, "gestureRemove", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]));
+                fprintf(stdout, "gesture %s -> %s\n", qPrintable(g), qPrintable(ret.toString().isEmpty() ? QStringLiteral("ok") : ret.toString()));
+            }
+            fflush(stdout);
+        });
+        QTimer::singleShot(2200, &app, [] { QCoreApplication::exit(0); });
     }
     // --screenshot: the UI as a reviewable artefact without a compositor (docs, PR review, "what does it look like
     // on the laptop" without grabbing 3×4K HDR outputs). Waits for the first frames, optionally opens a dialog.
