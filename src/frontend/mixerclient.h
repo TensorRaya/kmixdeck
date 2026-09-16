@@ -66,6 +66,9 @@ public:
     Q_INVOKABLE void   toggleChannelMute(const QString &slug);
     Q_INVOKABLE bool   channelMuted(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Muted")).toBool(); }
     Q_INVOKABLE void   addChannel(const QString &name);
+    /// CH-13: one picker for every source. kind = "app" (ref = app object path), "device" (ref = input node.name)
+    /// or "" (apps only). Creates the channel, then assigns the app / sets the input on the new channel.
+    Q_INVOKABLE void   addChannelWithSource(const QString &name, const QString &kind, const QString &ref);
     Q_INVOKABLE void   addMix(const QString &name);
     Q_INVOKABLE void   removeChannel(const QString &slug);
     Q_INVOKABLE void   removeMix(const QString &slug);

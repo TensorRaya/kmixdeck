@@ -181,6 +181,17 @@ void MixerClient::callReportingErrors(const QString &method, const QVariant &arg
 }
 void MixerClient::addChannel(const QString &name) { callReportingErrors(QStringLiteral("AddChannel"), name); }
 void MixerClient::addMix(const QString &name)     { callReportingErrors(QStringLiteral("AddMix"), name); }
+void MixerClient::addChannelWithSource(const QString &name, const QString &kind, const QString &ref) {
+    QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
+    auto *w = new QDBusPendingCallWatcher(iface.asyncCall(QStringLiteral("AddChannel"), name), this);
+    connect(w, &QDBusPendingCallWatcher::finished, this, [this, kind, ref](QDBusPendingCallWatcher *w) {
+        QDBusPendingReply<QDBusObjectPath> r = *w; w->deleteLater();
+        if (r.isError()) { qWarning() << "kmixdeck: request refused:" << r.error().message(); Q_EMIT errorOccurred(r.error().message()); return; }
+        const QString path = r.value().path(), slug = path.section(QLatin1Char('/'), -1);
+        if (kind == QLatin1String("app") && !ref.isEmpty()) assignApp(ref, {slug}, false);          // CH-4
+        else if (kind == QLatin1String("device") && !ref.isEmpty()) setChannelDevice(slug, ref);   // DV-9
+    });
+}
 void MixerClient::removeChannel(const QString &slug) { QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("RemoveChannel"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/channel/%2").arg(ROOT, slug)))); }
 void MixerClient::removeMix(const QString &slug)     { QDBusInterface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("RemoveMix"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/mix/%2").arg(ROOT, slug)))); }
 

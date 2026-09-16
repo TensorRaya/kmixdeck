@@ -613,3 +613,28 @@ def test_ux2_listening_device_is_one_truth(stack):
     assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", "ListeningDevice").stdout.strip() == 's "fake.headphones"'
     stack.cli("listen", "none"); stack.cli("mix", "output", "monitor", "none")
     assert stack.cli("listen").stdout.startswith("none")
+
+
+def test_ch13_add_channel_from_source_app_and_device(stack):
+    """CH-13 on the bus: the picker's two paths — AddChannel then App.Assign, AddChannel then Channel.InputDevice —
+    leave the app on the new channel / the input edge on the new channel, both persisted."""
+    p, app = start_fake_app(stack)
+    try:
+        path = stack.cli("channel", "add", "Picked App").stdout.strip()
+        assert path.endswith("/channel/picked_app"), path
+        stack.cli("app", "move", "FakeGame", "picked_app")
+        assert wait_sink(stack, "kmixdeck.channel.picked_app") == "kmixdeck.channel.picked_app"
+        assert next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")["Channels"] == ["picked_app"]
+    finally:
+        p.kill(); p.wait()
+    make_fake_source(stack, "fake.mic", "Fake Mic")
+    for _ in range(30):
+        if "fake.mic" in stack.cli("devices", "in", json_out=True): break
+        time.sleep(0.1)
+    path = stack.cli("channel", "add", "Picked Mic").stdout.strip()
+    stack.cli("channel", "input", "picked_mic", "fake.mic")
+    assert wait_prop(stack, "channel", "picked_mic", "InputDevice", "fake.mic") == "fake.mic"
+    stack.pw.wait_node("kmixdeck.in.picked_mic")
+    layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
+    assert any(i["channel"] == "picked_mic" and i["device"]["node"] == "fake.mic" for i in layout["inputs"]), layout["inputs"]
+    stack.cli("channel", "remove", "picked_app"); stack.cli("channel", "remove", "picked_mic")
