@@ -696,3 +696,26 @@ def test_ux16_meter_ballistics_no_dropouts_hold_and_slow_fall(stack):
     assert len(later) >= 10, later
     slope = (db(later[0][1]) - db(later[-1][1])) / (later[-1][0] - later[0][0])
     assert 12 <= slope <= 30, f"fall rate {slope:.1f} dB/s, expected ≈ 20"
+
+
+def test_ar7_frontend_guide_snippets_run_verbatim(stack):
+    """AR-7: the 5-minute tour in docs/frontend-guide.md is executed line by line against the daemon — the doc
+    can not drift from the bus contract without this going red."""
+    import re
+    from pathlib import Path
+    guide = (Path(__file__).resolve().parents[2] / "docs" / "frontend-guide.md").read_text()
+    block = re.search(r"```sh\n(.*?)```", guide, re.S).group(1)
+    cmds = [l.strip() for l in block.splitlines() if l.strip() and not l.strip().startswith("#") and "monitor" not in l]
+    assert len(cmds) >= 5, cmds
+    import shlex
+    for c in cmds:
+        r = stack.busctl(*shlex.split(c)[1:] if c.startswith("busctl ") else shlex.split(c))
+        assert r.returncode == 0, f"guide snippet failed: {c}\n{r.stderr}"
+        if c.endswith("Cell Volume") and "get-property" in c: assert r.stdout.startswith("d "), r.stdout
+    # the guide's effects are real, not just accepted: fader is 0.25 and muted, mix 'recording' exists
+    assert stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"] == pytest.approx(0.25)
+    assert stack.cli("cell", "get", "game", "stream", json_out=True)["Muted"] is True
+    assert "recording" in [m["Slug"] for m in stack.cli("mix", "list", json_out=True)]
+    # and the "# d 1" comment under the read is the value a fresh cell has (documented output must be true)
+    stack.cli("cell", "set", "game", "stream", "1.0"); stack.cli("cell", "mute", "game", "stream", "off"); stack.cli("mix", "remove", "recording")
+    assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1/cell/game/stream", "org.kmixdeck1.Cell", "Volume").stdout.strip() == "d 1"

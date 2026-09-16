@@ -41,6 +41,7 @@ QQC2.Control {
 
     // header card: darker than the panel, red tint while muted (MX-10); the mix meter is the card's bottom edge
     background: Rectangle {
+        objectName: "mixHeaderBg/" + header.mix     // MX-10 probe
         radius: Kirigami.Units.smallSpacing * 1.5
         color: header.masterMuted ? Kirigami.Theme.negativeBackgroundColor : Qt.darker(Kirigami.Theme.alternateBackgroundColor, 1.25)
         LevelMeter {
@@ -83,6 +84,7 @@ QQC2.Control {
             Layout.preferredWidth: Kirigami.Units.gridUnit * 7
             spacing: 0
             QQC2.Label {
+                objectName: "mixHeaderTitle/" + header.mix   // MX-10 probe
                 Layout.fillWidth: true
                 text: header.masterMuted ? i18nc("@title mix header while muted, %1 mix name", "%1 — muted", Mixer.mixName(header.mix)) : Mixer.mixName(header.mix)
                 color: header.masterMuted ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor

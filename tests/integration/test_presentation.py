@@ -116,3 +116,72 @@ def test_ux9_unknown_slug_is_refused(stack):
 def test_ux9_order_is_in_get_managed_objects(stack):
     r = stack.busctl("call", "org.kmixdeck1", "/org/kmixdeck1", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects")
     assert '"ChannelOrder"' in r.stdout and '"MixOrder"' in r.stdout
+
+
+# ---- UI-side proofs via `kmixdeck-kde --probe` / `--gesture` (VF-2: the picture is a claim until a test reads it)
+import subprocess, os
+from test_service_cli import start_fake_app
+
+
+def kde(stack, *args, open_page=None, timeout=30):
+    b = BIN / "kmixdeck-kde"
+    if not b.exists(): pytest.skip("kmixdeck-kde not built")
+    env = dict(stack.env); env["QT_QPA_PLATFORM"] = "offscreen"
+    cmd = [str(b)] + (["--open", open_page] if open_page else []) + list(args)
+    r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout)
+    return {l.split(" = ", 1)[0].split(" ", 1)[1]: l.split(" = ", 1)[1] for l in r.stdout.splitlines() if l.startswith("probe ")} \
+        if "--probe" in args else [l for l in r.stdout.splitlines() if l.startswith("gesture ")]
+
+
+def test_mx10_muted_mix_header_is_red_and_says_so(stack):
+    """MX-10: a muted mix is unmistakable — the header background takes the negative colour, the title says 'muted'."""
+    stack.cli("mix", "mute", "stream", "off")
+    off = kde(stack, "--probe", "mixHeaderBg/stream.color", "--probe", "mixHeaderTitle/stream.text", "--probe", "mixHeaderBg/monitor.color")
+    stack.cli("mix", "mute", "stream", "on")
+    try:
+        on = kde(stack, "--probe", "mixHeaderBg/stream.color", "--probe", "mixHeaderTitle/stream.text", "--probe", "mixHeaderBg/monitor.color")
+    finally:
+        stack.cli("mix", "mute", "stream", "off")
+    assert off["mixHeaderTitle/stream.text"] == "Stream" and "muted" in on["mixHeaderTitle/stream.text"].lower(), (off, on)
+    assert on["mixHeaderBg/stream.color"] != off["mixHeaderBg/stream.color"], "muted header must change colour"
+    assert on["mixHeaderBg/monitor.color"] == off["mixHeaderBg/monitor.color"], "the OTHER mix must not change"
+    # red-ish: in Breeze light the negative background is a pink/red tint — red channel dominant
+    c = on["mixHeaderBg/stream.color"].lstrip("#"); r, g, b = int(c[-6:-4], 16), int(c[-4:-2], 16), int(c[-2:], 16)
+    assert r > g and r > b, f"muted colour should be red-dominant, got {on['mixHeaderBg/stream.color']}"
+
+
+def test_ux10_app_row_shows_its_icon_and_running_state(stack):
+    """UX-10: the Applications page shows the app's own icon and whether it is playing right now."""
+    p, app = start_fake_app(stack)
+    try:
+        name = app["Name"] if isinstance(app, dict) else "FakeGame"
+        got = kde(stack, "--probe", f"appIcon/{name}.source", "--probe", f"appRunning/{name}.opacity", open_page="apps")
+        assert got.get(f"appIcon/{name}.source") not in (None, "", "<not found: appIcon/%s>" % name), got
+        assert float(got[f"appRunning/{name}.opacity"]) >= 0.5, f"a playing app must not be shown as silent: {got}"
+    finally:
+        p.kill(); p.wait()
+    for _ in range(50):
+        if not any(a.get("Running") for a in stack.cli("app", "list", json_out=True) if a.get("Name") == name): break
+        time.sleep(0.1)
+    got = kde(stack, "--probe", f"appRunning/{name}.opacity", open_page="apps")
+    # after the app is gone the row either disappears (not found) or shows silent (≤ 0.25)
+    v = got.get(f"appRunning/{name}.opacity", "<not found>")
+    assert v.startswith("<not found") or float(v) <= 0.26, got
+
+
+def test_ux11_drop_on_channel_row_assigns_the_app(stack):
+    """UX-11: dropping an app onto a channel row adds that channel (accumulates, CH-12) — driven through the same
+    call the DropArea makes, proven at the daemon."""
+    p, app = start_fake_app(stack)
+    try:
+        path = next(a["Path"] for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")
+        before = next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")["Channels"]
+        out = kde(stack, "--gesture", f"drop:{path}|voice")
+        assert out and out[0].endswith("-> ok"), out
+        for _ in range(50):
+            now = next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")["Channels"]
+            if "voice" in now: break
+            time.sleep(0.1)
+        assert "voice" in now and all(c in now for c in before), f"drop must ADD voice, keep {before}: {now}"
+    finally:
+        p.kill(); p.wait()

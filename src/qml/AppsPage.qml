@@ -37,6 +37,7 @@ Kirigami.ScrollablePage {
 
                 // UX-10: the app's own icon; falls back to the generic one when it sets none
                 Kirigami.Icon {
+                    objectName: "appIcon/" + row.modelData.name      // UX-10 probe
                     source: row.modelData.icon.length > 0 ? row.modelData.icon : "applications-multimedia"
                     Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
                     Layout.preferredHeight: width
@@ -68,6 +69,7 @@ Kirigami.ScrollablePage {
                 // UX-13: the app's own level — "who is talking right now" (running dot stays as the fallback colour)
                 LevelMeter {
                     id: appMeter
+                    objectName: "appRunning/" + row.modelData.name   // UX-10 probe: opacity encodes running/silent
                     horizontal: true
                     Layout.alignment: Qt.AlignVCenter
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 4

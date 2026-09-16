@@ -74,6 +74,34 @@ Kirigami.ApplicationWindow {
     function showPatchbay() { root.pageStack.clear(); root.pageStack.push(patchBayPage) }
     // test hooks for the patchbay gestures (--gesture): same calls the drag / the wire click make
     function gestureConnect(fc, fp, tc, tp) { return Mixer.connectJacks(fc, fp, tc, tp) }
+    // --probe "<objectName>.<property>": read a property of any item by objectName (MX-10/UX-10 proofs)
+    function probe(spec) {
+        const dot = spec.lastIndexOf("."); const name = spec.slice(0, dot), prop = spec.slice(dot + 1)
+        function find(item) {
+            if (!item) return null
+            if (item.objectName === name) return item
+            for (let i = 0; i < (item.children ? item.children.length : 0); ++i) { const r = find(item.children[i]); if (r) return r }
+            if (item.contentItem && item.contentItem !== item) { const r = find(item.contentItem); if (r) return r }
+            if (item.background) { const r = find(item.background); if (r) return r }
+            return null
+        }
+        const it = find(root.contentItem) || find(root.pageStack)
+        if (!it) return "<not found: " + name + ">"
+        const v = it[prop]
+        return v === undefined ? "<no property " + prop + ">" : String(v)
+    }
+    function gestureDrop(appPath, channel) {
+        function find(item) {
+            if (!item) return null
+            if (item.objectName === "channelDrop/" + channel) return item
+            for (let i = 0; i < (item.children ? item.children.length : 0); ++i) { const r = find(item.children[i]); if (r) return r }
+            if (item.contentItem && item.contentItem !== item) { const r = find(item.contentItem); if (r) return r }
+            return null
+        }
+        const d = find(root.contentItem)
+        if (!d) return "<no drop target for " + channel + ">"
+        return d.parent.gestureDrop(appPath)
+    }
     function gestureRemove(kind, owner, ref) {
         const w = kind === "input" ? { kind: "input", channel: owner, ref: ref } : kind === "output" ? { kind: "output", mix: owner, ref: ref } : kind === "cell" ? { kind: "cell", channel: owner, mix: ref } : { kind: "app", app: owner, channel: ref }
         Mixer.removeWire(w); return ""

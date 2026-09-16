@@ -52,13 +52,14 @@ int main(int argc, char *argv[])
     const QCommandLineOption openArg(QStringLiteral("open"), QStringLiteral("With --screenshot: open this dialog first (channel|mix)."), QStringLiteral("what"));
     const QCommandLineOption sizeArg(QStringLiteral("size"), QStringLiteral("With --screenshot: window size WxH (default 1280x760)."), QStringLiteral("wxh"));
     const QCommandLineOption gestureArg(QStringLiteral("gesture"), QStringLiteral("Patchbay gesture to perform, then exit (tests)."), QStringLiteral("spec"));
-    parser.addOption(selfTest); parser.addOption(shot); parser.addOption(openArg); parser.addOption(sizeArg); parser.addOption(gestureArg);
+    const QCommandLineOption probeArg(QStringLiteral("probe"), QStringLiteral("Print <objectName>.<property> of a UI item after --open, then exit (tests)."), QStringLiteral("spec"));
+    parser.addOption(selfTest); parser.addOption(shot); parser.addOption(openArg); parser.addOption(sizeArg); parser.addOption(gestureArg); parser.addOption(probeArg);
     parser.process(app);
     about.processCommandLine(&parser);
 
     // one instance; a second launch raises the window — except for the headless modes, which must run next to a
     // live UI (2026-09-16: --screenshot silently exited 0 because Unique handed the call to the running instance)
-    const bool headless = parser.isSet(selfTest) || parser.isSet(shot) || parser.isSet(gestureArg);
+    const bool headless = parser.isSet(selfTest) || parser.isSet(shot) || parser.isSet(gestureArg) || parser.isSet(probeArg);
     KDBusService service(headless ? KDBusService::Multiple | KDBusService::NoExitOnFailure : KDBusService::Unique);
 
     // One client shared by QML (as the "Mixer" singleton) and by the KDE integration (tray, shortcuts).
@@ -100,11 +101,27 @@ int main(int argc, char *argv[])
                 QVariant ret;
                 if (op == QLatin1String("connect") && a.size() == 4) QMetaObject::invokeMethod(win, "gestureConnect", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]), Q_ARG(QVariant, a[3]));
                 else if (op == QLatin1String("remove") && a.size() == 3) QMetaObject::invokeMethod(win, "gestureRemove", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]));
+                else if (op == QLatin1String("drop") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureDrop", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
                 fprintf(stdout, "gesture %s -> %s\n", qPrintable(g), qPrintable(ret.toString().isEmpty() ? QStringLiteral("ok") : ret.toString()));
             }
             fflush(stdout);
         });
         QTimer::singleShot(2200, &app, [] { QCoreApplication::exit(0); });
+    }
+    if (parser.isSet(probeArg)) {
+        if (engine.rootObjects().isEmpty()) return 1;
+        auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        const QString open = parser.value(openArg); const QStringList probes = parser.values(probeArg);
+        win->resize(1280, 760); win->show();
+        QTimer::singleShot(900, &app, [win, open] {
+            if (open == QLatin1String("apps")) QMetaObject::invokeMethod(win, "showApps");
+            else if (open == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
+            else if (open == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
+        });
+        QTimer::singleShot(1800, &app, [win, probes] {
+            for (const QString &p : probes) { QVariant ret; QMetaObject::invokeMethod(win, "probe", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, p)); fprintf(stdout, "probe %s = %s\n", qPrintable(p), qPrintable(ret.toString())); }
+            fflush(stdout); QCoreApplication::exit(0);
+        });
     }
     // --screenshot: the UI as a reviewable artefact without a compositor (docs, PR review, "what does it look like
     // on the laptop" without grabbing 3×4K HDR outputs). Waits for the first frames, optionally opens a dialog.

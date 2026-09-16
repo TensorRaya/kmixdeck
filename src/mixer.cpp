@@ -693,7 +693,10 @@ bool Mixer::assignApp(uint32_t id, const QStringList &wantedIn, bool cumulative)
     const QString key = appKey(*it);
     if (key.isEmpty()) return false;
     LayoutApp *la = m_layout.app(key);
-    if (cumulative && la) { QStringList merged = la->channels; for (const QString &s : want) if (!merged.contains(s)) merged << s; want = merged; }
+    // addOn merges with what the app is on NOW — its layout entry if it has one, else the channel CH-5 auto-routed
+    // it to (which is in it->channels but not yet in the layout). Before: the first drop onto a second channel
+    // REPLACED the auto-routed one (test_ux11_drop_on_channel_row_assigns_the_app, 2026-09-16).
+    if (cumulative) { QStringList merged = la ? la->channels : it->channels; for (const QString &s : want) if (!merged.contains(s)) merged << s; want = merged; }
     if (want.isEmpty()) {                                   // un-route: back to wherever WirePlumber puts it
         if (la) { removeAppRelays(*la); m_layout.apps.removeIf([&](const LayoutApp &a) { return a.key == key; }); }
         m_graph.clearStreamTarget(id);

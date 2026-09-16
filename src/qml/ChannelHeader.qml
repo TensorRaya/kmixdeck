@@ -39,7 +39,10 @@ Item {
     TapHandler { acceptedButtons: Qt.RightButton; onTapped: ctxMenu.popup() }
 
     // UX-11: drop an application row here to add this channel to its assignment (CH-12 keeps the others)
+    // UX-11 test hook: same call the DropArea makes
+    function gestureDrop(appPath) { Mixer.assignApp(appPath, [header.channel], true); return "" }
     DropArea {
+        objectName: "channelDrop/" + header.channel
         anchors.fill: parent
         keys: ["x-kmixdeck-app"]
         onEntered: header.dropActive = true
