@@ -43,7 +43,9 @@ QQC2.Control {
         LevelMeter {
             id: mixMeter
             horizontal: true
-            anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: 3; rightMargin: 3; bottomMargin: 2 }
+            // inside the card, above the hairline — on the laptop (2026-09-16) the 2 px margin let it read as a stray
+            // bar hanging out of the header
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: Kirigami.Units.largeSpacing; rightMargin: Kirigami.Units.largeSpacing; bottomMargin: 5 }
             height: 3
             // UX-13: what actually leaves towards the device (post master fader/mute) — out/<mix>; falls back to the
             // mix sink while the output edge is not metered yet

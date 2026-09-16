@@ -70,7 +70,7 @@ Kirigami.Dialog {
                     const devs = Mixer.inputDevices
                     if (devs.length === 0) rows.push({ section: "", empty: i18n("No input device found.") })
                     for (const d of devs) rows.push({ kind: "device", ref: d.nodeName, name: d.description, sub: d.nodeName, icon: "audio-input-microphone", nodeId: 0, taken: "" })
-                    rows.push({ section: "", header: true })
+                    rows.push({ section: i18n("Or start empty"), header: true })
                     rows.push({ kind: "", ref: "", name: i18n("Empty channel (apps only)"), sub: i18n("Route applications to it later, by drag & drop or from the Applications page."), icon: "list-add", nodeId: 0, taken: "" })
                     return rows
                 }

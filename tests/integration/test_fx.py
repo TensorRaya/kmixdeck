@@ -139,3 +139,27 @@ def test_fx_changes_the_sound_and_bypass_restores_it():
         play.terminate(); play.wait(timeout=5)
     finally:
         s.close(); pw.close()
+
+
+def test_fx7_chain_copies_between_channels_even_with_absent_device():
+    """FX-7: a chain is plain JSON on the bus — `fx get a` piped into `fx set b` copies it 1:1, also onto a channel
+    whose input device is not plugged in (the chain is layout, the device edge is not)."""
+    pw, s = fixture_stack()
+    try:
+        s.cli("fx", "set", "channel", "voice", CHAIN)
+        src = json.loads(s.cli("fx", "get", "channel", "voice").stdout)
+        from test_service_cli import make_fake_source, destroy_node, wait_prop
+        s.cli("channel", "add", "Absent Mic")
+        make_fake_source(s, "fake.mic7", "Fake Mic 7")
+        assert wait(lambda: "fake.mic7" in s.cli("devices", "in", json_out=True))
+        s.cli("channel", "input", "absent_mic", "fake.mic7")
+        destroy_node(s, "fake.mic7")                                                   # unplug: DV-9 keeps the value
+        assert wait_prop(s, "channel", "absent_mic", "InputPresent", False) is False
+        assert s.cli("fx", "set", "channel", "absent_mic", json.dumps(src)).returncode == 0
+        dst = json.loads(s.cli("fx", "get", "channel", "absent_mic").stdout)
+        assert dst["chain"] == src["chain"] and dst["enabled"] == src["enabled"], (src, dst)
+        assert wait(lambda: any(n and n.startswith("kmixdeck.fx.absent_mic") for n in node_names(s)))
+        s.restart_daemon()
+        assert json.loads(s.cli("fx", "get", "channel", "absent_mic").stdout)["chain"] == src["chain"]
+    finally:
+        s.close(); pw.close()
