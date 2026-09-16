@@ -344,3 +344,28 @@ def test_ch12_multi_assign_relays_only_that_app(stack):
         for p in (a, b):
             if p.poll() is None: p.kill(); p.wait()
         stack.cli("app", "assign", "FakeGame", "none", check=False)
+
+
+def test_ux12_audition_mix_is_audible_and_release_restores(stack, tone):
+    """UX-12 measured at the output, not at a property: holding 'listen' on the Monitor mix must leave the Monitor
+    mix AUDIBLE (bug 2026-09-16: every channel was muted too → silence), the Stream mix silent, and release must
+    bring back exactly the previous state."""
+    settle()
+    assert stack.pw.level_at("kmixdeck.mix.monitor") > HOT and stack.pw.level_at("kmixdeck.mix.stream") > HOT
+    stack.cli("audition", "mix", "monitor"); settle()
+    m, s_ = stack.pw.level_at("kmixdeck.mix.monitor"), stack.pw.level_at("kmixdeck.mix.stream")
+    assert m > HOT, f"auditioned mix went silent: {m:.1f} dBFS"
+    assert s_ < SILENT, f"other mix still audible during audition: {s_:.1f} dBFS"
+    assert stack.pw.level_at("kmixdeck.channel.game") > HOT, "channels must stay untouched when a MIX is auditioned"
+    stack.cli("audition", "none"); settle()
+    assert stack.pw.level_at("kmixdeck.mix.monitor") > HOT and stack.pw.level_at("kmixdeck.mix.stream") > HOT
+
+
+def test_ux12_audition_channel_keeps_mixes_alive(stack, tone):
+    """Auditioning a CHANNEL silences the other channels only; the mixes (and so the headphones) keep playing."""
+    settle()
+    stack.cli("audition", "channel", "game"); settle()
+    assert stack.pw.level_at("kmixdeck.channel.game") > HOT
+    assert stack.pw.level_at("kmixdeck.mix.monitor") > HOT, "mix went silent while auditioning a channel"
+    stack.cli("audition", "none"); settle()
+    assert stack.pw.level_at("kmixdeck.mix.monitor") > HOT

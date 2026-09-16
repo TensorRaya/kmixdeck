@@ -676,6 +676,9 @@ void Mixer::startAudition(const QString &kind, const QString &slug) {
     if (kind != QLatin1String("channel") && kind != QLatin1String("mix")) return;
     const bool isCh = kind == QLatin1String("channel");
     m_audition.kind = kind; m_audition.slug = slug;
+    // Only the entity's OWN tier is soloed. Bug until 2026-09-16: both tiers were silenced against `slug`, so
+    // auditioning a mix muted every channel (a mix of muted channels is silence — "ist alles stumm") and auditioning
+    // a channel muted every mix including the one on the headphones.
     auto snapAndSilence = [&](const QStringList &slugs, QHash<QString, QPair<float, bool>> &saved,
                               QString (*nodeName)(const QString &)) {
         for (const QString &s : slugs) {
@@ -687,8 +690,8 @@ void Mixer::startAudition(const QString &kind, const QString &slug) {
             m_graph.setVolume(it->id, it->volume, it->mute);
         }
     };
-    snapAndSilence(channelSlugs(), m_audition.channels, &Names::channelNode);
-    snapAndSilence(mixSlugs(), m_audition.mixes, &Names::mixNode);
+    if (isCh) snapAndSilence(channelSlugs(), m_audition.channels, &Names::channelNode);
+    else      snapAndSilence(mixSlugs(),     m_audition.mixes,    &Names::mixNode);
     if (isCh) Q_EMIT channelChanged(slug); else Q_EMIT mixChanged(slug);
 }
 void Mixer::stopAudition() {
