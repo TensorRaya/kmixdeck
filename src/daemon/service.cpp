@@ -409,8 +409,11 @@ bool Service::start() {
     m_levelsAdaptor = new LevelsAdaptor(&m_mixer, &m_root);
     m_om = new ObjectManagerAdaptor(&m_root, [this] { return managedObjects(); });
     if (!bus.registerObject(QLatin1String(kRootPath), &m_root, QDBusConnection::ExportAdaptors)) { qCritical() << "registerObject failed" << bus.lastError().message(); return false; }
-    if (!bus.registerService(QLatin1String(kBusName))) { qCritical() << "bus name taken:" << kBusName; return false; }
+    // Export every channel/mix/cell/app object BEFORE claiming the bus name: the name is the "I am ready" signal
+    // clients wait for. With the old order a client could see org.kmixdeck1 up and GetManagedObjects() still
+    // empty — under full-suite load three tests hit exactly that window after a daemon restart (ctest15, 2026-09-16).
     syncObjects();
+    if (!bus.registerService(QLatin1String(kBusName))) { qCritical() << "bus name taken:" << kBusName; return false; }
     return true;
 }
 

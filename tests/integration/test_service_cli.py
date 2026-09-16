@@ -44,7 +44,8 @@ class Stack:
     def restart_daemon(self):
         self.daemon.terminate(); self.daemon.wait(timeout=5)
         self.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        for _ in range(50):
+        # the bus name is claimed only after every object is exported (Service::start), so one green `status` = ready
+        for _ in range(100):
             if self.cli("status", check=False).returncode == 0: break
             time.sleep(0.1)
 
