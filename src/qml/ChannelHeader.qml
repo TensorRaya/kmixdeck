@@ -17,6 +17,7 @@ Item {
     property bool muted: Mixer.channelMuted(channel)
     property bool hasFx: Mixer.fxEnabled("channel", channel)
     property string iconName: Mixer.channelIcon(channel)
+    readonly property bool compact: width < Kirigami.Units.gridUnit * 21   // listen/FX fold into ⋮ (see MixHeader)
     property bool dropActive: false           // UX-11: a drag hovers this row
 
     Connections {
@@ -130,9 +131,12 @@ Item {
             Connections { target: Mixer; function onPeaksChanged() { chMeter.peak = header.muted ? 0 : Mixer.peak("channel/" + header.channel) } }
         }
 
-        // UX-12 listen: hold = only this channel reaches the main output, release restores everything
+        // UX-12 listen: hold = only this channel reaches the main output, release restores everything.
+        // Headphones like in the mix header — it sat next to the mute button with the SAME speaker glyph (laptop
+        // screenshot 2026-09-16: two identical icons, one of them meaning "solo").
         QQC2.ToolButton {
-            icon.name: "audio-volume-high"
+            visible: !header.compact
+            icon.name: "audio-headphones"
             display: QQC2.AbstractButton.IconOnly
             text: i18n("Listen to this channel")
             onPressed: Mixer.audition("channel", header.channel)
@@ -143,6 +147,7 @@ Item {
 
         // effects — highlighted when a chain is active (ADR 0008)
         QQC2.ToolButton {
+            visible: !header.compact || header.hasFx
             icon.name: "view-media-equalizer"
             icon.color: header.hasFx ? Kirigami.Theme.positiveTextColor : undefined
             display: QQC2.AbstractButton.IconOnly
@@ -159,6 +164,7 @@ Item {
         }
     }
 
+    Timer { id: auditionTimer; interval: 3000; onTriggered: Mixer.stopAudition() }
     QQC2.Menu {
         id: ctxMenu
         QQC2.MenuItem { text: i18n("Rename…"); icon.name: "edit-rename"; onTriggered: applicationWindow().renameDialogOpen("channel", header.channel) }
@@ -175,6 +181,11 @@ Item {
         }
         QQC2.MenuItem { text: i18n("Hardware input…"); icon.name: "audio-input-microphone"; onTriggered: inMenu.popup() }
         QQC2.MenuItem { text: i18n("Effects…"); icon.name: "view-media-equalizer"; onTriggered: applicationWindow().fxPanelOpen("channel", header.channel) }
+        QQC2.MenuItem {   // compact fallback for hold-to-listen (UX-12)
+            visible: header.compact
+            text: i18n("Listen for 3 seconds"); icon.name: "audio-headphones"
+            onTriggered: { Mixer.audition("channel", header.channel); auditionTimer.restart() }
+        }
         QQC2.MenuItem {
             text: i18n("New applications start here")
             icon.name: "go-jump"

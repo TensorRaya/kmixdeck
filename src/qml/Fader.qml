@@ -25,10 +25,13 @@ QQC2.Slider {
     background: Item {
         implicitWidth: fader.implicitWidth
         implicitHeight: fader.knobD
-        Rectangle {   // track
+        x: 0; width: fader.width
+        Rectangle {   // track — spans the knob's travel plus half a knob on each side, and STAYS inside the item.
+            // Before 2026-09-16 it was `width: parent.width + knobD`, i.e. it stuck out knobD/2 on both sides and ran
+            // into the neighbouring icon (visible in every mix header and cell row on the laptop).
             id: track
             anchors.verticalCenter: parent.verticalCenter
-            x: fader.leftPadding - fader.knobD / 2; width: parent.width + fader.knobD; height: fader.trackH; radius: height / 2
+            x: 0; width: parent.width; height: fader.trackH; radius: height / 2
             color: Qt.alpha(Kirigami.Theme.textColor, fader.enabled ? 0.18 : 0.08)
             Rectangle {   // gain fill — up to the knob centre
                 width: fader.knobD / 2 + fader.visualPosition * (parent.width - fader.knobD); height: parent.height; radius: height / 2

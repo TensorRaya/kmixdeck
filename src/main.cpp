@@ -49,7 +49,8 @@ int main(int argc, char *argv[])
     const QCommandLineOption selfTest(QStringLiteral("self-test"), QStringLiteral("Load the UI, then exit (used by ctest)."));
     const QCommandLineOption shot(QStringLiteral("screenshot"), QStringLiteral("Render the window to <file>.png and exit (works offscreen)."), QStringLiteral("file"));
     const QCommandLineOption openArg(QStringLiteral("open"), QStringLiteral("With --screenshot: open this dialog first (channel|mix)."), QStringLiteral("what"));
-    parser.addOption(selfTest); parser.addOption(shot); parser.addOption(openArg);
+    const QCommandLineOption sizeArg(QStringLiteral("size"), QStringLiteral("With --screenshot: window size WxH (default 1280x760)."), QStringLiteral("wxh"));
+    parser.addOption(selfTest); parser.addOption(shot); parser.addOption(openArg); parser.addOption(sizeArg);
     parser.process(app);
     about.processCommandLine(&parser);
 
@@ -80,7 +81,8 @@ int main(int argc, char *argv[])
         if (engine.rootObjects().isEmpty()) return 1;
         auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         const QString file = parser.value(shot), open = parser.value(openArg);
-        win->resize(1280, 760); win->show();
+        const QStringList wh = parser.value(sizeArg).split(QLatin1Char('x'));
+        win->resize(wh.size() == 2 ? wh[0].toInt() : 1280, wh.size() == 2 ? wh[1].toInt() : 760); win->show();
         QTimer::singleShot(1200, &app, [win, file, open] {
             if (!open.isEmpty()) QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, open));
             QTimer::singleShot(900, win, [win, file] {
