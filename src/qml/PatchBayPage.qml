@@ -33,8 +33,9 @@ Kirigami.ScrollablePage {
     // jacks stick out half a ring past the card edge → keep that much air on both sides of the graph
     readonly property int jackAir: Kirigami.Units.gridUnit * 0.6
     readonly property int avail: (page.flickable ? page.flickable.width : page.width) - Kirigami.Units.largeSpacing * 2 - jackAir * 2
-    readonly property int colW: Math.max(Kirigami.Units.gridUnit * 10, Math.min(Kirigami.Units.gridUnit * 14, (avail - 2 * Kirigami.Units.gridUnit * 4) / 3))
-    readonly property int edgeW: Math.max(Kirigami.Units.gridUnit * 4, (avail - 3 * colW) / 2)
+    // four columns (Loopback: Sources · Channels · Mixes · Outputs), three wire gaps that take what is left
+    readonly property int colW: Math.max(Kirigami.Units.gridUnit * 9, Math.min(Kirigami.Units.gridUnit * 13, (avail - 3 * Kirigami.Units.gridUnit * 3) / 4))
+    readonly property int edgeW: Math.max(Kirigami.Units.gridUnit * 3, (avail - 4 * colW) / 3)
     readonly property int gap: Kirigami.Units.smallSpacing * 2
 
     property var jackY: ({})      // "<cardId>|<pos>" → y in graph coordinates
@@ -101,7 +102,7 @@ Kirigami.ScrollablePage {
     // the rubber band while dragging a new wire: drawn above everything, in graph coordinates
     Canvas {
         id: rubber
-        parent: graph; anchors.fill: graph; z: 5
+        parent: graphBox; anchors.fill: graphBox; z: 5
         visible: page.dragFrom.length > 0
         onPaint: {
             const ctx = getContext("2d"); ctx.reset(); ctx.clearRect(0, 0, width, height)
@@ -114,23 +115,17 @@ Kirigami.ScrollablePage {
             if (over.length > 0 && over.split("|")[0] !== page.dragFrom.split("|")[0]) { const j = page.jackXY[over]; ctx.beginPath(); ctx.arc(j.x, j.y, Kirigami.Units.gridUnit * 0.6, 0, Math.PI * 2); ctx.lineWidth = 2; ctx.setLineDash([]); ctx.stroke() }
         }
     }
-    RowLayout {
-        id: graph
+    Item {
+        id: graphBox
         visible: page.cards.length > 0
         x: page.jackAir
         width: (page.flickable ? page.flickable.width : page.width) - page.jackAir * 2
+        implicitHeight: graph.implicitHeight
+        height: implicitHeight
+    RowLayout {
+        id: graph
+        width: parent.width
         spacing: 0
-        // pointer tracking for the drag: DragHandler on the jacks would steal the tap; a plain MouseArea under everything works with both
-        MouseArea {
-            id: dragTracker
-            parent: graph; anchors.fill: graph; z: 4
-            enabled: page.dragFrom.length > 0
-            hoverEnabled: enabled
-            cursorShape: Qt.CrossCursor
-            onPositionChanged: mouse => { page.dragPos = Qt.point(mouse.x, mouse.y); rubber.requestPaint() }
-            onReleased: mouse => page.endDrag(mouse.x, mouse.y)
-            onClicked: mouse => page.endDrag(mouse.x, mouse.y)
-        }
 
         // column 1: sources (apps + input devices)
         ColumnLayout {
@@ -187,11 +182,11 @@ Kirigami.ScrollablePage {
             }
         }
 
-        // column 3: outputs (mixes + outputs + capture)
+        // column 3: mixes
         ColumnLayout {
             Layout.preferredWidth: page.colW; Layout.minimumWidth: page.colW; Layout.maximumWidth: page.colW; Layout.alignment: Qt.AlignTop
             spacing: page.gap
-            Kirigami.Heading { level: 4; text: i18n("Outputs"); opacity: 0.7 }
+            Kirigami.Heading { level: 4; text: i18n("Mixes"); opacity: 0.7 }
             Repeater {
                 model: page.cardList("mix")
                 delegate: Card {
@@ -200,6 +195,21 @@ Kirigami.ScrollablePage {
                     onClicked: applicationWindow().showMixer()
                 }
             }
+        }
+        EdgeLayer {
+            Layout.preferredWidth: page.edgeW; Layout.fillHeight: true
+            wires: {
+                const out = []
+                for (const w of page.wires) if ((w.kind === "output" || w.kind === "capture") && w.from.card.startsWith("mix/")) out.push(w)
+                return out
+            }
+        }
+
+        // column 4: outputs (devices with all connectors + capture per mix)
+        ColumnLayout {
+            Layout.preferredWidth: page.colW; Layout.minimumWidth: page.colW; Layout.maximumWidth: page.colW; Layout.alignment: Qt.AlignTop
+            spacing: page.gap
+            Kirigami.Heading { level: 4; text: i18n("Outputs"); opacity: 0.7 }
             Repeater {
                 model: { const out = []; for (const c of page.cards) if (c.kind === "output" || c.kind === "capture") out.push(c); return out }
                 delegate: Card {
@@ -208,6 +218,18 @@ Kirigami.ScrollablePage {
                     onClicked: applicationWindow().showMixer()
                 }
             }
+        }
+    }
+        // pointer tracking for the drag: DragHandler on the jacks would steal the tap; a plain MouseArea under everything works with both
+        MouseArea {
+            id: dragTracker
+            anchors.fill: parent; z: 4
+            enabled: page.dragFrom.length > 0
+            hoverEnabled: enabled
+            cursorShape: Qt.CrossCursor
+            onPositionChanged: mouse => { page.dragPos = Qt.point(mouse.x, mouse.y); rubber.requestPaint() }
+            onReleased: mouse => page.endDrag(mouse.x, mouse.y)
+            onClicked: mouse => page.endDrag(mouse.x, mouse.y)
         }
     }
 
@@ -259,11 +281,11 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     implicitHeight: Kirigami.Units.gridUnit * 1.15
                     function report() {
-                        const y = rowItem.mapToItem(graph, 0, rowItem.height / 2).y
+                        const y = rowItem.mapToItem(graphBox, 0, rowItem.height / 2).y
                         page.jackY[card.info.id + "|" + modelData.pos] = y
                         const key = card.info.id + "|" + modelData.pos
-                        if (modelData.jackIn) page.jackXY[key + "|in"] = { x: rowItem.mapToItem(graph, -Kirigami.Units.smallSpacing * 1.5, 0).x, y: y }
-                        if (modelData.jackOut) page.jackXY[key + "|out"] = { x: rowItem.mapToItem(graph, rowItem.width + Kirigami.Units.smallSpacing * 1.5, 0).x, y: y }
+                        if (modelData.jackIn) page.jackXY[key + "|in"] = { x: rowItem.mapToItem(graphBox, -Kirigami.Units.smallSpacing * 1.5, 0).x, y: y }
+                        if (modelData.jackOut) page.jackXY[key + "|out"] = { x: rowItem.mapToItem(graphBox, rowItem.width + Kirigami.Units.smallSpacing * 1.5, 0).x, y: y }
                         page.geometryChanged()
                     }
                     onYChanged: report(); onWidthChanged: report(); Component.onCompleted: Qt.callLater(report)
@@ -317,9 +339,9 @@ Kirigami.ScrollablePage {
         HoverHandler { id: jh; cursorShape: Qt.CrossCursor }
         MouseArea {   // bigger hit area than the ring itself
             anchors.centerIn: parent; width: parent.width * 2.2; height: width
-            onPressed: mouse => { page.dragFrom = jack.jackKey; const p = mapToItem(graph, mouse.x, mouse.y); page.dragPos = Qt.point(p.x, p.y); rubber.requestPaint() }
-            onPositionChanged: mouse => { if (page.dragFrom.length === 0) return; const p = mapToItem(graph, mouse.x, mouse.y); page.dragPos = Qt.point(p.x, p.y); rubber.requestPaint() }
-            onReleased: mouse => { const p = mapToItem(graph, mouse.x, mouse.y); page.endDrag(p.x, p.y) }
+            onPressed: mouse => { page.dragFrom = jack.jackKey; const p = mapToItem(graphBox, mouse.x, mouse.y); page.dragPos = Qt.point(p.x, p.y); rubber.requestPaint() }
+            onPositionChanged: mouse => { if (page.dragFrom.length === 0) return; const p = mapToItem(graphBox, mouse.x, mouse.y); page.dragPos = Qt.point(p.x, p.y); rubber.requestPaint() }
+            onReleased: mouse => { const p = mapToItem(graphBox, mouse.x, mouse.y); page.endDrag(p.x, p.y) }
         }
     }
 
@@ -343,7 +365,7 @@ Kirigami.ScrollablePage {
 
         onPaint: {
             const ctx = getContext("2d"); ctx.reset(); ctx.clearRect(0, 0, width, height)
-            const off = layer.mapToItem(graph, 0, 0)
+            const off = layer.mapToItem(graphBox, 0, 0)
             const hot = Kirigami.Theme.positiveTextColor
             const idle = Qt.alpha(Kirigami.Theme.textColor, 0.25)
             const off_ = Qt.alpha(Kirigami.Theme.textColor, 0.10)
@@ -363,7 +385,7 @@ Kirigami.ScrollablePage {
         // click on a wire → remove it (input/output wires are removed, cell wires are muted, app wires unassigned).
         // Bezier sampled along x; the closest wire within 8 px wins.
         function wireAt(x, y) {
-            const off = layer.mapToItem(graph, 0, 0)
+            const off = layer.mapToItem(graphBox, 0, 0)
             let best = null, bestD = 8
             for (const w of wires) {
                 if (w.kind === "capture") continue
