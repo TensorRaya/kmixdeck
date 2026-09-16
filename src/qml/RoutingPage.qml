@@ -17,8 +17,10 @@ Kirigami.ScrollablePage {
     readonly property var channels: Mixer.channelSlugs
     readonly property var mixes: Mixer.mixSlugs
     readonly property var apps: Mixer.apps
-    readonly property int colW: Kirigami.Units.gridUnit * 13
-    readonly property int edgeW: Kirigami.Units.gridUnit * 6
+    // four columns + three edge gaps share the width: cols 4×(colW), edges 3×(edgeW), edges get what is left
+    readonly property int avail: (page.flickable ? page.flickable.width : page.width) - Kirigami.Units.largeSpacing * 2
+    readonly property int colW: Math.max(Kirigami.Units.gridUnit * 9, Math.min(Kirigami.Units.gridUnit * 14, (avail - 3 * Kirigami.Units.gridUnit * 4) / 4))
+    readonly property int edgeW: Math.max(Kirigami.Units.gridUnit * 3, (avail - 4 * colW) / 3)
     readonly property int nodeH: Kirigami.Units.gridUnit * 3.2
     readonly property int gap: Kirigami.Units.smallSpacing * 2
 
@@ -49,7 +51,7 @@ Kirigami.ScrollablePage {
 
         // ---------------------------------------------------------------- column 1: sources
         ColumnLayout {
-            Layout.preferredWidth: page.colW; Layout.minimumWidth: page.colW; Layout.alignment: Qt.AlignTop
+            Layout.preferredWidth: page.colW; Layout.minimumWidth: page.colW; Layout.maximumWidth: page.colW; Layout.alignment: Qt.AlignTop
             spacing: page.gap
             Kirigami.Heading { level: 4; text: i18n("Sources"); opacity: 0.7 }
             Repeater {
@@ -83,7 +85,7 @@ Kirigami.ScrollablePage {
 
         // ---------------------------------------------------------------- column 2: channels
         ColumnLayout {
-            Layout.preferredWidth: page.colW; Layout.minimumWidth: page.colW; Layout.alignment: Qt.AlignTop
+            Layout.preferredWidth: page.colW; Layout.minimumWidth: page.colW; Layout.maximumWidth: page.colW; Layout.alignment: Qt.AlignTop
             spacing: page.gap
             Kirigami.Heading { level: 4; text: i18n("Channels"); opacity: 0.7 }
             Repeater {
@@ -102,11 +104,11 @@ Kirigami.ScrollablePage {
             }
         }
 
-        EdgeLayer { Layout.preferredWidth: page.edgeW * 1.4; Layout.fillHeight: true; from: "ch"; to: "mix" }
+        EdgeLayer { Layout.preferredWidth: page.edgeW; Layout.fillHeight: true; from: "ch"; to: "mix" }
 
         // ---------------------------------------------------------------- column 3: mixes
         ColumnLayout {
-            Layout.preferredWidth: page.colW; Layout.minimumWidth: page.colW; Layout.alignment: Qt.AlignTop
+            Layout.preferredWidth: page.colW; Layout.minimumWidth: page.colW; Layout.maximumWidth: page.colW; Layout.alignment: Qt.AlignTop
             spacing: page.gap
             Kirigami.Heading { level: 4; text: i18n("Mixes"); opacity: 0.7 }
             Repeater {
@@ -129,7 +131,7 @@ Kirigami.ScrollablePage {
 
         // ---------------------------------------------------------------- column 4: outputs
         ColumnLayout {
-            Layout.preferredWidth: page.colW; Layout.minimumWidth: page.colW; Layout.alignment: Qt.AlignTop
+            Layout.preferredWidth: page.colW; Layout.minimumWidth: page.colW; Layout.maximumWidth: page.colW; Layout.alignment: Qt.AlignTop
             spacing: page.gap
             Kirigami.Heading { level: 4; text: i18n("Outputs"); opacity: 0.7 }
             Repeater {
