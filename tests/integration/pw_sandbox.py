@@ -106,18 +106,36 @@ class PwDaemon:
         time.sleep(0.5)
         return p
 
+    def _record(self, out: Path, channels: int, links: list[tuple[str, str]], seconds: float, what: str) -> Path:
+        """Start pw-record unconnected, link the given (source_port, record_port) pairs, THEN record `seconds`.
+        No hard `timeout` around pw-record: under load (full ctest run, 2026-09-16) it was killed before the ports
+        were linked and the file stayed empty — six routing tests went red although the audio path was fine."""
+        env = dict(self.env, PW_LATENCY="1024/48000")
+        rec = subprocess.Popen(["pw-record", "-P", "{ node.autoconnect = false }",
+                                "--rate", "48000", "--channels", str(channels), "--format", "s16", str(out)],
+                               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        linked = False
+        for _ in range(80):
+            time.sleep(0.1)
+            ok = 0
+            for src, dst in links:
+                r = subprocess.run(["pw-link", src, dst], env=self.env, capture_output=True, text=True)
+                if r.returncode == 0 or "exists" in (r.stderr + r.stdout): ok += 1
+            if ok == len(links): linked = True; break
+        if not linked:
+            rec.kill(); rec.wait()
+            raise AssertionError(f"could not link pw-record to {what}")
+        time.sleep(seconds)
+        rec.terminate()
+        try: rec.wait(timeout=3)
+        except subprocess.TimeoutExpired: rec.kill(); rec.wait()
+        assert out.exists() and out.stat().st_size > 1000, f"recording from {what} is empty"
+        return out
+
     def record_port(self, node: str, port: str, seconds: float = 1.5) -> Path:
         """Mono recording of ONE output port (`monitor_AUX2` of a sink, `capture_AUX2` of a source)."""
         out = self.runtime_dir / f"rec-{node}-{port}-{time.time_ns()}.wav"
-        env = dict(self.env, PW_LATENCY="1024/48000")
-        rec = subprocess.Popen(["timeout", str(seconds + 1), "pw-record", "-P", "{ node.autoconnect = false }",
-                                "--rate", "48000", "--channels", "1", "--format", "s16", str(out)],
-                               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(0.6)
-        subprocess.run(["pw-link", f"{node}:{port}", "pw-record:input_MONO"], env=self.env, capture_output=True)
-        rec.wait()
-        assert out.exists() and out.stat().st_size > 1000, f"recording from {node}:{port} is empty"
-        return out
+        return self._record(out, 1, [(f"{node}:{port}", "pw-record:input_MONO")], seconds, f"{node}:{port}")
 
     def level_at_port(self, node: str, port: str) -> float:
         return self.rms_db(self.record_port(node, port))
@@ -125,16 +143,7 @@ class PwDaemon:
     def record_monitor(self, sink: str, seconds: float = 1.5) -> Path:
         """Record `sink`'s monitor ports. NOTE: never use `--target`, it may pick the wrong port (see ADR 0002)."""
         out = self.runtime_dir / f"rec-{sink}-{time.time_ns()}.wav"
-        env = dict(self.env, PW_LATENCY="1024/48000")
-        rec = subprocess.Popen(["timeout", str(seconds + 1), "pw-record", "-P", "{ node.autoconnect = false }",
-                                "--rate", "48000", "--channels", "2", "--format", "s16", str(out)],
-                               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(0.6)
-        for ch in ("FL", "FR"):
-            subprocess.run(["pw-link", f"{sink}:monitor_{ch}", f"pw-record:input_{ch}"], env=self.env, capture_output=True)
-        rec.wait()
-        assert out.exists() and out.stat().st_size > 1000, f"recording from {sink} is empty"
-        return out
+        return self._record(out, 2, [(f"{sink}:monitor_{ch}", f"pw-record:input_{ch}") for ch in ("FL", "FR")], seconds, sink)
 
     def level_at(self, sink: str) -> float:
         return self.rms_db(self.record_monitor(sink))
