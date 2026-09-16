@@ -20,7 +20,9 @@
 using InterfaceMap = QMap<QString, QVariantMap>;
 using ManagedObjects = QMap<QDBusObjectPath, InterfaceMap>;
 using StringMap = QMap<QString, QString>;
+using PortMap = QMap<QString, QStringList>;
 Q_DECLARE_METATYPE(StringMap)
+Q_DECLARE_METATYPE(PortMap)
 Q_DECLARE_METATYPE(InterfaceMap)
 Q_DECLARE_METATYPE(ManagedObjects)
 
@@ -146,7 +148,7 @@ public Q_SLOTS:
 
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
-    qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
+    qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<PortMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
     QCommandLineParser p;
     p.setApplicationDescription(QStringLiteral(
         "kmixdeck — control the kmixdeck service (org.kmixdeck1) from the shell.\n\n"
@@ -205,7 +207,51 @@ int main(int argc, char *argv[]) {
         if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
         out << "restored " << what << "\n"; return Ok;
     }
+    // ADR 0009: "node[:POS,POS]" — the daemon logs a refusal but a D-Bus property Set cannot carry an error, so
+    // the CLI checks the reference against Mixer.DevicePorts first and verifies the write by reading back.
+    auto checkRef = [&](const QString &ref, bool source, QString *why) {
+        const QString node = ref.section(QLatin1Char(':'), 0, 0);
+        const StringMap devs = qdbus_cast<StringMap>(o.mixer.value(source ? "InputDevices" : "OutputDevices"));
+        if (!devs.contains(node)) { *why = QStringLiteral("no %1 device '%2' (see `kmixdeck devices%3`)").arg(source ? "input" : "output", node, source ? " in" : ""); return false; }
+        if (!ref.contains(QLatin1Char(':'))) return true;
+        const QStringList want = ref.section(QLatin1Char(':'), 1).split(QLatin1Char(','), Qt::SkipEmptyParts);
+        if (want.isEmpty() || want.size() > 2) { *why = QStringLiteral("a virtual device is mono (1 port) or stereo (2 ports): node:POS or node:POS,POS"); return false; }
+        QStringList have; for (const auto &t : qdbus_cast<PortMap>(o.mixer.value("DevicePorts")).value(node)) have << t.section(QLatin1Char('|'), 0, 0);
+        for (const auto &w : want) if (!have.contains(w)) { *why = QStringLiteral("device '%1' has no port '%2' (see `kmixdeck devices ports %1`)").arg(node, w); return false; }
+        return true;
+    };
     if (cmd == "devices") {
+        if (sub == "ports") {   // devices ports <node> — ADR 0009 D4: what "node:POS,POS" may name, and who uses it
+            if (!need(3)) return Usage;
+            const PortMap pm = qdbus_cast<PortMap>(o.mixer.value("DevicePorts"));
+            if (!pm.contains(a[2])) return fail(NotFound, "no device '" + a[2] + "' (see `kmixdeck devices` / `devices in`)");
+            QHash<QString, QStringList> users;   // position → "channel voice" / "mix stream"
+            for (auto it = o.channels.cbegin(); it != o.channels.cend(); ++it) {
+                const QString ref = unwrap(it.value().value("InputDevice")).toString();
+                if (ref.section(QLatin1Char(':'), 0, 0) != a[2]) continue;
+                const QString posList = ref.section(QLatin1Char(':'), 1);
+                for (const auto &p2 : posList.split(QLatin1Char(','), Qt::SkipEmptyParts)) users[p2] << "channel " + it.key().section(QLatin1Char('/'), -1);
+                if (posList.isEmpty()) users[QStringLiteral("*")] << "channel " + it.key().section(QLatin1Char('/'), -1);
+            }
+            for (auto it = o.mixes.cbegin(); it != o.mixes.cend(); ++it)
+                for (const auto &ref : unwrap(it.value().value("Outputs")).toStringList()) {
+                    if (ref.section(QLatin1Char(':'), 0, 0) != a[2]) continue;
+                    const QString posList = ref.section(QLatin1Char(':'), 1);
+                    for (const auto &p2 : posList.split(QLatin1Char(','), Qt::SkipEmptyParts)) users[p2] << "mix " + it.key().section(QLatin1Char('/'), -1);
+                    if (posList.isEmpty()) users[QStringLiteral("*")] << "mix " + it.key().section(QLatin1Char('/'), -1);
+                }
+            if (g_json) {
+                QJsonArray arr;
+                for (const auto &t : pm.value(a[2])) { const auto f = t.split(QLatin1Char('|')); arr.append(QJsonObject{{"position", f.value(0)}, {"port", f.value(1)}, {"alias", f.value(2)}, {"usedBy", QJsonArray::fromStringList(users.value(f.value(0)) + users.value(QStringLiteral("*")))}}); }
+                out << QJsonDocument(arr).toJson(); return Ok;
+            }
+            for (const auto &t : pm.value(a[2])) {
+                const auto f = t.split(QLatin1Char('|'));
+                const QStringList u = users.value(f.value(0)) + users.value(QStringLiteral("*"));
+                out << QStringLiteral("%1  %2%3\n").arg(f.value(0), -8).arg(f.value(1), -28).arg(u.isEmpty() ? QString() : QStringLiteral("in use by ") + u.join(QStringLiteral(", ")));
+            }
+            return Ok;
+        }
         const StringMap devs = qdbus_cast<StringMap>(o.mixer.value(sub == "in" ? "InputDevices" : "OutputDevices"));
         if (g_json) { QJsonObject j; for (auto it = devs.cbegin(); it != devs.cend(); ++it) j[it.key()] = it.value(); out << QJsonDocument(j).toJson(); return Ok; }
         for (auto it = devs.cbegin(); it != devs.cend(); ++it) out << QStringLiteral("%1  %2\n").arg(it.key(), -48).arg(it.value());
@@ -239,12 +285,14 @@ int main(int argc, char *argv[]) {
         }
         if (sub == "trim" && ch) { if (!need(4)) return Usage; double l; if (!parseLevel(a[3], &l)) return fail(Usage, "bad level"); return setProp(pathOf(a[2]), iface, "Trim", l, &e) ? Ok : fail(Rejected, e); }
         if (sub == "mute" && ch) { bool b; if (!parseBool(a, 3, &b)) return fail(Usage, "on|off"); return setProp(pathOf(a[2]), iface, "Muted", b, &e) ? Ok : fail(Rejected, e); }
-        if (sub == "input" && ch) {   // channel input <slug> <node.name|none>
-            if (!need(4)) return Usage;
+        if (sub == "input" && ch) {   // channel input <slug> [<node[:POS,POS]>|none] — ADR 0009 refs
+            if (a.size() < 4) { const QString ref = unwrap(objs.value(pathOf(a[2])).value("InputDevice")).toString(); if (g_json) out << QJsonDocument(QJsonObject{{"InputDevice", ref}}).toJson(); else out << (ref.isEmpty() ? QStringLiteral("none") : ref) << "\n"; return Ok; }
             const QString dev = a[3] == "none" ? QString() : a[3];
-            const StringMap devs = qdbus_cast<StringMap>(o.mixer.value("InputDevices"));
-            if (!dev.isEmpty() && !devs.contains(dev)) return fail(NotFound, "no input device '" + dev + "' (see `kmixdeck devices in`)");
-            return setProp(pathOf(a[2]), iface, "InputDevice", dev, &e) ? Ok : fail(Rejected, e);
+            if (!dev.isEmpty() && !checkRef(dev, true, &e)) return fail(NotFound, e);
+            if (!setProp(pathOf(a[2]), iface, "InputDevice", dev, &e)) return fail(Rejected, e);
+            QDBusInterface chObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
+            if (chObj.property("InputDevice").toString() != dev) return fail(Rejected, QStringLiteral("daemon refused '%1' (see its log)").arg(a[3]));
+            return Ok;
         }
         if (sub == "volume" && !ch) { if (!need(4)) return Usage; double l; if (!parseLevel(a[3], &l)) return fail(Usage, "bad level"); return setProp(pathOf(a[2]), iface, "Volume", l, &e) ? Ok : fail(Rejected, e); }
         if (sub == "mute" && !ch) { bool b; if (!parseBool(a, 3, &b)) return fail(Usage, "on|off"); return setProp(pathOf(a[2]), iface, "Muted", b, &e) ? Ok : fail(Rejected, e); }
@@ -263,12 +311,19 @@ int main(int argc, char *argv[]) {
             if (!need(4)) return Usage;
             return setProp(pathOf(a[2]), iface, "FallbackOutput", a[3] == "none" ? QString() : a[3], &e) ? Ok : fail(Rejected, e);
         }
-        if (sub == "output" && !ch) {   // mix output <slug> <node.name|none>
+        if (sub == "output" && !ch) {   // mix output <slug> <node[:POS,POS]|none> — ADR 0009 refs
             if (!need(4)) return Usage;
             const QString dev = a[3] == "none" ? QString() : a[3];
-            const StringMap devs = qdbus_cast<StringMap>(o.mixer.value("OutputDevices"));
-            if (!dev.isEmpty() && !devs.contains(dev)) return fail(NotFound, "no output device '" + dev + "' (see `kmixdeck devices`)");
-            return setProp(pathOf(a[2]), iface, "OutputDevice", dev, &e) ? Ok : fail(Rejected, e);
+            if (!dev.isEmpty() && !checkRef(dev, false, &e)) return fail(NotFound, e);
+            if (!setProp(pathOf(a[2]), iface, "OutputDevice", dev, &e)) return fail(Rejected, e);
+            QDBusInterface mxObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
+            if (mxObj.property("OutputDevice").toString() != dev) return fail(Rejected, QStringLiteral("daemon refused '%1' (see its log)").arg(a[3]));
+            return Ok;
+        }
+        if (sub == "get" && !ch) {   // mix get <slug> — all properties (JSON) for scripts/tests
+            QJsonObject j; const auto props = objs.value(pathOf(a[2]));
+            for (auto it = props.cbegin(); it != props.cend(); ++it) j[it.key()] = QJsonValue::fromVariant(unwrap(it.value()));
+            out << QJsonDocument(j).toJson(); return Ok;
         }
         return fail(Usage, "unknown subcommand '" + sub + "'");
     }

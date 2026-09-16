@@ -12,6 +12,7 @@ namespace kmixdeck::daemon {
 
 using InterfaceMap = QMap<QString, QVariantMap>;                 // a{sa{sv}}
 using StringMap = QMap<QString, QString>;                        // a{ss}
+using PortMap = QMap<QString, QStringList>;                      // a{sas} — ADR 0009 D4
 using ManagedObjects = QMap<QDBusObjectPath, InterfaceMap>;      // a{oa{sa{sv}}}
 
 /// org.freedesktop.DBus.ObjectManager on the root object. QtDBus ships no implementation, so this
@@ -39,3 +40,4 @@ private:
 Q_DECLARE_METATYPE(kmixdeck::daemon::InterfaceMap)
 Q_DECLARE_METATYPE(kmixdeck::daemon::ManagedObjects)
 Q_DECLARE_METATYPE(kmixdeck::daemon::StringMap)
+Q_DECLARE_METATYPE(kmixdeck::daemon::PortMap)

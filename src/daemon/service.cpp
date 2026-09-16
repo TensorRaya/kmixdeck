@@ -67,7 +67,7 @@ void ChannelObject::setMuted(bool m) { m_mixer->setChannelMuted(m_slug, m); }
 void ChannelObject::ToggleMute() { m_mixer->setChannelMuted(m_slug, !m_mixer->channelMuted(m_slug)); }
 QString ChannelObject::inputDevice() const { return m_mixer->channelInputDevice(m_slug); }
 void ChannelObject::setInputDevice(const QString &d) {
-    if (!m_mixer->setChannelInputDevice(m_slug, d)) rejectProperty(QStringLiteral("InputDevice"), QStringLiteral("unknown input device (see Mixer.InputDevices)"));
+    if (!m_mixer->setChannelInputDevice(m_slug, d)) rejectProperty(QStringLiteral("InputDevice"), d.isEmpty() ? QStringLiteral("no such channel") : m_mixer->validateDeviceRef(m_mixer->deviceRef(d), true));
 }
 bool ChannelObject::inputPresent() const { return m_mixer->channelInputPresent(m_slug); }
 QString ChannelObject::fxChainJson() const { return QJsonDocument(m_mixer->fxChain(m_slug)).toJson(QJsonDocument::Compact); }
@@ -96,14 +96,17 @@ void MixObject::setName(const QString &n) { m_mixer->renameMix(m_slug, n); }
 QString MixObject::icon() const { return m_mixer->mixIcon(m_slug); }
 void MixObject::setIcon(const QString &i) { m_mixer->setMixIcon(m_slug, i); }
 QString MixObject::outputDevice() const { return m_mixer->mixOutputDevice(m_slug); }
-void MixObject::setOutputDevice(const QString &d) { m_mixer->setMixOutputDevice(m_slug, d); }
+void MixObject::setOutputDevice(const QString &d) {
+    if (!d.isEmpty()) if (const QString err = m_mixer->validateDeviceRef(m_mixer->deviceRef(d), false); !err.isEmpty()) { rejectProperty(QStringLiteral("OutputDevice"), err); return; }
+    m_mixer->setMixOutputDevice(m_slug, d);
+}
 QString MixObject::captureSource() const { return m_mixer->mixCaptureSource(m_slug); }
 bool MixObject::outputPresent() const { return m_mixer->mixOutputPresent(m_slug); }
 double MixObject::volume() const { return m_mixer->mixVolume(m_slug); }
 void MixObject::setVolume(double v) { if (!(v >= 0.0 && v <= 1.0)) { rejectProperty(QStringLiteral("Volume"), QStringLiteral("must be linear 0..1")); return; } m_mixer->setMixVolume(m_slug, v); }
 bool MixObject::muted() const { return m_mixer->mixMuted(m_slug); }
 void MixObject::setMuted(bool m) { m_mixer->setMixMuted(m_slug, m); }
-QStringList MixObject::outputs() const { QStringList l; for (const auto &d : m_mixer->mixOutputs(m_slug)) l << d.node; return l; }
+QStringList MixObject::outputs() const { QStringList l; for (const auto &d : m_mixer->mixOutputs(m_slug)) l << d.ref(); return l; }   // ADR 0009 refs
 QStringList MixObject::outputDescriptions() const { QStringList l; for (const auto &d : m_mixer->mixOutputs(m_slug)) l << (d.description.isEmpty() ? d.node : d.description); return l; }
 QString MixObject::fallbackOutput() const { return m_mixer->mixFallbackOutput(m_slug).node; }
 QString MixObject::fxChainJson() const { return QJsonDocument(m_mixer->fxChain(m_slug)).toJson(QJsonDocument::Compact); }
@@ -121,15 +124,18 @@ bool MixObject::SetFxControl(const QString &control, double value) {
 void MixObject::setFallbackOutput(const QString &n) { m_mixer->setMixFallbackOutput(m_slug, m_mixer->deviceRef(n)); }
 void MixObject::AddOutput(const QString &n) {
     if (n.isEmpty()) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("empty node name")); return; }
+    const DeviceRef ref = m_mixer->deviceRef(n);
+    if (const QString err = m_mixer->validateDeviceRef(ref, false); !err.isEmpty()) { sendErrorReply(QDBusError::InvalidArgs, err); return; }
     auto outs = m_mixer->mixOutputs(m_slug);
-    for (const auto &d : outs) if (d.node == n) return;    // idempotent
-    outs.push_back(m_mixer->deviceRef(n));
+    for (const auto &d : outs) if (d == ref) return;    // idempotent
+    outs.push_back(ref);
     m_mixer->setMixOutputs(m_slug, outs);
 }
 void MixObject::RemoveOutput(const QString &n) {
     auto outs = m_mixer->mixOutputs(m_slug);
     const int before = outs.size();
-    outs.removeIf([&](const DeviceRef &d) { return d.node == n; });
+    const DeviceRef ref = DeviceRef::fromRef(n);
+    outs.removeIf([&](const DeviceRef &d) { return d == ref || (ref.positions.isEmpty() && d.node == ref.node); });
     if (outs.size() == before) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("not an output of this mix")); return; }
     m_mixer->setMixOutputs(m_slug, outs);
 }
@@ -296,6 +302,12 @@ void MixerAdaptor::setDefaultChannel(const QDBusObjectPath &p) {
     else slug = QStringLiteral("?");   // not a channel path → setDefaultChannel() rejects it
     if (!m_mixer->setDefaultChannel(slug)) static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no such channel"));
 }
+PortMap MixerAdaptor::devicePorts() const {   // ADR 0009 D4
+    PortMap m;
+    for (const auto &d : m_mixer->outputDevices()) m.insert(d.node, m_mixer->devicePorts(d.node));
+    for (const auto &d : m_mixer->inputDevices())  m.insert(d.node, m_mixer->devicePorts(d.node));
+    return m;
+}
 StringMap MixerAdaptor::inputDevices() const {
     StringMap m;
     for (const auto &d : m_mixer->inputDevices()) {
@@ -336,6 +348,7 @@ Service::Service(QObject *parent) : QObject(parent) {
     qDBusRegisterMetaType<InterfaceMap>();
     qDBusRegisterMetaType<ManagedObjects>();
     qDBusRegisterMetaType<StringMap>();
+    qDBusRegisterMetaType<PortMap>();
     connect(&m_mixer, &Mixer::layoutChanged, this, &Service::syncObjects);
     connect(&m_mixer, &Mixer::connectedChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("Connected"), m_mixer.connected()}});
@@ -347,7 +360,8 @@ Service::Service(QObject *parent) : QObject(parent) {
         if (auto *o = m_objects.value(channelPath(slug))) emitPropertiesChanged(o->path(), o->interfaceName(), o->properties());
     });
     connect(&m_mixer, &Mixer::outputDevicesChanged, this, [this] {
-        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->outputDevices() : StringMap{})}});
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->outputDevices() : StringMap{})},
+                                                                                                   {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->devicePorts() : PortMap{})}});
     });
     connect(&m_mixer, &Mixer::layoutChanged, this, [this] {   // UX-9: order is part of the layout
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()}});
@@ -415,6 +429,7 @@ ManagedObjects Service::managedObjects() const {
     out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
         {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()},
          {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())},
+         {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor->devicePorts())},
          {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("ListeningDevice"), m_mixer.listeningDevice()}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}, {QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()},
          {QStringLiteral("FxTypes"), m_mixerAdaptor->fxTypes()}, {QStringLiteral("FxPresets"), m_mixerAdaptor->fxPresets()}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)

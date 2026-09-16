@@ -95,6 +95,33 @@ class PwDaemon:
         time.sleep(0.5)
         return p
 
+    # ---- ADR 0009 port-level helpers (fake multichannel devices: a sink's ports are playback_<POS>/monitor_<POS>,
+    # a source's ports are capture_<POS>)
+    def play_into_port(self, node: str, port: str) -> subprocess.Popen:
+        """Left channel of the tone → exactly ONE port (`<node>:<port>`, e.g. fake.ui24r:playback_AUX2)."""
+        p = subprocess.Popen(["pw-play", "-P", "{ node.autoconnect = false }", str(self.tone())],
+                             env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.6)
+        subprocess.run(["pw-link", "pw-play:output_FL", f"{node}:{port}"], env=self.env, capture_output=True)
+        time.sleep(0.5)
+        return p
+
+    def record_port(self, node: str, port: str, seconds: float = 1.5) -> Path:
+        """Mono recording of ONE output port (`monitor_AUX2` of a sink, `capture_AUX2` of a source)."""
+        out = self.runtime_dir / f"rec-{node}-{port}-{time.time_ns()}.wav"
+        env = dict(self.env, PW_LATENCY="1024/48000")
+        rec = subprocess.Popen(["timeout", str(seconds + 1), "pw-record", "-P", "{ node.autoconnect = false }",
+                                "--rate", "48000", "--channels", "1", "--format", "s16", str(out)],
+                               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.6)
+        subprocess.run(["pw-link", f"{node}:{port}", "pw-record:input_MONO"], env=self.env, capture_output=True)
+        rec.wait()
+        assert out.exists() and out.stat().st_size > 1000, f"recording from {node}:{port} is empty"
+        return out
+
+    def level_at_port(self, node: str, port: str) -> float:
+        return self.rms_db(self.record_port(node, port))
+
     def record_monitor(self, sink: str, seconds: float = 1.5) -> Path:
         """Record `sink`'s monitor ports. NOTE: never use `--target`, it may pick the wrong port (see ADR 0002)."""
         out = self.runtime_dir / f"rec-{sink}-{time.time_ns()}.wav"

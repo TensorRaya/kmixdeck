@@ -69,6 +69,33 @@ Kirigami.ApplicationWindow {
     Component.onCompleted: Mixer.metersEnabled = visible
 
     AddDialog { id: addDialog }
+    // ADR 0009 / DV-18: pick a port subset of a multichannel device as a mix output (or a channel input)
+    Kirigami.Dialog {
+        id: portDialog
+        property string kind: "mix"
+        property string slug: ""
+        property string node: ""
+        property string description: ""
+        property string chosen: ""
+        title: kind === "mix" ? i18n("Output ports for %1", Mixer.mixName(slug)) : i18n("Input ports for %1", Mixer.channelName(slug))
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        preferredWidth: Kirigami.Units.gridUnit * 28
+        padding: Kirigami.Units.largeSpacing
+        function openFor(k, s, n, d) { kind = k; slug = s; node = n; description = d; chosen = ""; portPicker.picked = []; portPicker.expanded = true; visible = true }
+        PortPicker {
+            id: portPicker
+            width: parent.width
+            node: portDialog.node
+            description: portDialog.description
+            current: portDialog.chosen
+            onRefChosen: (ref, _name) => portDialog.chosen = ref
+        }
+        onAccepted: {
+            if (chosen.length === 0) return
+            if (kind === "mix") Mixer.toggleMixOutput(slug, chosen); else Mixer.setChannelDevice(slug, chosen)
+        }
+    }
+    function portPickerOpen(kind, slug, node, description) { portDialog.openFor(kind, slug, node, description) }
     Connections { target: Mixer; function onErrorOccurred(message) { root.showPassiveNotification(message, "long") } }
     // CH-9: a removal is never a dead end — the toast carries the way back.
     Connections {
@@ -94,6 +121,8 @@ Kirigami.ApplicationWindow {
         FxPanel {}
     }
     function addDialogOpen(kind) { addDialog.open(kind) }
+    // review hook (--open channel-ports): open the dialog with the first multi-port device expanded and two ports picked
+    function addDialogOpenPorts() { addDialog.open("channel"); addDialog.demoPorts = true }
 
     footer: QQC2.ToolBar {
         visible: !Mixer.serviceAvailable || !Mixer.connected

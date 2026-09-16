@@ -139,7 +139,11 @@ public:
     // One-input-per-channel view for the bus (Channel.InputDevice, CH-3): the input slug IS the channel slug.
     QString channelInputDevice(const QString &channel) const;
     bool    channelInputPresent(const QString &channel) const;
-    bool    setChannelInputDevice(const QString &channel, const QString &nodeName);
+    bool    setChannelInputDevice(const QString &channel, const QString &ref);   // ref = node[:POS,POS] (ADR 0009)
+    /// ADR 0009 D4: non-monitor ports of a device node, as "POSITION|port.name|port.alias" — for pickers.
+    QStringList devicePorts(const QString &nodeName) const;
+    /// Validate a reference against the live device: node known and every position an actual port. Empty = ok.
+    QString validateDeviceRef(const DeviceRef &ref, bool wantSource) const;
     /// false only when an output is configured and its device is currently not in the graph (DV-9).
     bool    mixOutputPresent(const QString &slug) const;
 

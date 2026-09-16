@@ -14,6 +14,7 @@ Kirigami.Dialog {
     // selected source: kind "app" | "device" | "" and its reference (app path / input node.name)
     property string srcKind: ""
     property string srcRef: ""
+    property bool demoPorts: false   // review only: expand the first multi-port device and pick two ports
     title: kind === "channel" ? i18n("Add channel") : i18n("Add mix")
     standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
     preferredWidth: Kirigami.Units.gridUnit * 30
@@ -78,7 +79,20 @@ Kirigami.Dialog {
                     required property var modelData
                     required property int index
                     width: sources.width
-                    sourceComponent: modelData.header ? headerRow : (modelData.empty ? emptyRow : sourceRow)
+                    sourceComponent: modelData.header ? headerRow : (modelData.empty ? emptyRow : (modelData.kind === "device" ? deviceRow : sourceRow))
+                    Component {
+                        id: deviceRow   // ADR 0009 / DV-20: whole device or a port subset
+                        PortPicker {
+                            id: pp
+                            width: sources.width
+                            node: modelData.ref
+                            description: modelData.name
+                            current: dlg.srcKind === "device" ? dlg.srcRef : ""
+                            Component.onCompleted: if (dlg.demoPorts && ports.length > 2) { dlg.demoPorts = false; expanded = true; toggle(ports[1].position); toggle(ports[2].position) }
+                            onRefChosen: (ref, suggestedName) => { dlg.srcKind = "device"; dlg.srcRef = ref
+                                if (nameField.text.trim().length === 0 || nameField.autoNamed) { nameField.text = suggestedName; nameField.autoNamed = true } }
+                        }
+                    }
                     Component {
                         id: headerRow
                         Kirigami.ListSectionHeader { text: modelData.section; width: sources.width; visible: text.length > 0; height: text.length > 0 ? implicitHeight : Kirigami.Units.smallSpacing }

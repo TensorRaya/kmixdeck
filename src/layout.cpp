@@ -125,6 +125,9 @@ bool Layout::save(const QString &path) const {
 }
 
 static QString q(const QString &s) { QString r = s; r.replace(QLatin1Char('\\'), QLatin1String("\\\\")).replace(QLatin1Char('"'), QLatin1String("\\\"")); return QLatin1Char('"') + r + QLatin1Char('"'); }
+// ADR 0009 D2/D3: the device-side stream carries the selected port positions; PipeWire links a stream port to the
+// device port with the same audio.channel, so this alone selects the subset (AUX3 AUX4 → playback_AUX3/_AUX4,
+// first named = the stream's left, second = right; measured 2026-09-16 on a fake 4-port sink).
 static QString pos(const QStringList &p) { return p.isEmpty() ? QStringLiteral("[ FL FR ]") : QStringLiteral("[ ") + p.join(QLatin1Char(' ')) + QStringLiteral(" ]"); }
 
 QString loopbackArgs(const QString &description,
@@ -134,13 +137,18 @@ QString loopbackArgs(const QString &description,
     // Every stream: dont-fallback (never silently the default device — feedback, ADR 0002 trap 3).
     // Device-side streams: linger (wait for an absent device, WirePlumber relinks it — ADR 0007 D3).
     // Cell playbacks: dont-reconnect (a cell must never wander); mix outputs must NOT have it (they follow retargets).
+    // One-port (mono) device on the capture side: the port name (AUX3) is nothing the channel mixer can spread, so
+    // the playback half is declared [MONO] and the far sink's own channelmix puts it on FL and FR (DV-19; with
+    // [FL FR] on that side the tone landed on FL only, measured 2026-09-16).
+    const bool monoIn = capturePositions.size() == 1;
     QString cap = QStringLiteral("capture.props = { node.name = %1 media.name = %1 node.target = %2 audio.position = %3 node.passive = true node.dont-fallback = true %4%5}")
         .arg(q(captureName), q(captureTarget), pos(capturePositions),
              captureIsSink ? QStringLiteral("stream.capture.sink = true node.dont-reconnect = true ") : QString(),
              captureLinger ? QStringLiteral("node.linger = true ") : QString());
     // A virtual source (the mix capture node) has no target at all: it is a device others capture from.
     QString play = QStringLiteral("playback.props = { node.name = %1 media.name = %1 %2audio.position = %3 node.dont-fallback = true %4%5%6}")
-        .arg(q(playbackName), playbackTarget.isEmpty() ? QString() : QStringLiteral("node.target = %1 ").arg(q(playbackTarget)), pos(playbackPositions),
+        .arg(q(playbackName), playbackTarget.isEmpty() ? QString() : QStringLiteral("node.target = %1 ").arg(q(playbackTarget)),
+             monoIn && playbackPositions.isEmpty() ? QStringLiteral("[ MONO ]") : pos(playbackPositions),
              playbackDontReconnect ? QStringLiteral("node.dont-reconnect = true ") : QString(),
              playbackLinger ? QStringLiteral("node.linger = true ") : QString(), playbackExtra);
     return QStringLiteral("{ node.description = %1 %2 %3 }").arg(q(description), cap, play);

@@ -3,11 +3,13 @@
 #include "mixer.h"
 #include <climits>
 #include <algorithm>
+#include <QSet>
 #include <QTimer>
 #include <QFile>
 #include <QRegularExpression>
 #include <QDebug>
 #include <QJsonArray>
+#include <QSet>
 #include <cmath>
 
 namespace kmixdeck {
@@ -356,13 +358,31 @@ QVector<DeviceRef> Mixer::mixOutputs(const QString &slug) const {
 }
 QString Mixer::mixOutputDevice(const QString &slug) const {
     const auto outs = mixOutputs(slug);
-    return outs.isEmpty() ? QString() : outs.first().node;
+    return outs.isEmpty() ? QString() : outs.first().ref();   // ADR 0009: "node" or "node:POS,POS"
 }
-DeviceRef Mixer::deviceRef(const QString &nodeName) const {
-    if (nodeName.isEmpty()) return {};
-    QString desc = nodeName;
-    if (auto d = m_devices.value(nodeName); !d.description.isEmpty()) desc = d.description;
-    return {nodeName, desc, {}};
+DeviceRef Mixer::deviceRef(const QString &refStr) const {
+    if (refStr.isEmpty()) return {};
+    DeviceRef r = DeviceRef::fromRef(refStr);
+    r.description = r.node;
+    if (auto d = m_devices.value(r.node); !d.description.isEmpty()) r.description = d.description;
+    if (!r.positions.isEmpty()) r.description += QStringLiteral(" [%1]").arg(r.positions.join(QLatin1Char('+')));
+    return r;
+}
+QStringList Mixer::devicePorts(const QString &nodeName) const {
+    QStringList out;
+    const auto n = m_graph.node(nodeName); if (!n) return out;
+    for (const auto &p : m_graph.ports(n->id)) out << p.position + QLatin1Char('|') + p.name + QLatin1Char('|') + p.alias;
+    return out;
+}
+QString Mixer::validateDeviceRef(const DeviceRef &ref, bool wantSource) const {
+    if (ref.node.isEmpty()) return {};
+    if (!m_devices.contains(ref.node)) return QStringLiteral("unknown %1 device '%2'").arg(wantSource ? QStringLiteral("input") : QStringLiteral("output"), ref.node);
+    if (ref.positions.isEmpty()) return {};
+    if (ref.positions.size() > 2) return QStringLiteral("a virtual device is mono (1 port) or stereo (2 ports), got %1").arg(ref.positions.size());
+    QSet<QString> have;
+    if (const auto n = m_graph.node(ref.node)) for (const auto &p : m_graph.ports(n->id)) have.insert(p.position);
+    for (const auto &pos : ref.positions) if (!have.contains(pos)) return QStringLiteral("device '%1' has no port '%2' (see `kmixdeck devices ports %1`)").arg(ref.node, pos);
+    return {};
 }
 // Single-output view (Mix.OutputDevice): replaces the FIRST output, keeps the rest (MX-9 frontends and the
 // pre-MX-9 UI must not clobber each other).
@@ -376,6 +396,16 @@ void Mixer::setMixOutputDevice(const QString &slug, const QString &nodeName) {
 bool Mixer::setMixOutputs(const QString &slug, const QVector<DeviceRef> &outputs) {
     auto *m = m_layout.mix(slug);
     if (!m) return false;
+    // ADR 0009 D2: the port subset lives in the edge's audio.position, which a retarget cannot change. An edge whose
+    // positions differ from what is wanted now is destroyed here and rebuilt by ensureEdgeLoopbacks(). Same node,
+    // same positions → keep it (retarget only), so plain device swaps stay glitch-free as before.
+    for (int n = 0; n < std::max(m->outputs.size(), outputs.size()); ++n) {
+        const QStringList before = n < m->outputs.size() ? m->outputs[n].positions : QStringList{};
+        const QStringList after  = n < outputs.size()    ? outputs[n].positions    : QStringList{};
+        if (before == after) continue;
+        const QString out = EdgeNames::outputNode(slug, n);
+        if (auto node = m_graph.node(out)) { m_graph.destroyObject(node->id); m_edges.remove(out); }
+    }
     m->outputs = outputs;
     saveLayout();
     ensureEdgeLoopbacks();
@@ -471,27 +501,27 @@ bool Mixer::inputPresent(const QString &slug) const {
 // ---- one-input-per-channel view (bus: Channel.InputDevice) ----------------------------------------
 QString Mixer::channelInputDevice(const QString &channel) const {
     const auto *in = m_layout.input(channel);
-    return in ? in->device.node : QString();
+    return in ? in->device.ref() : QString();    // ADR 0009: "node" or "node:POS,POS"
 }
 bool Mixer::channelInputPresent(const QString &channel) const {
     return m_layout.input(channel) ? inputPresent(channel) : true;
 }
-bool Mixer::setChannelInputDevice(const QString &channel, const QString &nodeName) {
+bool Mixer::setChannelInputDevice(const QString &channel, const QString &refStr) {
     if (!m_layout.channel(channel)) return false;
-    if (!nodeName.isEmpty() && !m_devices.contains(nodeName)) return false;
+    const DeviceRef d = deviceRef(refStr);
+    if (!refStr.isEmpty() && !validateDeviceRef(d, true).isEmpty()) return false;
     if (auto *in = m_layout.input(channel)) {
-        if (in->device.node == nodeName) return true;
+        if (in->device == d) return true;
         if (auto n = m_graph.node(EdgeNames::inputNode(channel))) m_graph.destroyObject(n->id);   // rebuild with the new target
         m_edges.remove(EdgeNames::inputNode(channel));
-        if (nodeName.isEmpty()) { removeInput(channel); Q_EMIT channelChanged(channel); return true; }
-        DeviceRef d{nodeName, m_devices.value(nodeName).description, {}};
+        if (refStr.isEmpty()) { removeInput(channel); Q_EMIT channelChanged(channel); return true; }
         in->device = d; saveLayout(); ensureEdgeLoopbackForInput(channel);
         Q_EMIT inputChanged(channel); Q_EMIT channelChanged(channel);
         return true;
     }
-    if (nodeName.isEmpty()) return true;
+    if (refStr.isEmpty()) return true;
     LayoutInput in; in.slug = channel; in.name = channelName(channel); in.channel = channel;
-    in.device = {nodeName, m_devices.value(nodeName).description, {}};
+    in.device = d;
     m_layout.inputs.push_back(in);
     saveLayout(); ensureEdgeLoopbackForInput(channel);
     Q_EMIT inputsChanged(); Q_EMIT inputChanged(channel); Q_EMIT channelChanged(channel);
@@ -568,12 +598,12 @@ void Mixer::applyFallbacks() {
 }
 
 QList<Device> Mixer::outputDevices() const { return devicesFor(QLatin1String("Audio/Sink")); }
-QList<Device> Mixer::inputDevices() const  { return devicesFor(QLatin1String("Audio/Source")); }
+QList<Device> Mixer::inputDevices() const  { return devicesFor(QLatin1String("Audio/Source")); }   // prefix match: includes Audio/Source/Virtual
 QList<Device> Mixer::devicesFor(const QString &mediaClass) const {
     QList<Device> out;
     for (auto it = m_devices.cbegin(); it != m_devices.cend(); ++it) {
-        if (it->mediaClass != mediaClass) continue;
-        out.append({it.key(), it->description.isEmpty() ? it.key() : it->description, it->positions, mediaClass == QLatin1String("Audio/Source")});
+        if (!it->mediaClass.startsWith(mediaClass)) continue;   // "Audio/Source" also matches Audio/Source/Virtual
+        out.append({it.key(), it->description.isEmpty() ? it.key() : it->description, it->positions, mediaClass.startsWith(QLatin1String("Audio/Source"))});
     }
     std::sort(out.begin(), out.end(), [](const Device &a, const Device &b) { return a.description.localeAwareCompare(b.description) < 0; });
     return out;
@@ -904,7 +934,7 @@ void Mixer::onNode(const pw::NodeInfo &n) {
             if (n.name == base || n.name.startsWith(base + QLatin1Char('.')) || n.name == EdgeNames::sourceNode(m.slug)) { Q_EMIT mixChanged(m.slug); break; }
         }
     }
-    else if ((n.mediaClass == QLatin1String("Audio/Sink") || n.mediaClass == QLatin1String("Audio/Source")) && !n.name.startsWith(QLatin1String("kmixdeck."))) {
+    else if ((n.mediaClass == QLatin1String("Audio/Sink") || n.mediaClass.startsWith(QLatin1String("Audio/Source"))) && !n.name.startsWith(QLatin1String("kmixdeck."))) {   // Audio/Source/Virtual = e.g. OBS/loopback virtual mics
         const bool wasNew = !m_devices.contains(n.name);
         m_devices[n.name] = n;
         // Remember the human name in the layout, so an unplugged device can still be named (DV-9). Layouts migrated
@@ -950,6 +980,10 @@ void Mixer::onNodeRemoved(uint32_t id) {
     // CH-12 relays follow the app node: gone → tear the relay down (see ensureAppRelays for why a lingering one hurts)
     for (const auto &la : m_layout.apps) if (la.nodeName == name && la.channels.size() > 1) removeAppRelays(la);
     if (m_edges.remove(name)) for (const auto &m : m_mixes) if (name == EdgeNames::outputNode(m.slug, 0) || name == EdgeNames::sourceNode(m.slug)) { Q_EMIT mixChanged(m.slug); break; }
+    // An edge we destroyed on purpose (port subset changed, ADR 0009) is rebuilt as soon as PipeWire confirms it
+    // is gone — destroyObject() is asynchronous, so ensureEdgeLoopbacks() right after it would still see the old node.
+    if (m_connected && name.startsWith(QLatin1String("kmixdeck.out.")) && !name.endsWith(QLatin1String(".in")))
+        QTimer::singleShot(0, this, [this] { ensureEdgeLoopbacks(); applyFallbacks(); });
     if (m_devices.remove(name)) { Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged(); applyFallbacks(); notifyPresence(); }   // DV-9: absence → grey out + park outputs
     bool layout = false;
     if (m_cells.remove(name)) layout = true;

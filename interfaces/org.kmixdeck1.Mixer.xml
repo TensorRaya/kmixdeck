@@ -17,6 +17,10 @@
     <property name="OutputDevices" type="a{ss}" access="read"/>
     <!-- hardware sources a channel may be fed by (ADR 0007): node.name → human description -->
     <property name="InputDevices" type="a{ss}" access="read"/>
+    <!-- ADR 0009 D4: node.name → ordered list of "POSITION|port.name|port.alias" for every non-monitor port of that
+         device (sinks: playback ports, sources: capture ports). A device reference anywhere on this bus is
+         "node" or "node:POS[,POS]" (mono / stereo subset); POS is one of these POSITION values. -->
+    <property name="DevicePorts" type="a{sas}" access="read"/>
     <!-- CH-5: never-seen applications are moved here on first appearance. "/" disables auto-routing. -->
     <property name="DefaultChannel" type="o" access="readwrite"/>
     <!-- UX-2: the device (node.name) the user listens on; "" = not chosen. The mix whose Outputs contain it is

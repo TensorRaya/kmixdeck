@@ -27,7 +27,7 @@ static QVariant unwrap(const QVariant &v) {
 static QVariantMap plain(const QVariantMap &m) { QVariantMap r; for (auto it = m.cbegin(); it != m.cend(); ++it) r[it.key()] = unwrap(it.value()); return r; }
 
 MixerClient::MixerClient(QObject *parent) : QObject(parent) {
-    qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
+    qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<PortMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
     auto bus = QDBusConnection::sessionBus();
     bus.connect(BUS, QString(), QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"), this, SLOT(onPropertiesChanged(QDBusMessage)));
     bus.connect(BUS, ROOT, QStringLiteral("org.freedesktop.DBus.ObjectManager"), QStringLiteral("InterfacesAdded"), this, SLOT(onInterfacesAdded(QDBusObjectPath,InterfaceMap)));
@@ -102,6 +102,12 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
             const StringMap d = qdbus_cast<StringMap>(v);
             for (auto it = d.cbegin(); it != d.cend(); ++it) m_inputDevices.insert(it.key(), it.value());
             Q_EMIT inputDevicesChanged();
+        }
+        if (rawProps.contains(QStringLiteral("DevicePorts"))) {   // ADR 0009 D4
+            QVariant v = rawProps.value(QStringLiteral("DevicePorts"));
+            if (v.userType() == qMetaTypeId<QDBusVariant>()) v = v.value<QDBusVariant>().variant();
+            m_devicePorts = qdbus_cast<PortMap>(v); ++m_devicePortsVersion;
+            Q_EMIT devicePortsChanged();
         }
     } else if (iface == QLatin1String("org.kmixdeck1.Channel") && parts.size() == 2) {
         auto &m = m_channels[parts[1]]; for (auto it = props.cbegin(); it != props.cend(); ++it) m[it.key()] = it.value();
@@ -217,6 +223,38 @@ QVariantList MixerClient::outputDevices() const {
         out.push_back(QVariantMap{{QStringLiteral("nodeName"), it.key()}, {QStringLiteral("description"), it.value()}});
     std::sort(out.begin(), out.end(), [](const QVariant &a, const QVariant &b) { return a.toMap().value(QStringLiteral("description")).toString().localeAwareCompare(b.toMap().value(QStringLiteral("description")).toString()) < 0; });
     return out;
+}
+// ADR 0009 D4 / DV-20: ports of one device, each with who uses it (scanned from the layout the client already has).
+QVariantList MixerClient::devicePorts(const QString &nodeName) const {
+    QVariantList out;
+    QHash<QString, QStringList> users;   // position ("*" = whole device) → "Voice" / "Stream"
+    auto note = [&](const QString &ref, const QString &who) {
+        if (ref.section(QLatin1Char(':'), 0, 0) != nodeName) return;
+        const QString posList = ref.section(QLatin1Char(':'), 1);
+        if (posList.isEmpty()) { users[QStringLiteral("*")] << who; return; }
+        for (const auto &p : posList.split(QLatin1Char(','), Qt::SkipEmptyParts)) users[p] << who;
+    };
+    for (auto it = m_channels.cbegin(); it != m_channels.cend(); ++it) note(it->value(QStringLiteral("InputDevice")).toString(), it->value(QStringLiteral("Name")).toString());
+    for (auto it = m_mixes.cbegin(); it != m_mixes.cend(); ++it) for (const auto &r : it->value(QStringLiteral("Outputs")).toStringList()) note(r, it->value(QStringLiteral("Name")).toString());
+    for (const auto &t : m_devicePorts.value(nodeName)) {
+        const QStringList f = t.split(QLatin1Char('|'));
+        const QString pos = f.value(0);
+        // "Fake Ui24R:capture_AUX2" → keep the part after the colon when the alias only repeats the device name
+        QString label = f.value(2).section(QLatin1Char(':'), -1); if (label.isEmpty() || label == f.value(1)) label = pos;
+        out.push_back(QVariantMap{{QStringLiteral("position"), pos}, {QStringLiteral("port"), f.value(1)}, {QStringLiteral("label"), label},
+                                  {QStringLiteral("usedBy"), users.value(pos) + users.value(QStringLiteral("*"))}});
+    }
+    return out;
+}
+QString MixerClient::deviceRefLabel(const QString &ref) const {
+    if (ref.isEmpty()) return {};
+    const QString node = refNode(ref);
+    QString dev = m_outputDevices.value(node, m_inputDevices.value(node, node));
+    const QStringList pos = refPositions(ref);
+    if (pos.isEmpty()) return dev;
+    QStringList labels;
+    for (const auto &p : pos) { QString l = p; for (const auto &pt : devicePorts(node)) if (pt.toMap().value(QStringLiteral("position")) == p) { l = pt.toMap().value(QStringLiteral("label")).toString(); break; } labels << l; }
+    return dev + QStringLiteral(" · ") + labels.join(QStringLiteral("+"));
 }
 QVariantList MixerClient::inputDevices() const {
     QVariantList out;

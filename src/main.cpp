@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include <QApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlError>
 #include <QTimer>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -65,6 +66,11 @@ int main(int argc, char *argv[])
     kmixdeck::frontend::KdeIntegration kde(client);
 
     QQmlApplicationEngine engine;
+    // --self-test also fails on QML *warnings* (ReferenceError, TypeError, unresolved bindings): the 2026-09-16
+    // `band is not defined` in Fader.qml loaded fine and only broke at runtime — exit 0 would have hidden it.
+    int qmlWarnings = 0;
+    // Only OUR files count (org/kmixdeck/); Kirigami's own binding-loop notices are not ours to fix.
+    QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [&qmlWarnings](const QList<QQmlError> &w) { for (const auto &e : w) { qWarning().noquote() << "QML:" << e.toString(); if (e.url().toString().contains(QLatin1String("/org/kmixdeck/"))) ++qmlWarnings; } });
     engine.rootContext()->setContextObject(new KLocalizedContext(&engine));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.loadFromModule("org.kmixdeck", "Main");
@@ -73,7 +79,11 @@ int main(int argc, char *argv[])
     // (2026-09-16: a duplicate `font` assignment made the UI exit 1 without a message) fails the build, not the user.
     if (parser.isSet(selfTest)) {
         if (engine.rootObjects().isEmpty()) return 1;
-        QTimer::singleShot(1500, &app, [] { QCoreApplication::exit(0); });
+        auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        win->resize(1152, 676); win->show();   // laptop size: bindings that only run once items are laid out
+        QTimer::singleShot(900, &app, [win] { QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, QStringLiteral("channel"))); });
+        QTimer::singleShot(1500, &app, [win] { QMetaObject::invokeMethod(win, "showRouting"); });
+        QTimer::singleShot(2400, &app, [&qmlWarnings] { QCoreApplication::exit(qmlWarnings > 0 ? 2 : 0); });
     }
     // --screenshot: the UI as a reviewable artefact without a compositor (docs, PR review, "what does it look like
     // on the laptop" without grabbing 3×4K HDR outputs). Waits for the first frames, optionally opens a dialog.
@@ -86,6 +96,7 @@ int main(int argc, char *argv[])
         QTimer::singleShot(1200, &app, [win, file, open] {
             if (open == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
             else if (open == QLatin1String("apps")) QMetaObject::invokeMethod(win, "showApps");
+            else if (open == QLatin1String("channel-ports")) QMetaObject::invokeMethod(win, "addDialogOpenPorts");
             else if (!open.isEmpty()) QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, open));
             QTimer::singleShot(900, win, [win, file] {
                 const bool ok = win->grabWindow().save(file);

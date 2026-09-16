@@ -14,7 +14,8 @@
     <property name="NodeName" type="s" access="read"/>
     <!-- false while OutputDevice is set but the device is unplugged; the mix is parked and comes back by itself (DV-9..12) -->
     <property name="OutputPresent" type="b" access="read"/>
-    <!-- MX-9: every hardware output this mix plays to (node.name each). OutputDevice is Outputs[0] for
+    <!-- MX-9: every hardware output this mix plays to — device references "node" or "node:POS[,POS]" (ADR 0009:
+         a port subset of a multichannel device; unnamed ports of that device stay untouched). OutputDevice is Outputs[0] for
          single-output frontends; AddOutput/RemoveOutput edit the list without clobbering the rest. -->
     <property name="Outputs" type="as" access="read"/>
     <!-- parallel to Outputs: last seen node.description, so a frontend can name an unplugged device (DV-9) -->

@@ -39,11 +39,12 @@ QQC2.Slider {
                 opacity: 0.45
             }
             Rectangle {   // live level inside the fill — brighter green, clipped at the knob
+                id: liveFill
                 width: fader.knobD / 2 + Math.min(fader.peakFrac, fader.visualPosition) * (parent.width - fader.knobD); height: parent.height; radius: height / 2
                 // UX-16: same bands + hysteresis as LevelMeter (red only when it really clips the top band)
                 property int band: 0
-                Connections { target: fader; function onPeakDbChanged() { const d = fader.peakDb; if (band === 0 && d > -18) band = d > -6 ? 2 : 1; else if (band === 1) { if (d > -6) band = 2; else if (d < -20) band = 0 } else if (band === 2 && d < -8) band = d < -20 ? 0 : 1 } }
-                color: band === 2 ? Kirigami.Theme.negativeTextColor : band === 1 ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.positiveTextColor
+                Connections { target: fader; function onPeakDbChanged() { const d = fader.peakDb; let b = liveFill.band; if (b === 0 && d > -18) b = d > -6 ? 2 : 1; else if (b === 1) { if (d > -6) b = 2; else if (d < -20) b = 0 } else if (b === 2 && d < -8) b = d < -20 ? 0 : 1; liveFill.band = b } }
+                color: liveFill.band === 2 ? Kirigami.Theme.negativeTextColor : liveFill.band === 1 ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.positiveTextColor
                 visible: fader.enabled
                 Behavior on width { NumberAnimation { duration: 40 } }
             }

@@ -14,6 +14,7 @@
 
 #include <QMetaObject>
 #include <QDebug>
+#include <algorithm>
 #include <mutex>
 #include <optional>
 
@@ -47,6 +48,7 @@ struct Graph::Impl {
     spa_hook coreListener{};
     QHash<uint32_t, NodeProxy *> nodes;           // loop thread only
     struct LinkInfo { uint32_t out = 0, in = 0; };
+    QHash<uint32_t, PortInfo> ports;      // port globals of every mirrored node (DV-13), guarded by snapshotMutex
     QHash<uint32_t, LinkInfo> links;              // loop thread only: link id → (output node, input node)
     QHash<uint32_t, uint32_t> routes;             // guarded by snapshotMutex: stream node → sink node
     mutable std::mutex snapshotMutex;
@@ -164,6 +166,15 @@ struct Graph::Impl {
             if (out && in) { impl->links.insert(id, {out, in}); impl->recomputeRoute(out); }
             return;
         }
+        if (type && strcmp(type, PW_TYPE_INTERFACE_Port) == 0) {   // DV-13: remember every port of an audio node
+            PortInfo pi; pi.id = id; pi.nodeId = prop(props, PW_KEY_NODE_ID).toUInt();
+            pi.name = prop(props, PW_KEY_PORT_NAME); pi.alias = prop(props, PW_KEY_PORT_ALIAS);
+            pi.position = prop(props, PW_KEY_AUDIO_CHANNEL);
+            pi.input = prop(props, PW_KEY_PORT_DIRECTION) == QLatin1String("in");
+            pi.monitor = prop(props, PW_KEY_PORT_MONITOR) == QLatin1String("true");
+            if (pi.nodeId) { std::lock_guard<std::mutex> g(impl->snapshotMutex); impl->ports.insert(id, pi); }
+            return;
+        }
         if (!type || strcmp(type, PW_TYPE_INTERFACE_Node) != 0) return;
         // We only mirror audio nodes.
         const QString mc = prop(props, PW_KEY_MEDIA_CLASS);
@@ -204,6 +215,7 @@ struct Graph::Impl {
         auto *impl = static_cast<Impl *>(data);
         auto it = impl->links.find(id);
         if (it != impl->links.end()) { const uint32_t out = it->out; impl->links.erase(it); impl->recomputeRoute(out); }
+        { std::lock_guard<std::mutex> g(impl->snapshotMutex); impl->ports.remove(id); }
         // nodes are handled by the proxy 'removed' event
     }
     static const pw_registry_events registryEvents;
@@ -288,6 +300,17 @@ QVector<NodeInfo> Graph::nodes() const {
     return out;
 }
 
+QVector<PortInfo> Graph::ports(uint32_t nodeId) const {
+    QVector<PortInfo> out;
+    // Sinks: their playback (input) ports — monitor_* are a mirror, never a device channel. Sources: their capture
+    // (output) ports; on a virtual source (Audio/Source/Virtual, Duplex) those are flagged port.monitor too, and
+    // ARE the device's channels, so the monitor flag only filters on sinks.
+    bool isSink = false;
+    for (const auto &n : nodes()) if (n.id == nodeId) { isSink = n.mediaClass.startsWith(QLatin1String("Audio/Sink")); break; }
+    { std::lock_guard<std::mutex> g(d->snapshotMutex); for (const auto &p : d->ports) if (p.nodeId == nodeId && (isSink ? (p.input && !p.monitor) : !p.input)) out.append(p); }
+    std::sort(out.begin(), out.end(), [](const PortInfo &a, const PortInfo &b) { return a.id < b.id; });
+    return out;
+}
 std::optional<NodeInfo> Graph::node(const QString &name) const {
     std::lock_guard<std::mutex> g(d->snapshotMutex);
     for (const auto &n : d->snapshot) if (n.name == name) return n;

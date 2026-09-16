@@ -23,6 +23,15 @@ struct DeviceRef {
     bool operator==(const DeviceRef &o) const { return node == o.node && positions == o.positions; }
     QJsonObject toJson() const;
     static DeviceRef fromJson(const QJsonObject &o);
+    /// ADR 0009 D1: "node" or "node:POS[,POS]" — the one reference syntax on the bus, in the CLI and in the UI.
+    QString ref() const { return positions.isEmpty() ? node : node + QLatin1Char(':') + positions.join(QLatin1Char(',')); }
+    static DeviceRef fromRef(const QString &ref) {
+        DeviceRef r; const int c = ref.indexOf(QLatin1Char(':'));
+        if (c < 0) { r.node = ref; return r; }
+        r.node = ref.left(c);
+        for (const auto &p : ref.mid(c + 1).split(QLatin1Char(','), Qt::SkipEmptyParts)) r.positions << p.trimmed();
+        return r;
+    }
 };
 
 struct LayoutChannel { QString slug, name, icon; fx::Chain fx; };

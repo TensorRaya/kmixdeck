@@ -101,7 +101,7 @@ QQC2.Control {
                 elide: Text.ElideRight
                 text: {
                     if (header.outputs.length === 0) return i18nc("@label mix is not routed to a hardware output", "Capture only")
-                    const name = header.outputs.length === 1 ? Mixer.deviceDescription(header.outputs[0])
+                    const name = header.outputs.length === 1 ? Mixer.deviceDescription(header.outputs[0])   // handles "node:POS,POS" too
                                : i18ncp("@label number of hardware outputs of a mix", "%1 output", "%1 outputs", header.outputs.length)
                     return header.outputPresent ? name : i18nc("@label %1 device name(s), unplugged", "%1 — unplugged", name)
                 }
@@ -209,9 +209,29 @@ QQC2.Control {
                 onTriggered: Mixer.toggleMixOutput(header.mix, modelData.nodeName)
             }
         }
+        // ADR 0009 / DV-18: a multichannel output (RØDECaster, Ui24R) → submenu "device · ports…" opens the port picker
+        Repeater {
+            model: Mixer.devicePortsVersion, Mixer.outputDevices.filter(d => Mixer.devicePorts(d.nodeName).length > 2)
+            delegate: QQC2.MenuItem {
+                required property var modelData
+                icon.name: "view-list-details"
+                text: i18nc("@item pick single ports of a multichannel output", "%1 · ports…", modelData.description)
+                onTriggered: applicationWindow().portPickerOpen("mix", header.mix, modelData.nodeName, modelData.description)
+            }
+        }
+        // port-subset outputs already configured (shown with their ports, de-selectable)
+        Repeater {
+            model: header.outputs.filter(n => n.indexOf(":") > 0)
+            delegate: QQC2.MenuItem {
+                required property string modelData
+                text: Mixer.deviceRefLabel(modelData)
+                checkable: true; checked: true
+                onTriggered: Mixer.toggleMixOutput(header.mix, modelData)
+            }
+        }
         // configured but unplugged outputs stay visible and de-selectable (DV-9)
         Repeater {
-            model: header.outputs.filter(n => !Mixer.outputDevices.some(d => d.nodeName === n))
+            model: header.outputs.filter(n => n.indexOf(":") < 0 && !Mixer.outputDevices.some(d => d.nodeName === n))
             delegate: QQC2.MenuItem {
                 required property string modelData
                 icon.name: "dialog-warning"

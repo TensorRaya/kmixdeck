@@ -15,7 +15,9 @@
 using InterfaceMap = QMap<QString, QVariantMap>;
 using ManagedObjects = QMap<QDBusObjectPath, InterfaceMap>;
 using StringMap = QMap<QString, QString>;
+using PortMap = QMap<QString, QStringList>;
 Q_DECLARE_METATYPE(StringMap)
+Q_DECLARE_METATYPE(PortMap)
 Q_DECLARE_METATYPE(InterfaceMap)
 Q_DECLARE_METATYPE(ManagedObjects)
 
@@ -30,6 +32,7 @@ class MixerClient : public QObject {
     Q_PROPERTY(QVariantList apps READ apps NOTIFY appsChanged)   // [{path,name,binary,mediaName,channel}] for QML
     Q_PROPERTY(QVariantList outputDevices READ outputDevices NOTIFY outputDevicesChanged)   // [{nodeName, description}]
     Q_PROPERTY(QVariantList inputDevices READ inputDevices NOTIFY inputDevicesChanged)   // hardware sources a channel can be fed by
+    Q_PROPERTY(int devicePortsVersion READ devicePortsVersion NOTIFY devicePortsChanged)   // bump → QML re-asks devicePorts()
     Q_PROPERTY(bool metersEnabled READ metersEnabled WRITE setMetersEnabled NOTIFY metersEnabledChanged)   // Levels.Subscribe while true
     Q_PROPERTY(QString defaultChannel READ defaultChannel WRITE setDefaultChannel NOTIFY defaultChannelChanged)   // CH-5, slug or ""
     Q_PROPERTY(QString listeningDevice READ listeningDevice WRITE setListeningDevice NOTIFY listeningDeviceChanged)   // UX-2, node.name or ""
@@ -75,6 +78,15 @@ public:
     QVariantList apps() const;
     QVariantList outputDevices() const;
     QVariantList inputDevices() const;
+    /// ADR 0009 / DV-20: [{position, port, label, usedBy:[names]}] for one device; empty until the daemon told us.
+    Q_INVOKABLE QVariantList devicePorts(const QString &nodeName) const;
+    int devicePortsVersion() const { return m_devicePortsVersion; }
+    /// Compose/decompose the one reference syntax "node[:POS,POS]" so QML never string-fiddles.
+    Q_INVOKABLE QString makeDeviceRef(const QString &node, const QStringList &positions) const { return positions.isEmpty() ? node : node + QLatin1Char(':') + positions.join(QLatin1Char(',')); }
+    Q_INVOKABLE QString refNode(const QString &ref) const { return ref.section(QLatin1Char(':'), 0, 0); }
+    Q_INVOKABLE QStringList refPositions(const QString &ref) const { return ref.section(QLatin1Char(':'), 1).split(QLatin1Char(','), Qt::SkipEmptyParts); }
+    /// Human label for a ref: "RØDECaster Pro II · Mic 2" / "Ui24R · AUX18+AUX19"
+    Q_INVOKABLE QString deviceRefLabel(const QString &ref) const;
     bool metersEnabled() const { return m_metersEnabled; }
     void setMetersEnabled(bool on);
     /// Last peak (linear 0..1) for "channel/<slug>" or "mix/<slug>"; 0 when unknown.
@@ -99,7 +111,9 @@ public:
     Q_INVOKABLE QString mixFallbackOutput(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("FallbackOutput")).toString(); }
     Q_INVOKABLE void    setMixFallbackOutput(const QString &slug, const QString &node);
     Q_INVOKABLE void    toggleMixOutput(const QString &slug, const QString &node);   // MX-9: add if absent, remove if present
-    Q_INVOKABLE QString deviceDescription(const QString &node) const {
+    Q_INVOKABLE QString deviceDescription(const QString &ref) const {
+        if (ref.contains(QLatin1Char(':'))) return deviceRefLabel(ref);   // ADR 0009 port ref
+        const QString &node = ref;
         if (m_outputDevices.contains(node)) return m_outputDevices.value(node);
         if (m_inputDevices.contains(node)) return m_inputDevices.value(node);
         for (auto it = m_mixes.constBegin(); it != m_mixes.constEnd(); ++it) {   // unplugged: the daemon remembers the name (DV-9)
@@ -140,6 +154,7 @@ Q_SIGNALS:
     void appsChanged();
     void outputDevicesChanged();
     void inputDevicesChanged();
+    void devicePortsChanged();
     void fxTypesReady();
     void metersEnabledChanged();
     void peaksChanged();                                        // once per tick
@@ -164,6 +179,8 @@ private:
     QVariantList m_fxTypes; QVariantMap m_fxPresets;           // FX catalog + presets, read once
     QMap<QString, QVariantMap> m_apps;                          // keyed by object path
     QMap<QString, QString> m_outputDevices, m_inputDevices;    // node.name → description (both directions)
+    PortMap m_devicePorts;                                     // node.name → ["POS|port.name|alias", …] (ADR 0009)
+    int m_devicePortsVersion = 0;
     QString m_defaultChannel, m_undoDescription, m_listeningDevice;
     bool m_metersEnabled = false;
     QHash<QString, double> m_peaks;

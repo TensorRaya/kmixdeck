@@ -11,10 +11,18 @@ pw, s = fixture_stack()
 try:
     make_fake_source(s, "fake.mic", "RØDECaster Pro II Secondary")
     make_fake_sink(s, "fake.headphones", "RØDECaster Pro II Speaker")
+    # ADR 0009: a multichannel source like the Ui24R (ports AUX1..AUX8) so the picker shows a port grid
+    import subprocess
+    subprocess.run(["pw-cli", "create-node", "adapter", '{ factory.name=support.null-audio-sink node.name=fake.ui24r node.description="Soundcraft Ui24R" media.class=Audio/Source/Virtual audio.position=[ AUX1 AUX2 AUX3 AUX4 AUX5 AUX6 AUX7 AUX8 ] object.linger=true }'], env=s.pw.env, capture_output=True)
+    s.pw.wait_node("fake.ui24r")
     for _ in range(30):
         if "fake.headphones" in s.cli("devices", json_out=True): break
         time.sleep(0.1)
     s.cli("mix", "output", "monitor", "fake.headphones"); s.cli("listen", "fake.headphones")
+    for _ in range(30):
+        if "fake.ui24r" in s.cli("devices", "in", json_out=True): break
+        time.sleep(0.1)
+    s.cli("channel", "add", "Talkback"); s.cli("channel", "input", "talkback", "fake.ui24r:AUX7")
     s.cli("channel", "input", "voice", "fake.mic")
     p, app = start_fake_app(s)
     s.cli("app", "move", "FakeGame", "game")

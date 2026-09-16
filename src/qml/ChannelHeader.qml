@@ -96,8 +96,7 @@ Item {
                 elide: Text.ElideRight
                 text: {
                     if (header.inputDevice.length === 0) return i18nc("@label channel has no hardware input, apps only", "Apps only")
-                    const d = Mixer.inputDevices.find(x => x.nodeName === header.inputDevice)
-                    const name = d ? d.description : header.inputDevice
+                    const name = Mixer.deviceRefLabel(header.inputDevice)   // ADR 0009: "Ui24R · AUX7", not "fake.ui24r:AUX7"
                     return header.inputPresent ? name : i18nc("@label %1 device name, device is unplugged", "%1 (unplugged)", name)
                 }
                 TapHandler { onTapped: inMenu.popup() }
@@ -205,6 +204,23 @@ Item {
                 checkable: true; checked: modelData.nodeName === header.inputDevice
                 onTriggered: Mixer.setChannelDevice(header.channel, modelData.nodeName)
             }
+        }
+        // ADR 0009 / DV-17: multichannel inputs (Ui24R, RØDECaster) → pick one or two of their ports
+        Repeater {
+            model: Mixer.devicePortsVersion, Mixer.inputDevices.filter(d => Mixer.devicePorts(d.nodeName).length > 2)
+            delegate: QQC2.MenuItem {
+                required property var modelData
+                icon.name: "view-list-details"
+                text: i18nc("@item pick single ports of a multichannel input", "%1 · ports…", modelData.description)
+                onTriggered: applicationWindow().portPickerOpen("channel", header.channel, modelData.nodeName, modelData.description)
+            }
+        }
+        QQC2.MenuItem {   // current port-subset choice, shown with its ports (ADR 0009)
+            visible: header.inputDevice.indexOf(":") > 0
+            height: visible ? implicitHeight : 0
+            text: Mixer.deviceRefLabel(header.inputDevice)
+            checkable: true; checked: true
+            onTriggered: Mixer.setChannelDevice(header.channel, "")
         }
         QQC2.MenuItem {   // configured but unplugged → stays visible so the user sees the current choice (DV-9)
             visible: !header.inputPresent && header.inputDevice.length > 0

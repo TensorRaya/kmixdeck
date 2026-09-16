@@ -12,8 +12,9 @@
     <property name="Muted" type="b" access="readwrite"/>
     <!-- PipeWire node.name, for tools that want to link things themselves -->
     <property name="NodeName" type="s" access="read"/>
-    <!-- node.name of a hardware source feeding this channel (mic, capture card), or empty (CH-3, ADR 0007).
-         Set to a key of Mixer.InputDevices; unknown names are rejected with InvalidArgs. -->
+    <!-- device reference of a hardware source feeding this channel, or empty (CH-3, ADR 0007/0009):
+         "node" (whole device) or "node:POS[,POS]" (one port = mono, two = stereo, first is left). node is a key of
+         Mixer.InputDevices, POS a position from Mixer.DevicePorts[node]. Bad refs are refused (value unchanged). -->
     <property name="InputDevice" type="s" access="readwrite"/>
     <!-- false while InputDevice is set but the device is unplugged: grey the row out, keep the value (DV-9) -->
     <property name="InputPresent" type="b" access="read"/>

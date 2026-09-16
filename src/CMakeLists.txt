@@ -45,6 +45,7 @@ ecm_add_qml_module(kmixdeck-kde
         qml/AddDialog.qml
         qml/AppsPage.qml
         qml/RoutingPage.qml
+        qml/PortPicker.qml
         qml/MixHeader.qml
         qml/ChannelHeader.qml
         qml/RenameDialog.qml
