@@ -23,7 +23,8 @@ struct Effect {
 struct Chain {
     bool enabled = true;           // FX-5 whole-chain bypass: keep the DSP, route around it
     QVector<Effect> effects;       // ordered, input → output
-    bool isEmpty() const { return effects.isEmpty(); }
+    /// True when the rendered graph would contain at least one node: chain on AND ≥1 effect enabled (FX-5).
+    bool isActive() const { if (!enabled) return false; for (const auto &e : effects) if (e.enabled) return true; return false; }
     QJsonObject toJson() const;
     static Chain fromJson(const QJsonObject &o);
     bool operator==(const Chain &o) const { return toJson() == o.toJson(); }

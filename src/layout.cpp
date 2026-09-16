@@ -17,12 +17,12 @@ QString Layout::defaultPipewireConfPath() { return QStandardPaths::writableLocat
 // Entry point a stream should target: the fx entry when a chain is active, the plain sink otherwise (ADR 0008 D1/D3).
 QString Layout::channelEntry(const QString &slug) const {
     const auto *c = channel(slug);
-    if (c && c->fx.enabled && !c->fx.effects.isEmpty()) return QStringLiteral("kmixdeck.fx.%1").arg(slug);
+    if (c && c->fx.isActive()) return QStringLiteral("kmixdeck.fx.%1").arg(slug);
     return Names::channelNode(slug);
 }
 QString Layout::mixEntry(const QString &slug) const {
     const auto *m = mix(slug);
-    if (m && m->fx.enabled && !m->fx.effects.isEmpty()) return QStringLiteral("kmixdeck.fx.mix.%1").arg(slug);
+    if (m && m->fx.isActive()) return QStringLiteral("kmixdeck.fx.mix.%1").arg(slug);
     return Names::mixNode(slug);
 }
 

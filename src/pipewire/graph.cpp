@@ -316,12 +316,17 @@ void Graph::setControl(uint32_t nodeId, const QString &control, double value) {
         uint8_t buffer[1024];
         spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
         const QByteArray key = control.toUtf8();
-        // filter-chain maps every filter.graph control into Props as "<node>:<Control>" — measured: setting
-        // "gate:Threshold (dB)" via Props silences the node live (rc 0, RMS follows the threshold).
-        const spa_pod *param = static_cast<const spa_pod *>(spa_pod_builder_add_object(&b,
-            SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
-            key.constData(), SPA_POD_Double(value),
-            nullptr));
+        // filter-chain exposes its controls as Props.params = [ "<node>:<Control>" <value> … ] — the same shape
+        // `pw-cli set-param <id> Props '{ params = [ "gate:Threshold (dB)" 0 ] }'` sends. The previous version passed
+        // the key string where add_object() expects a uint32 prop id: rc 0, value never changed (ADR 0008 §Open).
+        spa_pod_frame f[2];
+        spa_pod_builder_push_object(&b, &f[0], SPA_TYPE_OBJECT_Props, SPA_PARAM_Props);
+        spa_pod_builder_prop(&b, SPA_PROP_params, 0);
+        spa_pod_builder_push_struct(&b, &f[1]);
+        spa_pod_builder_string(&b, key.constData());
+        spa_pod_builder_float(&b, static_cast<float>(value));
+        spa_pod_builder_pop(&b, &f[1]);
+        const spa_pod *param = static_cast<const spa_pod *>(spa_pod_builder_pop(&b, &f[0]));
         pw_node_set_param(reinterpret_cast<pw_node *>(it.value()->proxy), SPA_PARAM_Props, 0, param);
     }
     pw_thread_loop_unlock(d->loop);

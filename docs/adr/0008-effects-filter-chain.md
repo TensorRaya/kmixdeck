@@ -94,11 +94,21 @@ limiter holds; per-effect bypass and chain bypass restore the reference within 1
 apps and the hardware input follow the entry point; survives daemon restart; a mix
 chain acts on the mix sink.
 
-## Open (2026-09-15)
+## Resolved (2026-09-16)
 
-Measured so far: `SetFx` renders the chain, the filter-chain node appears (`kmixdeck.fx.<slug>`), `pw-dump` shows the
-controls under `params` as `"<slug><prefix>:<Label>"` (e.g. `gamegate:Threshold (dB)`), and `SetFxControl` resolves
-the key and returns success. But the value read back stays `0.0` after the set, and the acoustic tests (gate closes,
-bypass restores) do not see a change. Suspect: `Graph::setControl` builds a `Props` param with the key as a string
-property, while filter-chain expects the controls inside the nested `params` array of `Props` (as pw-dump shows them).
-Next: build the pod as `SPA_PROP_params` → `[ "<key>", <float> ]` and re-measure; until then the two tests are `xfail`.
+Three separate causes, found by differential measurement (probe scripts against the private PipeWire sandbox):
+
+1. **Pod shape.** `Graph::setControl` passed the control key as a string where `spa_pod_builder_add_object` expects
+   a uint32 prop id — rc 0, nothing applied. filter-chain reads controls from `Props.params = [ "<node>:<Label>" <float> ]`
+   (the shape `pw-cli set-param <id> Props '{ params = [ … ] }'` sends). Built by hand with push_object/prop/push_struct.
+2. **Stream loss on chain swap.** `applyFx` destroyed the old filter-chain before remembering which streams sat on it;
+   with `node.dont-fallback` they went unlinked and nothing moved them onto the new node. Streams are captured first,
+   then retargeted once the new entry node appears (`retargetWhenPresent`).
+3. **CH-5 fought the chain.** `slugForSinkId` did not know `kmixdeck.fx.<slug>` is a channel, so a stream aimed at the
+   fx entry counted as "nowhere" and auto-route dragged it onto the default channel. The fx entry now maps to its slug.
+
+Also: `Chain::isActive()` (chain on AND ≥1 effect enabled) replaces `enabled && !effects.isEmpty()` everywhere — a chain
+whose only effect is bypassed renders no module, so `channelEntry` must point at the plain sink.
+`reconcile()` no longer rebuilds an existing chain (the 400 ms start-up reconcile used to re-create it after a SetFx).
+
+Tests: `test_fx.py` 4/4, no xfail — gate at −40 passes the −24 dBFS tone, live threshold 0 → −inf, bypass restores.

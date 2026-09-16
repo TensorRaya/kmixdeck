@@ -220,6 +220,7 @@ private:
     void ensureEdgeLoopbacks();
     void ensureEdgeLoopbackForInput(const QString &slug);
     void ensureAppRelays(const LayoutApp &a);            // CH-12: relay loopbacks for extra channels
+    void retargetWhenPresent(const QString &entry, const QList<uint32_t> &streams, int triesLeft);   // FX-5: after a chain swap
     void removeAppRelays(const LayoutApp &a);
     void notifyPresence();
     void snapshotForUndo(const QString &kind, const QString &slug);

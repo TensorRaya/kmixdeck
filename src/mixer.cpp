@@ -91,9 +91,11 @@ void Mixer::reconcile() {
             const int ia = want.indexOf(a.slug), ib = want.indexOf(b.slug);
             return (ia < 0 ? INT_MAX : ia) < (ib < 0 ? INT_MAX : ib); });
     }
-    // chains on top of the sinks (ADR 0008): cheap, idempotent, and the fragment renders the same shape
-    for (const auto &c : m_layout.channels) if (!c.fx.effects.isEmpty() && c.fx.enabled) applyFx(c.slug);
-    for (const auto &m : m_layout.mixes)     if (!m.fx.effects.isEmpty() && m.fx.enabled) applyFx(m.slug);
+    // chains on top of the sinks (ADR 0008): only when the entry node is missing — applyFx() tears down and rebuilds,
+    // which would drop every stream on the chain for a moment (and broke the "live control keeps the node" test
+    // when the 400 ms start-up reconcile ran after a SetFx).
+    for (const auto &c : m_layout.channels) if (c.fx.isActive() && !m_graph.node(QStringLiteral("kmixdeck.fx.%1").arg(c.slug))) applyFx(c.slug);
+    for (const auto &m : m_layout.mixes)     if (m.fx.isActive() && !m_graph.node(QStringLiteral("kmixdeck.fx.mix.%1").arg(m.slug))) applyFx(m.slug);
     for (const auto &c : m_layout.channels)
         for (const auto &m : m_layout.mixes) {
             const QString cell = Names::cellNode(c.slug, m.slug);
@@ -133,8 +135,8 @@ fx::Chain *chainOf(Layout &l, const QString &slug) {
 } // namespace
 
 QJsonObject Mixer::fxChain(const QString &slug) const {
-    if (const auto *c = m_layout.channel(slug)) return c->fx.enabled && !c->fx.effects.isEmpty() ? c->fx.toJson() : QJsonObject{};
-    if (const auto *m = m_layout.mix(slug))     return m->fx.enabled && !m->fx.effects.isEmpty() ? m->fx.toJson() : QJsonObject{};
+    if (const auto *c = m_layout.channel(slug)) return c->fx.isActive() ? c->fx.toJson() : QJsonObject{};
+    if (const auto *m = m_layout.mix(slug))     return m->fx.isActive() ? m->fx.toJson() : QJsonObject{};
     return {};
 }
 
@@ -205,16 +207,24 @@ void Mixer::applyFx(const QString &slug) {
     else if (const auto *m = m_layout.mix(slug)) { chain = m->fx; desc = QStringLiteral("Mix: ") + m->name; plainName = Names::mixNode(slug); entry = QStringLiteral("kmixdeck.fx.mix.%1").arg(slug); exit = entry + QStringLiteral(".out"); }
     else return;
 
+    // Streams currently on the entry (fx node) or the plain sink: remembered BEFORE the old chain goes away — with
+    // node.dont-fallback a stream whose sink vanishes ends up unlinked, and nothing would find it afterwards.
+    // (Measured 2026-09-16: SetFx while playing → −inf on the mix until the app reconnected.) FX-5.
+    QList<uint32_t> streams;
+    {
+        const auto e = m_graph.node(entry); const auto p = m_graph.node(plainName);
+        for (const auto &n : m_graph.nodes()) {
+            if (!n.mediaClass.contains(QLatin1String("Stream/Output")) || n.name.startsWith(QLatin1String("kmixdeck."))) continue;
+            const uint32_t sink = m_graph.streamSink(n.id);
+            if ((e && sink == e->id) || (p && sink == p->id)) streams << n.id;
+        }
+    }
     // drop the old chain: everything with this entry prefix (never the plain sink, cells or edges)
     destroyOurNodes([&](const QString &n) { return n == entry || n.startsWith(entry + QLatin1Char('.')) || n.startsWith(entry); });
 
-    if (!chain.enabled || chain.effects.isEmpty()) {   // bypass / cleared → plain sink again; move streams back
+    if (!chain.isActive()) {   // bypass / cleared → plain sink again; move streams back
         if (!m_graph.node(plainName)) m_graph.createNullSink(plainName, desc, !slug.isEmpty());
-        const auto e = m_graph.node(entry);
-        const auto p = m_graph.node(plainName);
-        if (e && p)
-            for (const auto &n : m_graph.nodes())
-                if (n.mediaClass.contains(QLatin1String("Stream")) && m_graph.streamSink(n.id) == e->id) m_graph.moveStream(n.id, plainName);
+        for (uint32_t id : streams) m_graph.moveStream(id, plainName);
         return;
     }
     if (!m_graph.node(plainName)) m_graph.createNullSink(plainName, desc, true);   // tail for the chain
@@ -222,14 +232,14 @@ void Mixer::applyFx(const QString &slug) {
     qInfo() << "fx: rendered" << args.length() << "chars";
     if (args.isEmpty()) return;
     m_graph.loadLoopback(args, "libpipewire-module-filter-chain");
-    // streams already sitting on the plain sink move onto the fx entry (queued: the module appears next tick)
-    QTimer::singleShot(0, this, [this, slug, plainName, entry] {
-        const auto e = m_graph.node(entry);
-        const auto p = m_graph.node(plainName);
-        if (!e || !p) return;
-        for (const auto &n : m_graph.nodes())
-            if (n.mediaClass.contains(QLatin1String("Stream")) && m_graph.streamSink(n.id) == p->id) m_graph.moveStream(n.id, entry);
-    });
+    // the module's node appears asynchronously — retarget the remembered streams once it is there
+    retargetWhenPresent(entry, streams, 40);
+}
+// Poll (registry events are what fill m_graph) until `entry` exists, then move the streams onto it.
+void Mixer::retargetWhenPresent(const QString &entry, const QList<uint32_t> &streams, int triesLeft) {
+    if (streams.isEmpty() || triesLeft <= 0) return;
+    if (!m_graph.node(entry)) { QTimer::singleShot(50, this, [=] { retargetWhenPresent(entry, streams, triesLeft - 1); }); return; }
+    for (uint32_t id : streams) m_graph.moveStream(id, entry);
 }
 
 
@@ -696,6 +706,13 @@ QString Mixer::auditionTarget() const { return m_audition.slug; }
 QString Mixer::slugForSinkId(uint32_t sinkId) const {
     for (auto it = m_sinks.cbegin(); it != m_sinks.cend(); ++it)
         if (it->id == sinkId && it.key().startsWith(QLatin1String("kmixdeck.channel."))) return it.key().mid(17);
+    // ADR 0008: a channel with effects is entered through kmixdeck.fx.<slug> — that IS the channel for routing
+    // purposes. Without this, CH-5 saw such a stream as "nowhere" and dragged it onto the default channel
+    // (measured 2026-09-16: fx test tone ended up on system instead of the voice chain).
+    static const QString fxP = QStringLiteral("kmixdeck.fx.");
+    for (const auto &n : m_graph.nodes())
+        if (n.id == sinkId && n.name.startsWith(fxP) && !n.name.startsWith(fxP + QLatin1String("mix.")) && !n.name.endsWith(QLatin1String(".out")))
+            return n.name.mid(fxP.size());
     return {};
 }
 void Mixer::onStreamRouted(uint32_t streamId, uint32_t sinkId) {

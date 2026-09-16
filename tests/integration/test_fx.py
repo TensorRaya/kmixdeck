@@ -5,7 +5,7 @@ Same three truths as the lifecycle tests: bus, graph, layout.json — plus the a
 a gate with a high threshold silences a ~−24 dB signal, bypass brings it back.
 """
 import pytest
-import json, time
+import json, subprocess, time
 from test_service_cli import Stack
 from pw_sandbox import start_private_pipewire
 
@@ -49,8 +49,6 @@ def test_fx_types_and_presets_are_on_the_bus():
         s.close(); pw.close()
 
 
-@pytest.mark.xfail(reason="ADR 0008 open item: live control reaches the node (rc=0, key matches) but the LADSPA control value stays 0.0 — "
-                          "set-param path vs. filter-chain args under investigation (see docs/adr/0008 §Open)", strict=False)
 def test_fx_chain_set_get_and_live_control():
     pw, s = fixture_stack()
     try:
@@ -104,22 +102,26 @@ def test_fx_refuses_bad_input_and_keeps_the_old_chain():
         s.close(); pw.close()
 
 
-@pytest.mark.xfail(reason="ADR 0008 open item: live control reaches the node (rc=0, key matches) but the LADSPA control value stays 0.0 — "
-                          "set-param path vs. filter-chain args under investigation (see docs/adr/0008 §Open)", strict=False)
 def test_fx_changes_the_sound_and_bypass_restores_it():
+    """The tone sits at ≈ −24 dBFS (measured). Gate at −40 → open; raised to 0 → shut; effect bypassed → open again."""
     pw, s = fixture_stack()
     try:
-        # baseline: voice → monitor with no effects at all
-        # apps aim at the fx entry; cells capture the plain sink behind the chain (ADR 0008 D1/FX-3)
-        play = s.pw.play_into("kmixdeck.fx.voice")
+        # baseline: voice → monitor with no effects at all (no chain yet → the entry IS the plain sink)
+        play = s.pw.play_into("kmixdeck.channel.voice")
         time.sleep(0.6)
         base = s.pw.level_at("kmixdeck.mix.monitor")
         assert base > -30, f"baseline tone should be audible, got {base}"
+        play.terminate(); play.wait(timeout=5)
 
-        # FX on, threshold just above the signal (-20): gate passes
-        s.cli("fx", "set", "channel", "voice", '{"enabled":true,"chain":[{"type":"gate","enabled":true,"params":{"threshold":-20,"range":-90,"hold":10,"decay":50}}]}')
+        # FX on, threshold well below the signal (−40 vs. −24): gate passes.
+        # Apps aim at the fx entry; cells capture the plain sink behind the chain (ADR 0008 D1/FX-3).
+        s.cli("fx", "set", "channel", "voice", '{"enabled":true,"chain":[{"type":"gate","enabled":true,"params":{"threshold":-40,"range":-90,"hold":10,"decay":50}}]}')
         assert wait(lambda: "kmixdeck.fx.voice" in node_names(s))
-        time.sleep(0.6)
+        # a REAL app stream (autoconnect on, target.object set) — WirePlumber must follow the daemon's retargets
+        # when the chain is swapped; play_into() links ports by hand and would never be re-linked (FX-5).
+        play = subprocess.Popen(["pw-play", "-P", '{ application.name = "FxProbe" node.name = "fxprobe-out" target.object = "kmixdeck.fx.voice" }',
+                                 str(s.pw.tone())], env=s.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1.0)
         open_level = s.pw.level_at("kmixdeck.mix.monitor")
         assert open_level > -30, f"signal above the threshold must pass, got {open_level}"
 
