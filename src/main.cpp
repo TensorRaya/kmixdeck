@@ -47,7 +47,9 @@ int main(int argc, char *argv[])
     QCommandLineParser parser;
     about.setupCommandLine(&parser);
     const QCommandLineOption selfTest(QStringLiteral("self-test"), QStringLiteral("Load the UI, then exit (used by ctest)."));
-    parser.addOption(selfTest);
+    const QCommandLineOption shot(QStringLiteral("screenshot"), QStringLiteral("Render the window to <file>.png and exit (works offscreen)."), QStringLiteral("file"));
+    const QCommandLineOption openArg(QStringLiteral("open"), QStringLiteral("With --screenshot: open this dialog first (channel|mix)."), QStringLiteral("what"));
+    parser.addOption(selfTest); parser.addOption(shot); parser.addOption(openArg);
     parser.process(app);
     about.processCommandLine(&parser);
 
@@ -68,6 +70,22 @@ int main(int argc, char *argv[])
     if (parser.isSet(selfTest)) {
         if (engine.rootObjects().isEmpty()) return 1;
         QTimer::singleShot(1500, &app, [] { QCoreApplication::exit(0); });
+    }
+    // --screenshot: the UI as a reviewable artefact without a compositor (docs, PR review, "what does it look like
+    // on the laptop" without grabbing 3×4K HDR outputs). Waits for the first frames, optionally opens a dialog.
+    if (parser.isSet(shot)) {
+        if (engine.rootObjects().isEmpty()) return 1;
+        auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        const QString file = parser.value(shot), open = parser.value(openArg);
+        win->resize(1280, 760); win->show();
+        QTimer::singleShot(1200, &app, [win, file, open] {
+            if (!open.isEmpty()) QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, open));
+            QTimer::singleShot(900, win, [win, file] {
+                const bool ok = win->grabWindow().save(file);
+                qInfo("%s %s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file));
+                QCoreApplication::exit(ok ? 0 : 1);
+            });
+        });
     }
 
     // Closing the window keeps the tray item (and the shortcuts) alive; quit via the tray menu (CT-4).
