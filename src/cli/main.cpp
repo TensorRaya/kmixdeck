@@ -209,7 +209,11 @@ int main(int argc, char *argv[]) {
     }
     // ADR 0009: "node[:POS,POS]" — the daemon logs a refusal but a D-Bus property Set cannot carry an error, so
     // the CLI checks the reference against Mixer.DevicePorts first and verifies the write by reading back.
-    auto checkRef = [&](const QString &ref, bool source, QString *why) {
+    auto checkRef = [&](QString ref, bool source, QString *why) {
+        int arrow = ref.lastIndexOf(QLatin1Char('>')); if (arrow < 0) arrow = ref.lastIndexOf(QLatin1Char('<'));   // ADR 0009 A2 side
+        bool hasSide = false;
+        if (arrow > 0) { const QString side = ref.mid(arrow + 1).toUpper(); if (side != "L" && side != "R") { *why = QStringLiteral("side must be L or R: node:POS>L"); return false; } ref = ref.left(arrow); hasSide = true; }
+        if (hasSide && ref.count(QLatin1Char(',')) > 0) { *why = QStringLiteral("a side (>L / >R) takes exactly one port: node:POS>L"); return false; }
         const QString node = ref.section(QLatin1Char(':'), 0, 0);
         const StringMap devs = qdbus_cast<StringMap>(o.mixer.value(source ? "InputDevices" : "OutputDevices"));
         if (!devs.contains(node)) { *why = QStringLiteral("no %1 device '%2' (see `kmixdeck devices%3`)").arg(source ? "input" : "output", node, source ? " in" : ""); return false; }

@@ -82,11 +82,18 @@ public:
     Q_INVOKABLE QVariantList devicePorts(const QString &nodeName) const;
     int devicePortsVersion() const { return m_devicePortsVersion; }
     /// Compose/decompose the one reference syntax "node[:POS,POS]" so QML never string-fiddles.
-    Q_INVOKABLE QString makeDeviceRef(const QString &node, const QStringList &positions) const { return positions.isEmpty() ? node : node + QLatin1Char(':') + positions.join(QLatin1Char(',')); }
+    Q_INVOKABLE QString makeDeviceRef(const QString &node, const QStringList &positions, const QString &side = QString()) const {
+        QString r = positions.isEmpty() ? node : node + QLatin1Char(':') + positions.join(QLatin1Char(','));
+        return side.isEmpty() ? r : r + QLatin1Char('>') + side;
+    }
     Q_INVOKABLE QString refNode(const QString &ref) const { return ref.section(QLatin1Char(':'), 0, 0); }
-    Q_INVOKABLE QStringList refPositions(const QString &ref) const { return ref.section(QLatin1Char(':'), 1).split(QLatin1Char(','), Qt::SkipEmptyParts); }
+    Q_INVOKABLE QStringList refPositions(const QString &ref) const { return ref.section(QLatin1Char(':'), 1).section(QLatin1Char('>'), 0, 0).split(QLatin1Char(','), Qt::SkipEmptyParts); }
+    /// "L", "R" or "" — ADR 0009 A2 side selector
+    Q_INVOKABLE QString refSide(const QString &ref) const { return ref.contains(QLatin1Char('>')) ? ref.section(QLatin1Char('>'), -1) : QString(); }
     /// Human label for a ref: "RØDECaster Pro II · Mic 2" / "Ui24R · AUX18+AUX19"
     Q_INVOKABLE QString deviceRefLabel(const QString &ref) const;
+    /// Compact form for narrow boxes (routing view): "AUX7 · Soundcraft Ui24R" — port first so it survives eliding
+    Q_INVOKABLE QString deviceRefShort(const QString &ref) const;
     bool metersEnabled() const { return m_metersEnabled; }
     void setMetersEnabled(bool on);
     /// Last peak (linear 0..1) for "channel/<slug>" or "mix/<slug>"; 0 when unknown.

@@ -168,3 +168,74 @@ def test_dv23_virtual_multichannel_device_is_a_real_device_and_persists(stack):
     stack.cli("mix", "output", "stream", "none"); stack.cli("channel", "remove", "deck")
     stack.cli("devices", "virtual", "remove", "test_ui24r"); time.sleep(0.8)
     assert stack.pw.node(node) is None
+
+
+def test_dv21_side_bound_input_feeds_only_that_side(stack):
+    """ADR 0009 A2: `node:POS>R` puts a mono port on the RIGHT side only (left silent) — "pan hard right" as a routing
+    choice, no mono device needed. Two ports into one side is refused (PipeWire cannot fold them; measured)."""
+    node = stack.cli("devices", "virtual", "add", "Side Ui24R").stdout.strip()
+    stack.pw.wait_node(node)
+    for _ in range(50):
+        if node in stack.cli("devices", "in", json_out=True): break
+        time.sleep(0.1)
+    stack.cli("channel", "add", "Right Only"); stack.cli("channel", "input", "right_only", f"{node}:AUX1>R")
+    stack.pw.wait_node("kmixdeck.in.right_only.in"); time.sleep(0.8)
+    p = stack.pw.play_into_port(node, "input_AUX1")
+    try:
+        right = wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.right_only", "monitor_FR"), lambda v: v > HOT)
+        left = stack.pw.level_at_port("kmixdeck.channel.right_only", "monitor_FL")
+        assert right > HOT and left < SILENT, f"AUX1>R: L={left} R={right}"
+    finally:
+        p.kill(); p.wait()
+    # two ports into ONE side is refused (PipeWire cannot fold two positions into one — ADR 0009 A2), value kept
+    r = stack.cli("channel", "input", "right_only", f"{node}:AUX3,AUX4>L", check=False)
+    assert r.returncode != 0 and "one port" in (r.stderr + r.stdout), (r.stderr, r.stdout)
+    # bad side is refused, old value kept
+    r = stack.cli("channel", "input", "right_only", f"{node}:AUX2>X", check=False)
+    assert r.returncode != 0
+    st = stack.cli("status", json_out=True)
+    ch = next(c for c in st["channels"] if c["Slug"] == "right_only")
+    assert ch["InputDevice"] == f"{node}:AUX1>R", ch
+    stack.cli("channel", "remove", "right_only"); stack.cli("devices", "virtual", "remove", "side_ui24r")
+
+
+def test_dv21_side_bound_output_sends_only_that_side_of_the_mix(stack):
+    """ADR 0009 A2 on the output side: `mix output stream virt.out:AUX5>R` puts only the mix's RIGHT side into AUX5;
+    a left-only channel feeding that mix therefore never reaches AUX5, a right-only one does. One output port without
+    a side takes the whole mix (PipeWire folds stereo→one port fine; it is the other direction it cannot do)."""
+    node = stack.cli("devices", "virtual", "add", "Out Ui24R").stdout.strip()
+    stack.pw.wait_node(node + ".out")
+    for _ in range(50):
+        if node + ".out" in stack.cli("devices", "out", json_out=True): break
+        time.sleep(0.1)
+    # one output port WITHOUT a side = the whole mix folded into that port (measured: works, unlike the input direction)
+    stack.cli("mix", "output", "stream", f"{node}.out:AUX5"); time.sleep(1.2)
+    stack.cli("cell", "set", "game", "stream", "1.0")
+    p = stack.pw.play_into("kmixdeck.channel.game")
+    try:
+        a5 = wait_level(lambda: stack.pw.level_at_port(node + ".out", "monitor_AUX5"), lambda v: v > HOT)
+        assert a5 > HOT, f"stereo mix into one port must be audible there: AUX5={a5}"
+    finally:
+        p.kill(); p.wait()
+    stack.cli("cell", "set", "game", "stream", "0.0")
+    stack.cli("mix", "output", "stream", f"{node}.out:AUX5>R"); time.sleep(1.2)
+    # channel whose input lands on the LEFT side only → must not appear in AUX5
+    stack.cli("channel", "add", "Left Mic"); stack.cli("channel", "input", "left_mic", f"{node}:AUX1>L")
+    stack.pw.wait_node("kmixdeck.in.left_mic.in"); time.sleep(0.8)
+    stack.cli("cell", "set", "left_mic", "stream", "1.0")
+    p = stack.pw.play_into_port(node, "input_AUX1")
+    try:
+        l = wait_level(lambda: stack.pw.level_at_port("kmixdeck.mix.stream", "monitor_FL"), lambda v: v > HOT)
+        a5 = stack.pw.level_at_port(node + ".out", "monitor_AUX5")
+        assert l > HOT and a5 < SILENT, f"left-only channel must not reach a right-side output: mixL={l} AUX5={a5}"
+    finally:
+        p.kill(); p.wait()
+    stack.cli("channel", "input", "left_mic", f"{node}:AUX1>R"); time.sleep(1.2)
+    p = stack.pw.play_into_port(node, "input_AUX1")
+    try:
+        a5 = wait_level(lambda: stack.pw.level_at_port(node + ".out", "monitor_AUX5"), lambda v: v > HOT)
+        a6 = stack.pw.level_at_port(node + ".out", "monitor_AUX6")
+        assert a5 > HOT and a6 < SILENT, f"right-only channel → AUX5 only: AUX5={a5} AUX6={a6}"
+    finally:
+        p.kill(); p.wait()
+    stack.cli("mix", "output", "stream", "none"); stack.cli("channel", "remove", "left_mic"); stack.cli("devices", "virtual", "remove", "out_ui24r")

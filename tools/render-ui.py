@@ -22,6 +22,8 @@ try:
         if ui in s.cli("devices", "in", json_out=True): break
         time.sleep(0.1)
     s.cli("channel", "add", "Talkback"); s.cli("channel", "input", "talkback", f"{ui}:AUX7")
+    s.cli("channel", "add", "Guest"); s.cli("channel", "input", "guest", f"{ui}:AUX8>R")          # A2: right side only
+    s.cli("mix", "output", "stream", f"{ui}.out:AUX5>L")                                          # A2: mix left → AUX5
     s.cli("channel", "input", "voice", "fake.mic")
     p, app = start_fake_app(s)
     s.cli("app", "move", "FakeGame", "game")

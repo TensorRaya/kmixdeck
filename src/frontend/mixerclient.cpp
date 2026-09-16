@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "mixerclient.h"
+#include <KLocalizedString>
 #include <QDBusInterface>
 #include <QDBusReply>
 #include <QDBusMetaType>
@@ -230,7 +231,7 @@ QVariantList MixerClient::devicePorts(const QString &nodeName) const {
     QHash<QString, QStringList> users;   // position ("*" = whole device) → "Voice" / "Stream"
     auto note = [&](const QString &ref, const QString &who) {
         if (ref.section(QLatin1Char(':'), 0, 0) != nodeName) return;
-        const QString posList = ref.section(QLatin1Char(':'), 1);
+        const QString posList = ref.section(QLatin1Char(':'), 1).section(QLatin1Char('>'), 0, 0);
         if (posList.isEmpty()) { users[QStringLiteral("*")] << who; return; }
         for (const auto &p : posList.split(QLatin1Char(','), Qt::SkipEmptyParts)) users[p] << who;
     };
@@ -254,7 +255,20 @@ QString MixerClient::deviceRefLabel(const QString &ref) const {
     if (pos.isEmpty()) return dev;
     QStringList labels;
     for (const auto &p : pos) { QString l = p; for (const auto &pt : devicePorts(node)) if (pt.toMap().value(QStringLiteral("position")) == p) { l = pt.toMap().value(QStringLiteral("label")).toString(); break; } labels << l; }
-    return dev + QStringLiteral(" · ") + labels.join(QStringLiteral("+"));
+    QString r = dev + QStringLiteral(" · ") + labels.join(QStringLiteral("+"));
+    const QString side = refSide(ref);
+    if (side == QLatin1String("L")) r += i18nc("@label ref bound to the left side only", " → L");
+    else if (side == QLatin1String("R")) r += i18nc("@label ref bound to the right side only", " → R");
+    return r;
+}
+QString MixerClient::deviceRefShort(const QString &ref) const {
+    const QStringList pos = refPositions(ref);
+    QString dev = deviceDescription(refNode(ref));
+    dev.remove(QStringLiteral(" (virtual) outputs")).remove(QStringLiteral(" (virtual)"));
+    if (pos.isEmpty()) return dev;
+    QStringList labels;
+    for (const auto &p : pos) { QString l = p; for (const auto &pt : devicePorts(refNode(ref))) if (pt.toMap().value(QStringLiteral("position")) == p) { l = pt.toMap().value(QStringLiteral("label")).toString(); break; } labels << l; }
+    return labels.join(QStringLiteral("+")) + QStringLiteral(" · ") + dev;
 }
 QVariantList MixerClient::inputDevices() const {
     QVariantList out;

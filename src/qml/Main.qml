@@ -87,6 +87,7 @@ Kirigami.ApplicationWindow {
             width: parent.width
             node: portDialog.node
             description: portDialog.description
+            direction: portDialog.kind
             current: portDialog.chosen
             onRefChosen: (ref, _name) => portDialog.chosen = ref
         }

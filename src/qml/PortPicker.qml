@@ -16,18 +16,30 @@ ColumnLayout {
     property bool expanded: false
     // positions picked so far (0..2), in click order
     property var picked: []
+    // ADR 0009 A2: with exactly ONE port picked, where it goes — "" = both sides (centre), "L", "R"
+    property string side: ""
+    // input side ("channel") or output side ("mix") — changes the wording only
+    property string direction: "channel"
     signal refChosen(string ref, string suggestedName)
 
     readonly property var ports: Mixer.devicePortsVersion, Mixer.devicePorts(node)
     spacing: 0
 
+    function emit() {
+        const p = picked
+        if (p.length === 0) return
+        const sd = p.length === 1 ? side : ""
+        refChosen(Mixer.makeDeviceRef(node, p, sd), picker.description.split(" ")[0] + " " + p.join("+") + (sd.length > 0 ? " " + sd : ""))
+    }
     function toggle(pos) {
         let p = picked.slice()
         const i = p.indexOf(pos)
         if (i >= 0) p.splice(i, 1); else { if (p.length >= 2) p.shift(); p.push(pos) }
         picked = p
-        if (p.length > 0) refChosen(Mixer.makeDeviceRef(node, p), picker.description.split(" ")[0] + " " + p.join("+"))
+        if (p.length !== 1) side = ""
+        emit()
     }
+    function setSide(sd) { side = sd; emit() }
 
     // whole-device row
     QQC2.ItemDelegate {
@@ -84,11 +96,26 @@ ColumnLayout {
             }
         }
     }
+    // one port: where does it go? (A2) — both sides is the mixing-desk default, L/R = pan hard
+    RowLayout {
+        visible: picker.expanded && picker.picked.length === 1
+        Layout.leftMargin: Kirigami.Units.gridUnit * 2.5
+        Layout.bottomMargin: Kirigami.Units.smallSpacing
+        spacing: Kirigami.Units.smallSpacing
+        QQC2.Label { text: picker.direction === "mix" ? i18nc("@label which side of the mix goes into this port", "From the mix:") : i18nc("@label where a single port lands in the channel", "Into the channel:"); opacity: 0.8 }
+        QQC2.Button { text: picker.direction === "mix" ? i18nc("@option whole mix folded into one port", "Both (folded)") : i18nc("@option mono port on both sides", "Centre (both sides)"); checkable: true; checked: picker.side === ""; onClicked: picker.setSide("") }
+        QQC2.Button { text: i18nc("@option left side only", "Left only");  checkable: true; checked: picker.side === "L"; onClicked: picker.setSide("L") }
+        QQC2.Button { text: i18nc("@option right side only", "Right only"); checkable: true; checked: picker.side === "R"; onClicked: picker.setSide("R") }
+    }
     QQC2.Label {
         visible: picker.expanded && picker.picked.length > 0
         Layout.leftMargin: Kirigami.Units.gridUnit * 2.5
         Layout.bottomMargin: Kirigami.Units.smallSpacing
         opacity: 0.7; font: Kirigami.Theme.smallFont
-        text: picker.picked.length === 1 ? i18n("Mono — this port plays on both sides.") : i18n("Stereo — %1 left, %2 right.", picker.picked[0], picker.picked[1])
+        text: picker.picked.length === 2 ? i18n("Stereo — %1 left, %2 right.", picker.picked[0], picker.picked[1])
+            : picker.side === "L" ? i18n("%1 plays on the left side only.", picker.picked[0])
+            : picker.side === "R" ? i18n("%1 plays on the right side only.", picker.picked[0])
+            : picker.direction === "mix" ? i18n("The whole mix (left + right) goes into %1.", picker.picked[0])
+            : i18n("Mono — %1 plays on both sides, centred.", picker.picked[0])
     }
 }

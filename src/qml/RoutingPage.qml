@@ -29,7 +29,10 @@ Kirigami.ScrollablePage {
     property var mixY: ({})
     property var srcY: ({})
     property var outY: ({})
+    property var sideY: ({})      // key → {L: y, R: y} (A5 pads)
     signal geometryChanged()
+    // ADR 0009 A2: rewrite the side of a ref
+    function withSide(ref, side) { return Mixer.makeDeviceRef(Mixer.refNode(ref), Mixer.refPositions(ref), side) }
 
     function db(v) { return v > 0 ? 20 * Math.log10(v) : -60 }
     function setY(map, key, y) { map[key] = y; page.geometryChanged() }
@@ -73,8 +76,12 @@ Kirigami.ScrollablePage {
                     required property string modelData
                     kind: "input"; key: modelData
                     icon: "audio-input-microphone"
-                    title: Mixer.deviceDescription(Mixer.channelDevice(modelData))
-                    subtitle: Mixer.channelInputPresent(modelData) ? i18n("→ %1", Mixer.channelName(modelData)) : i18n("unplugged")
+                    title: Mixer.deviceRefShort(Mixer.channelDevice(modelData))
+                    subtitle: {
+                        const sd = Mixer.refSide(Mixer.channelDevice(modelData))
+                        const where = sd === "L" ? i18n("→ %1 (left only)", Mixer.channelName(modelData)) : sd === "R" ? i18n("→ %1 (right only)", Mixer.channelName(modelData)) : i18n("→ %1", Mixer.channelName(modelData))
+                        return Mixer.channelInputPresent(modelData) ? where : i18n("unplugged")
+                    }
                     meterKey: "in/" + modelData
                     dim: !Mixer.channelInputPresent(modelData)
                 }
@@ -99,6 +106,10 @@ Kirigami.ScrollablePage {
                     meterKey: "channel/" + modelData
                     dim: Mixer.channelMuted(modelData)
                     listenable: true
+                    // A5: one-port input → L/R pads decide where that port lands
+                    sided: Mixer.refPositions(Mixer.channelDevice(modelData)).length === 1
+                    sideRef: Mixer.channelDevice(modelData)
+                    onSidePicked: side => Mixer.setChannelDevice(modelData, page.withSide(sideRef, side))
                     onClicked: applicationWindow().showMixer()
                 }
             }
@@ -147,10 +158,20 @@ Kirigami.ScrollablePage {
                     required property var modelData
                     kind: "output"; key: modelData.key
                     icon: modelData.capture ? "camera-video" : (modelData.dev === Mixer.listeningDevice ? "audio-headphones" : "audio-speakers")
-                    title: modelData.capture ? i18n("Capture: %1", Mixer.mixName(modelData.mix)) : Mixer.deviceDescription(modelData.dev)
-                    subtitle: modelData.capture ? i18n("for OBS / Discord") : (modelData.dev === Mixer.listeningDevice ? i18n("what I hear") : (Mixer.mixOutputPresent(modelData.mix) ? "" : i18n("unplugged")))
+                    title: modelData.capture ? i18n("Capture: %1", Mixer.mixName(modelData.mix)) : Mixer.deviceRefShort(modelData.dev)
+                    subtitle: {
+                        if (modelData.capture) return i18n("for OBS / Discord")
+                        if (modelData.dev === Mixer.listeningDevice) return i18n("what I hear")
+                        if (!Mixer.mixOutputPresent(modelData.mix)) return i18n("unplugged")
+                        const sd = Mixer.refSide(modelData.dev)
+                        return sd === "L" ? i18n("left of %1 only", Mixer.mixName(modelData.mix)) : sd === "R" ? i18n("right of %1 only", Mixer.mixName(modelData.mix)) : ""
+                    }
                     meterKey: "out/" + modelData.mix
                     dim: !modelData.capture && !Mixer.mixOutputPresent(modelData.mix)
+                    // A5: one-port output → pads decide which side of the mix goes there
+                    sided: !modelData.capture && Mixer.refPositions(modelData.dev).length === 1
+                    sideRef: modelData.capture ? "" : modelData.dev
+                    onSidePicked: side => Mixer.toggleMixOutput(modelData.mix, page.withSide(sideRef, side))   // AddOutput replaces same node+ports
                 }
             }
         }
@@ -167,7 +188,10 @@ Kirigami.ScrollablePage {
         property string meterKey
         property bool dim: false
         property bool listenable: false
+        property bool sided: false          // ADR 0009 A5: show L/R pads at the left edge (channels: input side; outputs: mix side)
+        property string sideRef: ""         // the ref this box represents, for pads to change its side ("" = n/a)
         signal clicked()
+        signal sidePicked(string side)      // "", "L", "R" — user clicked a pad on this box
         Layout.fillWidth: true
         Layout.preferredHeight: page.nodeH
         radius: Kirigami.Units.smallSpacing * 1.5
@@ -181,6 +205,33 @@ Kirigami.ScrollablePage {
             else if (kind === "mix") page.setY(page.mixY, key, p)
             else if (kind === "output") page.setY(page.outY, key, p)
             else page.setY(page.srcY, key, p)
+            // side pads sit at 30 % / 70 % of the box height — edges bound to one side aim there
+            page.sideY[key] = { L: node.mapToItem(graph, 0, node.height * 0.3).y, R: node.mapToItem(graph, 0, node.height * 0.7).y }
+        }
+        // A5 pads: L on top, R below, at the left edge. Highlighted when the current ref is bound to that side.
+        Column {
+            visible: node.sided
+            anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: -width / 2 }
+            spacing: Kirigami.Units.smallSpacing
+            Repeater {
+                model: ["L", "R"]
+                Rectangle {
+                    id: pad
+                    required property string modelData
+                    readonly property string cur: Mixer.refSide(node.sideRef)
+                    readonly property bool on: cur === modelData
+                    width: Kirigami.Units.gridUnit * 0.9; height: width; radius: width / 2
+                    color: on ? Kirigami.Theme.highlightColor : Kirigami.Theme.backgroundColor
+                    border.width: 1; border.color: on ? Kirigami.Theme.highlightColor : Qt.alpha(Kirigami.Theme.textColor, 0.35)
+                    QQC2.Label { anchors.centerIn: parent; text: pad.modelData; font.pointSize: Kirigami.Theme.smallFont.pointSize; font.weight: Font.Bold; color: pad.on ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor }
+                    QQC2.ToolTip.visible: padHover.hovered
+                    QQC2.ToolTip.text: node.kind === "output"
+                        ? i18n("Only the %1 side of the mix into this port (click again: whole mix)", pad.modelData === "L" ? i18n("left") : i18n("right"))
+                        : i18n("Put the input on the %1 side only (click again: both sides)", pad.modelData === "L" ? i18n("left") : i18n("right"))
+                    HoverHandler { id: padHover; cursorShape: Qt.PointingHandCursor }
+                    TapHandler { onTapped: node.sidePicked(pad.on ? "" : pad.modelData) }
+                }
+            }
         }
         onYChanged: report(); onHeightChanged: report(); Component.onCompleted: report()
         RowLayout {
@@ -225,7 +276,11 @@ Kirigami.ScrollablePage {
                     if (!(a.path in page.srcY)) continue
                     for (const c of (a.allChannels ?? (a.channel.length ? [a.channel] : []))) if (c in page.chY) e.push({ y1: page.srcY[a.path], y2: page.chY[c], key: "app/" + a.nodeId, gain: 1, muted: false })
                 }
-                for (const c of page.channels) if (Mixer.channelDevice(c).length > 0 && c in page.srcY && c in page.chY) e.push({ y1: page.srcY[c], y2: page.chY[c], key: "in/" + c, gain: 1, muted: !Mixer.channelInputPresent(c) })
+                for (const c of page.channels) if (Mixer.channelDevice(c).length > 0 && c in page.srcY && c in page.chY) {
+                    const sd = Mixer.refSide(Mixer.channelDevice(c))
+                    const y2 = sd.length > 0 && (c in page.sideY) ? page.sideY[c][sd] : page.chY[c]
+                    e.push({ y1: page.srcY[c], y2: y2, key: "in/" + c, gain: 1, muted: !Mixer.channelInputPresent(c) })
+                }
             } else if (from === "ch") {
                 for (const c of page.channels) for (const m of page.mixes) {
                     if (!(c in page.chY) || !(m in page.mixY)) continue
@@ -235,7 +290,11 @@ Kirigami.ScrollablePage {
             } else {
                 for (const m of page.mixes) {
                     if (!(m in page.mixY)) continue
-                    for (const o of Mixer.mixOutputs(m)) if ((m + "|" + o) in page.outY) e.push({ y1: page.mixY[m], y2: page.outY[m + "|" + o], key: "out/" + m, gain: Mixer.mixVolume(m), muted: Mixer.mixMuted(m) || !Mixer.mixOutputPresent(m) })
+                    for (const o of Mixer.mixOutputs(m)) if ((m + "|" + o) in page.outY) {
+                        const sd = Mixer.refSide(o)
+                        const y1 = sd.length > 0 && (m in page.sideY) ? page.sideY[m][sd] : page.mixY[m]   // leaves the mix at its L or R (sideY is reported by every box)
+                        e.push({ y1: y1, y2: page.outY[m + "|" + o], key: "out/" + m, gain: Mixer.mixVolume(m), muted: Mixer.mixMuted(m) || !Mixer.mixOutputPresent(m) })
+                    }
                     if ((m + "|capture") in page.outY) e.push({ y1: page.mixY[m], y2: page.outY[m + "|capture"], key: "mix/" + m, gain: Mixer.mixVolume(m), muted: Mixer.mixMuted(m) })
                 }
             }

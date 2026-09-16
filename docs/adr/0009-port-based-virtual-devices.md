@@ -59,3 +59,55 @@ is a plain channel/output and gets DV-14 for free when that lands.
 `test_dv17_*` (two mono channels from one 4-port fake device hear only their own port; a stereo pair L/R keeps
 sides), `test_dv18_*` (a mix into ports 3–4 leaves ports 1–2 silent), `test_dv19_*` (mono → stereo channel reaches
 both sides; bad port ref rejected), `test_dv20_*` (`DevicePorts` lists ports; CLI prints "in use by").
+
+## Amendment A (2026-09-16) — sides and pan (DV-21, DV-22, DV-23)
+
+Michel, after seeing the first cut: *"I'd expect to address the single channels and link them — not just one
+beam, but connect left and right individually; in doubt put L and R on two different mixes. And a mono mic must
+be able to become stereo again."* And the concrete case: Ui24R over USB = 32 mono channels, one XLR = one channel,
+so a microphone is exactly ONE port to drag.
+
+**A1. A mono port needs no "mono device".** One port → channel = centre (both sides, equal). That is the mixing-desk
+default (mono strip, pan centre) and what a mic wants 99 % of the time. Measured in `test_dv19_…`.
+
+**A2. Sides are part of the reference, not of the device.** The ref grows an optional side selector per port:
+
+```
+node:POS            mono port → both sides          (unchanged)
+node:POS,POS        two ports → L, R                (unchanged)
+node:POS>L          port only into the LEFT side of the channel   (right stays silent / free for another ref)
+node:POS>R          port only into the RIGHT side
+```
+**Not possible — measured, not assumed:** `node:POS,POS>L` (two ports summed into one side). PipeWire 1.6's
+loopback does not fold two named input positions into one output position — every variant tried on 2026-09-16
+(`[AUX3 AUX4]→[FL]`, with `channelmix.upmix`, with `stream.dont-remix`, `[MONO]` capture, `[FL FR]` capture) was
+silent while `[AUX3 AUX4]→[FL FR]`, `[AUX4]→[MONO]` and `[AUX4]→[FL]` all work. The daemon refuses that ref with a
+message instead of building a silent edge. If someone needs L+R→one side, that is a filter-chain mixer node (ADR 0008
+territory), not a loopback.
+Mix outputs use the same grammar the other way round: `node:POS>L` = only the mix's LEFT side goes into that port.
+`node:POS` (one output port, no side) = the whole mix folded into that port — measured working (`[FL FR]→[AUX5]`
+−24 dB, same as source), so the asymmetry is real: PipeWire folds *stereo stream → one device port*, but not
+*two device ports → one stream side*. DV-22 holds on the output side as written.
+
+**A3. One channel, two sources (cross-linking).** `Channel.InputDevice` stays one string for the common case; a
+channel MAY have a second input edge with the other side: `Channel.InputDevices` (as) = e.g.
+`["ui24r:AUX18>L", "rode:Mic 2>R"]`. Each ref renders as its own loopback whose playback side declares only that
+channel position (`audio.position = [ FL ]`), so the two edges do not fight. Mono-only edges are the natural fit for
+"L and R of one source on two different mixes": make two channels, `src:AUX1>L`-style refs, route each to its mix.
+Yes, it makes little sense musically — Michel said so himself — but it costs nothing because it falls out of A2.
+
+**A4. Pan is a channel property, not routing.** `Channel.Pan` (d, -1..1, default 0) sets the channel-sink's
+channelVolumes (constant-power law). For a mono source it is a position, for stereo a balance. The picker text
+says what happens: "Mono → centre", "Mono → 30 % left". Pan does not touch the edges; it is applied on the channel
+node's monitor volume — cheap, live, undoable.
+
+**A5. Routing view (UX-15) gets L/R handles.** Every source, channel and output box shows two small pads (L, R)
+at its edge; dragging from a source pad to a channel pad creates the side-ref. Dragging box-to-box keeps the
+current "whole" behaviour. Edges from a side-ref are drawn to the pad, not to the box centre.
+
+**A6. Virtual device (DV-23) is daemon-owned.** `Mixer.AddVirtualDevice(name, in, out)` creates a persistent
+null-sink pair (`kmixdeck.virt.<slug>` Audio/Source/Virtual with `in` ports, `…out` Audio/Sink with `out` ports),
+listed as a normal input and output device and rebuilt on every start from the layout. Tests and render-ui use it
+instead of hand-made pw-cli nodes.
+
+**Not in scope:** arbitrary N×M matrices per channel (that is a patchbay, not a channel strip); per-side FX.

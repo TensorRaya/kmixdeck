@@ -48,11 +48,13 @@ const LayoutApp *Layout::app(const QString &key) const { for (const auto &a : ap
 QJsonObject DeviceRef::toJson() const {
     QJsonObject o{{QStringLiteral("node"), node}, {QStringLiteral("description"), description}};
     if (!positions.isEmpty()) o.insert(QStringLiteral("positions"), QJsonArray::fromStringList(positions));
+    if (!side.isEmpty()) o.insert(QStringLiteral("side"), side);
     return o;
 }
 DeviceRef DeviceRef::fromJson(const QJsonObject &o) {
     DeviceRef r; r.node = o.value(QStringLiteral("node")).toString(); r.description = o.value(QStringLiteral("description")).toString();
     for (const auto &v : o.value(QStringLiteral("positions")).toArray()) r.positions << v.toString();
+    r.side = o.value(QStringLiteral("side")).toString();
     return r;
 }
 
@@ -149,9 +151,15 @@ QString loopbackArgs(const QString &description,
     // One-port (mono) device on the capture side: the port name (AUX3) is nothing the channel mixer can spread, so
     // the playback half is declared [MONO] and the far sink's own channelmix puts it on FL and FR (DV-19; with
     // [FL FR] on that side the tone landed on FL only, measured 2026-09-16).
-    const bool monoIn = capturePositions.size() == 1;
+    const bool sideCap = capturePositions.size() == 1 && (capturePositions[0] == QLatin1String("FL") || capturePositions[0] == QLatin1String("FR"));
+    const bool monoIn = capturePositions.size() == 1 && !sideCap;   // one named side of a stereo node is not "mono"
+    // ADR 0009 A2: playback bound to ONE side (FL or FR) — a 1-port capture lands on exactly that side. A 2-port
+    // capture into one side is NOT offered: PipeWire 1.6's loopback does not fold two named positions into one
+    // (measured 2026-09-16: AUX3+AUX4→[FL] silent in every variant — upmix, dont-remix, MONO capture); the daemon
+    // refuses that ref (validateDeviceRef) instead of building a silent edge.
+    const QString capPos = pos(capturePositions);
     QString cap = QStringLiteral("capture.props = { node.name = %1 media.name = %1 node.target = %2 audio.position = %3 node.passive = true node.dont-fallback = true %4%5}")
-        .arg(q(captureName), q(captureTarget), pos(capturePositions),
+        .arg(q(captureName), q(captureTarget), capPos,
              captureIsSink ? QStringLiteral("stream.capture.sink = true node.dont-reconnect = true ") : QString(),
              captureLinger ? QStringLiteral("node.linger = true ") : QString());
     // A virtual source (the mix capture node) has no target at all: it is a device others capture from.
@@ -212,7 +220,7 @@ QString Layout::toPipewireConf() const {
         }
     for (const auto &i : inputs)   // physical input → channel (ADR 0007 D2); capture side waits for the device
         mod(loopbackArgs(QStringLiteral("Input: ") + i.name, EdgeNames::inputNode(i.slug) + QStringLiteral(".in"), i.device.node, false, i.device.positions, true,
-                         EdgeNames::inputNode(i.slug), channelEntry(i.channel), {}, false, true));
+                         EdgeNames::inputNode(i.slug), channelEntry(i.channel), i.device.channelSidePositions(), false, true));
     for (const auto &a : apps) {   // CH-12: extra channels of a multi-assigned app hear it via relay loopbacks.
         // Capture side sits on the APP's own output node (not the primary channel's monitor — that would carry
         // every other app on that channel too, measured on boreas 2026-09-16). linger: the app may not run yet.
@@ -230,7 +238,7 @@ QString Layout::toPipewireConf() const {
             mod(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → output"), EdgeNames::outputNode(m.slug, 0) + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,
                              EdgeNames::outputNode(m.slug, 0), QStringLiteral("kmixdeck.null"), {}, true, false));
         for (int n = 0; n < m.outputs.size(); ++n)   // one loopback per output (MX-9); playback side waits for the device
-            mod(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + m.outputs[n].description, EdgeNames::outputNode(m.slug, n) + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,
+            mod(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + m.outputs[n].description, EdgeNames::outputNode(m.slug, n) + QStringLiteral(".in"), Names::mixNode(m.slug), true, m.outputs[n].channelSidePositions(), false,
                              EdgeNames::outputNode(m.slug, n), m.outputs[n].node, m.outputs[n].positions, true, false));
         // virtual capture source so OBS/Discord can pick this mix as an input (MX-3b)
         const QString src = EdgeNames::sourceNode(m.slug);

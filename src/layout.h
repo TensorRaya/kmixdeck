@@ -20,17 +20,36 @@ struct DeviceRef {
     QString node;                 // PipeWire node.name — the only key
     QString description;          // last seen node.description
     QStringList positions;        // e.g. {"AUX2","AUX3"}; empty = default
-    bool operator==(const DeviceRef &o) const { return node == o.node && positions == o.positions; }
+    /// ADR 0009 A2: which side of the CHANNEL/MIX this ref is bound to. Empty = both (mono→centre / stereo pair).
+    /// "L"/"R" on an input: the port(s) feed only that side. On an output: only that side of the mix goes to the port(s).
+    QString side;
+    bool operator==(const DeviceRef &o) const { return node == o.node && positions == o.positions && side == o.side; }
     QJsonObject toJson() const;
     static DeviceRef fromJson(const QJsonObject &o);
-    /// ADR 0009 D1: "node" or "node:POS[,POS]" — the one reference syntax on the bus, in the CLI and in the UI.
-    QString ref() const { return positions.isEmpty() ? node : node + QLatin1Char(':') + positions.join(QLatin1Char(',')); }
-    static DeviceRef fromRef(const QString &ref) {
-        DeviceRef r; const int c = ref.indexOf(QLatin1Char(':'));
+    /// ADR 0009 D1/A2: "node", "node:POS[,POS]", "node:POS[,POS]>L|R" (input side) or "…<L|R" (output side) —
+    /// the one reference syntax on the bus, in the CLI and in the UI. Both arrows parse; ref() emits '>' .
+    QString ref() const {
+        QString r = positions.isEmpty() ? node : node + QLatin1Char(':') + positions.join(QLatin1Char(','));
+        if (!side.isEmpty()) r += QLatin1Char('>') + side;
+        return r;
+    }
+    static DeviceRef fromRef(QString ref) {
+        DeviceRef r;
+        int arrow = ref.lastIndexOf(QLatin1Char('>')); if (arrow < 0) arrow = ref.lastIndexOf(QLatin1Char('<'));
+        if (arrow > 0) { r.side = ref.mid(arrow + 1).trimmed().toUpper(); ref = ref.left(arrow); }
+        const int c = ref.indexOf(QLatin1Char(':'));
         if (c < 0) { r.node = ref; return r; }
         r.node = ref.left(c);
         for (const auto &p : ref.mid(c + 1).split(QLatin1Char(','), Qt::SkipEmptyParts)) r.positions << p.trimmed();
         return r;
+    }
+    bool sideValid() const { return side.isEmpty() || side == QLatin1String("L") || side == QLatin1String("R"); }
+    /// ADR 0009 A2: the positions this ref occupies on the CHANNEL/MIX side of its edge. Empty = default
+    /// (stereo pair, or [MONO] for a one-port ref — see loopbackArgs). "L" → [FL], "R" → [FR].
+    QStringList channelSidePositions() const {
+        if (side == QLatin1String("L")) return {QStringLiteral("FL")};
+        if (side == QLatin1String("R")) return {QStringLiteral("FR")};
+        return {};
     }
 };
 

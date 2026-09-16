@@ -388,6 +388,8 @@ QStringList Mixer::devicePorts(const QString &nodeName) const {
 QString Mixer::validateDeviceRef(const DeviceRef &ref, bool wantSource) const {
     if (ref.node.isEmpty()) return {};
     if (!m_devices.contains(ref.node)) return QStringLiteral("unknown %1 device '%2'").arg(wantSource ? QStringLiteral("input") : QStringLiteral("output"), ref.node);
+    if (!ref.sideValid()) return QStringLiteral("side must be L or R (node:POS>L), got '%1'").arg(ref.side);
+    if (!ref.side.isEmpty() && ref.positions.size() != 1) return QStringLiteral("a side (>L / >R) takes exactly one port — PipeWire cannot fold two ports into one side (ADR 0009 A2)");
     if (ref.positions.isEmpty()) return {};
     if (ref.positions.size() > 2) return QStringLiteral("a virtual device is mono (1 port) or stereo (2 ports), got %1").arg(ref.positions.size());
     QSet<QString> have;
@@ -411,9 +413,9 @@ bool Mixer::setMixOutputs(const QString &slug, const QVector<DeviceRef> &outputs
     // positions differ from what is wanted now is destroyed here and rebuilt by ensureEdgeLoopbacks(). Same node,
     // same positions → keep it (retarget only), so plain device swaps stay glitch-free as before.
     for (int n = 0; n < std::max(m->outputs.size(), outputs.size()); ++n) {
-        const QStringList before = n < m->outputs.size() ? m->outputs[n].positions : QStringList{};
-        const QStringList after  = n < outputs.size()    ? outputs[n].positions    : QStringList{};
-        if (before == after) continue;
+        const QString before = n < m->outputs.size() ? m->outputs[n].ref().section(QLatin1Char(':'), 1) : QString();
+        const QString after  = n < outputs.size()    ? outputs[n].ref().section(QLatin1Char(':'), 1)    : QString();
+        if (before == after) continue;   // same ports AND same side → retarget only
         const QString out = EdgeNames::outputNode(slug, n);
         if (auto node = m_graph.node(out)) { m_graph.destroyObject(node->id); m_edges.remove(out); }
     }
@@ -523,10 +525,12 @@ bool Mixer::setChannelInputDevice(const QString &channel, const QString &refStr)
     if (!refStr.isEmpty() && !validateDeviceRef(d, true).isEmpty()) return false;
     if (auto *in = m_layout.input(channel)) {
         if (in->device == d) return true;
+        const bool hadEdge = m_graph.node(EdgeNames::inputNode(channel)).has_value();
         if (auto n = m_graph.node(EdgeNames::inputNode(channel))) m_graph.destroyObject(n->id);   // rebuild with the new target
         m_edges.remove(EdgeNames::inputNode(channel));
         if (refStr.isEmpty()) { removeInput(channel); Q_EMIT channelChanged(channel); return true; }
-        in->device = d; saveLayout(); ensureEdgeLoopbackForInput(channel);
+        in->device = d; saveLayout();
+        if (!hadEdge) ensureEdgeLoopbackForInput(channel);   // else: onNodeRemoved rebuilds once PipeWire confirms the old edge is gone
         Q_EMIT inputChanged(channel); Q_EMIT channelChanged(channel);
         return true;
     }
@@ -558,7 +562,7 @@ void Mixer::ensureEdgeLoopbacks() {
             const QString target = m.outputs.isEmpty() ? QStringLiteral("kmixdeck.null") : m.outputs.first().node;
             const QString what = m.outputs.isEmpty() ? QStringLiteral("output") : m.outputs.first().description;
             m_graph.loadLoopback(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + what,
-                                              out0 + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,
+                                              out0 + QStringLiteral(".in"), Names::mixNode(m.slug), true, m.outputs.isEmpty() ? QStringList{} : m.outputs.first().channelSidePositions(), false,
                                               out0, target, m.outputs.isEmpty() ? QStringList{} : m.outputs.first().positions, true, false));
         }
         for (int n = 1; n < m.outputs.size(); ++n) {   // additional outputs (MX-9)
@@ -566,7 +570,7 @@ void Mixer::ensureEdgeLoopbacks() {
             if (m_graph.node(out)) continue;
             const DeviceRef &d = m.outputs[n];
             m_graph.loadLoopback(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + d.description,
-                                              out + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,
+                                              out + QStringLiteral(".in"), Names::mixNode(m.slug), true, d.channelSidePositions(), false,
                                               out, d.node, d.positions, true, false));
         }
         const QString src = EdgeNames::sourceNode(m.slug);   // virtual capture source for OBS/Discord (MX-3b)
@@ -585,7 +589,7 @@ void Mixer::ensureEdgeLoopbackForInput(const QString &slug) {
     if (m_graph.node(node)) return;
     m_graph.loadLoopback(loopbackArgs(QStringLiteral("Input: ") + in->name,
                                       node + QStringLiteral(".in"), in->device.node, false, in->device.positions, true,
-                                      node, Names::channelNode(in->channel), {}, false, true));
+                                      node, Names::channelNode(in->channel), in->device.channelSidePositions(), false, true));
 }
 
 // DV-11/DV-12/DV-15: an output whose device is unplugged parks on kmixdeck.null (or on the configured
@@ -1015,7 +1019,7 @@ void Mixer::onNodeRemoved(uint32_t id) {
     if (m_edges.remove(name)) for (const auto &m : m_mixes) if (name == EdgeNames::outputNode(m.slug, 0) || name == EdgeNames::sourceNode(m.slug)) { Q_EMIT mixChanged(m.slug); break; }
     // An edge we destroyed on purpose (port subset changed, ADR 0009) is rebuilt as soon as PipeWire confirms it
     // is gone — destroyObject() is asynchronous, so ensureEdgeLoopbacks() right after it would still see the old node.
-    if (m_connected && name.startsWith(QLatin1String("kmixdeck.out.")) && !name.endsWith(QLatin1String(".in")))
+    if (m_connected && (name.startsWith(QLatin1String("kmixdeck.out.")) || name.startsWith(QLatin1String("kmixdeck.in."))) && !name.endsWith(QLatin1String(".in")))
         QTimer::singleShot(0, this, [this] { ensureEdgeLoopbacks(); applyFallbacks(); });
     if (m_devices.remove(name)) { Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged(); applyFallbacks(); notifyPresence(); }   // DV-9: absence → grey out + park outputs
     bool layout = false;

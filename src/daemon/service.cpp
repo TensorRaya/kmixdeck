@@ -128,6 +128,8 @@ void MixObject::AddOutput(const QString &n) {
     if (const QString err = m_mixer->validateDeviceRef(ref, false); !err.isEmpty()) { sendErrorReply(QDBusError::InvalidArgs, err); return; }
     auto outs = m_mixer->mixOutputs(m_slug);
     for (const auto &d : outs) if (d == ref) return;    // idempotent
+    // same node + same ports, different side (ADR 0009 A2) → this REPLACES that entry; two edges on one port would fight
+    for (auto &d : outs) if (d.node == ref.node && d.positions == ref.positions) { d.side = ref.side; m_mixer->setMixOutputs(m_slug, outs); return; }
     outs.push_back(ref);
     m_mixer->setMixOutputs(m_slug, outs);
 }
