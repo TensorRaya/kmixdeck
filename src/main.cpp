@@ -53,7 +53,10 @@ int main(int argc, char *argv[])
     parser.process(app);
     about.processCommandLine(&parser);
 
-    KDBusService service(KDBusService::Unique);   // one instance; second launch raises the window
+    // one instance; a second launch raises the window — except for the headless modes, which must run next to a
+    // live UI (2026-09-16: --screenshot silently exited 0 because Unique handed the call to the running instance)
+    const bool headless = parser.isSet(selfTest) || parser.isSet(shot);
+    KDBusService service(headless ? KDBusService::Multiple | KDBusService::NoExitOnFailure : KDBusService::Unique);
 
     // One client shared by QML (as the "Mixer" singleton) and by the KDE integration (tray, shortcuts).
     auto *client = new kmixdeck::frontend::MixerClient(&app);
