@@ -140,6 +140,12 @@ public:
     QString channelInputDevice(const QString &channel) const;
     bool    channelInputPresent(const QString &channel) const;
     bool    setChannelInputDevice(const QString &channel, const QString &ref);   // ref = node[:POS,POS] (ADR 0009)
+    // ADR 0009 B1 — wires: a channel may take several inputs (one loopback edge each). Refs in wire order.
+    QStringList channelInputs(const QString &channel) const;
+    QString     addChannelInput(const QString &channel, const QString &ref);      // returns the wire's input slug, "" on refusal
+    bool        removeChannelInput(const QString &channel, const QString &ref);
+    bool        channelInputPresentRef(const QString &channel, const QString &ref) const;
+    bool        hasAnyInputFor(const QString &channel) const;
     // DV-23 virtual multichannel devices (Ui24R stand-in for testing)
     QString addVirtualDevice(const QString &displayName, int inputs, int outputs, QString *error);
     bool    removeVirtualDevice(const QString &slug);

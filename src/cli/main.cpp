@@ -157,6 +157,7 @@ int main(int argc, char *argv[]) {
         "  undo                                    restore the last removed channel or mix (CH-9)\n"
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
         "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
+        "  channel inputs <slug>                 all wires into a channel (ADR 0009 B1); input-add|input-remove <slug> <ref>\n"
         "  mix     list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|move <slug> <index|up|down|top|bottom>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
         "  mix     outputs <slug>                 list all hardware outputs of a mix (MX-9)\n"
         "  mix     output-add|output-remove <slug> <node.name>\n"
@@ -310,6 +311,20 @@ int main(int argc, char *argv[]) {
             if (!setProp(pathOf(a[2]), iface, "InputDevice", dev, &e)) return fail(Rejected, e);
             QDBusInterface chObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
             if (chObj.property("InputDevice").toString() != dev) return fail(Rejected, QStringLiteral("daemon refused '%1' (see its log)").arg(a[3]));
+            return Ok;
+        }
+        if (sub == "inputs" && ch) {   // ADR 0009 B1: all wires into this channel
+            const QStringList ins = unwrap(objs.value(pathOf(a[2])).value("Inputs")).toStringList();
+            if (g_json) out << QJsonDocument(QJsonArray::fromStringList(ins)).toJson(); else for (const auto &i2 : ins) out << i2 << "\n";
+            return Ok;
+        }
+        if ((sub == "input-add" || sub == "input-remove") && ch) {
+            if (!need(4)) return Usage;
+            if (sub == "input-add" && !checkRef(a[3], true, &e)) return fail(NotFound, e);
+            QDBusInterface chObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
+            const QDBusMessage r = chObj.call(sub == "input-add" ? "AddInput" : "RemoveInput", a[3]);
+            if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
+            if (!r.arguments().value(0).toBool()) return fail(Rejected, QStringLiteral("daemon refused '%1'").arg(a[3]));
             return Ok;
         }
         if (sub == "volume" && !ch) { if (!need(4)) return Usage; double l; if (!parseLevel(a[3], &l)) return fail(Usage, "bad level"); return setProp(pathOf(a[2]), iface, "Volume", l, &e) ? Ok : fail(Rejected, e); }

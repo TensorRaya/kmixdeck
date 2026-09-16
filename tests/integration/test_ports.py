@@ -239,3 +239,59 @@ def test_dv21_side_bound_output_sends_only_that_side_of_the_mix(stack):
     finally:
         p.kill(); p.wait()
     stack.cli("mix", "output", "stream", "none"); stack.cli("channel", "remove", "left_mic"); stack.cli("devices", "virtual", "remove", "out_ui24r")
+
+
+def test_dv25_several_wires_into_one_channel_from_two_devices(stack):
+    """ADR 0009 B1 / DV-25: a channel takes several wires. Ui24R 3 → left, RØDECaster-ish device 1 → right; each
+    side hears only its wire; both survive a daemon restart; removing the primary promotes the other wire."""
+    ui = stack.cli("devices", "virtual", "add", "Wire Ui24R", "--in", "4", "--out", "2").stdout.strip()
+    rc = stack.cli("devices", "virtual", "add", "Wire Rode", "--in", "2", "--out", "2").stdout.strip()
+    for n in (ui, rc): stack.pw.wait_node(n)
+    for _ in range(50):
+        devs = stack.cli("devices", "in", json_out=True)
+        if ui in devs and rc in devs: break
+        time.sleep(0.1)
+    stack.cli("channel", "add", "Duo")
+    stack.cli("channel", "input-add", "duo", f"{ui}:AUX3>L")
+    stack.cli("channel", "input-add", "duo", f"{rc}:AUX1>R")
+    assert stack.cli("channel", "inputs", "duo", json_out=True) == [f"{ui}:AUX3>L", f"{rc}:AUX1>R"]
+    assert stack.cli("channel", "input", "duo").stdout.strip() == f"{ui}:AUX3>L", "InputDevice must be Inputs[0]"
+    stack.pw.wait_node("kmixdeck.in.duo.in"); stack.pw.wait_node("kmixdeck.in.duo.w1.in"); time.sleep(0.8)
+
+    def sides():
+        return stack.pw.level_at_port("kmixdeck.channel.duo", "monitor_FL"), stack.pw.level_at_port("kmixdeck.channel.duo", "monitor_FR")
+    p = stack.pw.play_into_port(ui, "input_AUX3")
+    try:
+        l = wait_level(lambda: sides()[0], lambda v: v > HOT); r = sides()[1]
+        assert l > HOT and r < SILENT, f"Ui24R wire must land LEFT only: L={l} R={r}"
+    finally:
+        p.kill(); p.wait()
+    p = stack.pw.play_into_port(rc, "input_AUX1")
+    try:
+        r = wait_level(lambda: sides()[1], lambda v: v > HOT); l = sides()[0]
+        assert r > HOT and l < SILENT, f"Rode wire must land RIGHT only: L={l} R={r}"
+    finally:
+        p.kill(); p.wait()
+    # a second wire into the SAME side sums (two edges, one sink) — allowed
+    stack.cli("channel", "input-add", "duo", f"{ui}:AUX4>R")
+    assert len(stack.cli("channel", "inputs", "duo", json_out=True)) == 3
+    # duplicate is a no-op, unknown port refused
+    stack.cli("channel", "input-add", "duo", f"{ui}:AUX4>R")
+    assert len(stack.cli("channel", "inputs", "duo", json_out=True)) == 3
+    assert stack.cli("channel", "input-add", "duo", f"{ui}:AUX9", check=False).returncode != 0
+
+    stack.restart_daemon()
+    assert stack.cli("channel", "inputs", "duo", json_out=True) == [f"{ui}:AUX3>L", f"{rc}:AUX1>R", f"{ui}:AUX4>R"], "wires must survive a restart"
+    stack.pw.wait_node("kmixdeck.in.duo.w1.in"); time.sleep(0.8)
+    p = stack.pw.play_into_port(rc, "input_AUX1")
+    try:
+        assert wait_level(lambda: sides()[1], lambda v: v > HOT) > HOT, "right wire silent after restart"
+    finally:
+        p.kill(); p.wait()
+    # removing the primary promotes the next wire
+    assert stack.cli("channel", "input-remove", "duo", f"{ui}:AUX3>L").returncode == 0
+    ins = stack.cli("channel", "inputs", "duo", json_out=True)
+    assert ins[0] == f"{rc}:AUX1>R" and len(ins) == 2, ins
+    assert stack.cli("channel", "input", "duo").stdout.strip() == f"{rc}:AUX1>R"
+    stack.cli("channel", "remove", "duo")
+    stack.cli("devices", "virtual", "remove", "wire_ui24r"); stack.cli("devices", "virtual", "remove", "wire_rode")

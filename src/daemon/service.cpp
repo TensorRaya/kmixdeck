@@ -66,6 +66,9 @@ bool ChannelObject::muted() const { return m_mixer->channelMuted(m_slug); }
 void ChannelObject::setMuted(bool m) { m_mixer->setChannelMuted(m_slug, m); }
 void ChannelObject::ToggleMute() { m_mixer->setChannelMuted(m_slug, !m_mixer->channelMuted(m_slug)); }
 QString ChannelObject::inputDevice() const { return m_mixer->channelInputDevice(m_slug); }
+QStringList ChannelObject::inputs() const { return m_mixer->channelInputs(m_slug); }
+bool ChannelObject::AddInput(const QString &ref) { return !m_mixer->addChannelInput(m_slug, ref).isEmpty(); }
+bool ChannelObject::RemoveInput(const QString &ref) { return m_mixer->removeChannelInput(m_slug, ref); }
 void ChannelObject::setInputDevice(const QString &d) {
     if (!m_mixer->setChannelInputDevice(m_slug, d)) rejectProperty(QStringLiteral("InputDevice"), d.isEmpty() ? QStringLiteral("no such channel") : m_mixer->validateDeviceRef(m_mixer->deviceRef(d), true));
 }
@@ -86,7 +89,7 @@ QVariantMap ChannelObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), icon()},
             {QStringLiteral("Trim"), trim()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("NodeName"), nodeName()},
             {QStringLiteral("InputDevice"), inputDevice()}, {QStringLiteral("InputPresent"), inputPresent()},
-            {QStringLiteral("FxChain"), fxChainJson()}};
+            {QStringLiteral("Inputs"), inputs()}, {QStringLiteral("FxChain"), fxChainJson()}};
 }
 
 // ---- Mix

@@ -18,6 +18,18 @@
     <property name="InputDevice" type="s" access="readwrite"/>
     <!-- false while InputDevice is set but the device is unplugged: grey the row out, keep the value (DV-9) -->
     <property name="InputPresent" type="b" access="read"/>
+    <!-- ADR 0009 B1 / DV-25 — wires: ALL refs feeding this channel, in wire order; InputDevice is Inputs[0].
+         Each ref may carry a side (">L" / ">R"); several wires into the same side sum in the channel. -->
+    <property name="Inputs" type="as" access="read"/>
+    <!-- add / remove one wire. Refused (false) for unknown devices/ports; adding an existing wire is a no-op (true). -->
+    <method name="AddInput">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
+    <method name="RemoveInput">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="removed" type="b" direction="out"/>
+    </method>
     <!-- ordered insert chain as JSON {enabled, chain:[{type,params,…}]} (ADR 0008); "" when none.
          Set through SetFx only — the property itself is read so third-party UIs can mirror it cheaply. -->
     <property name="FxChain" type="s" access="read"/>

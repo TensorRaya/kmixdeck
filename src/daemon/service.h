@@ -78,6 +78,7 @@ class ChannelObject : public ExportedObject {
     Q_PROPERTY(QString NodeName READ nodeName CONSTANT)
     Q_PROPERTY(QString InputDevice READ inputDevice WRITE setInputDevice)
     Q_PROPERTY(bool InputPresent READ inputPresent)
+    Q_PROPERTY(QStringList Inputs READ inputs)     // ADR 0009 B1: all wires, InputDevice == Inputs[0]
     Q_PROPERTY(QString FxChain READ fxChainJson)   // FX-1…FX-7: JSON {enabled, chain:[…]}, "" = none
 public:
     ChannelObject(Mixer *mixer, const QString &slug, QObject *parent);
@@ -90,10 +91,13 @@ public:
     bool muted() const; void setMuted(bool);
     QString nodeName() const { return Names::channelNode(m_slug); }
     QString inputDevice() const; void setInputDevice(const QString &);
+    QStringList inputs() const;
     bool inputPresent() const;
     QString fxChainJson() const;
 public Q_SLOTS:
     void ToggleMute();
+    bool AddInput(const QString &ref);              // ADR 0009 B1: one more wire into this channel
+    bool RemoveInput(const QString &ref);
     bool SetFx(const QString &chainJson);           // FX-1: replace the chain (validated; false = refused)
     bool SetFxControl(const QString &control, double value);   // FX-3 live
 private:

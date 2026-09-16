@@ -542,6 +542,54 @@ bool Mixer::setChannelInputDevice(const QString &channel, const QString &refStr)
     Q_EMIT inputsChanged(); Q_EMIT inputChanged(channel); Q_EMIT channelChanged(channel);
     return true;
 }
+// ---- wires (ADR 0009 B1): every LayoutInput whose .channel is this channel; the primary (slug == channel) first
+QStringList Mixer::channelInputs(const QString &channel) const {
+    QStringList refs;
+    if (const auto *p = m_layout.input(channel); p && !p->device.node.isEmpty()) refs << p->device.ref();
+    for (const auto &i : m_layout.inputs) if (i.channel == channel && i.slug != channel && !i.device.node.isEmpty()) refs << i.device.ref();
+    return refs;
+}
+QString Mixer::addChannelInput(const QString &channel, const QString &refStr) {
+    if (!m_layout.channel(channel) || refStr.isEmpty()) return QString();
+    const DeviceRef d = deviceRef(refStr);
+    if (!validateDeviceRef(d, true).isEmpty()) return QString();
+    for (const auto &i : m_layout.inputs) if (i.channel == channel && i.device == d) return i.slug;   // idempotent
+    if (!m_layout.input(channel) && !hasAnyInputFor(channel)) { setChannelInputDevice(channel, refStr); return channel; }   // first wire = primary
+    // further wires: own slug "<channel>.w<N>"
+    int n = 1; QString slug;
+    do { slug = channel + QStringLiteral(".w") + QString::number(n++); } while (m_layout.input(slug));
+    LayoutInput in; in.slug = slug; in.name = channelName(channel) + QStringLiteral(" ← ") + d.ref(); in.device = d; in.channel = channel;
+    m_layout.inputs.push_back(in);
+    saveLayout(); ensureEdgeLoopbackForInput(slug);
+    Q_EMIT inputsChanged(); Q_EMIT inputChanged(slug); Q_EMIT channelChanged(channel);
+    return slug;
+}
+bool Mixer::removeChannelInput(const QString &channel, const QString &refStr) {
+    const DeviceRef d = DeviceRef::fromRef(refStr);
+    QString victim;
+    for (const auto &i : m_layout.inputs) if (i.channel == channel && i.device == d) { victim = i.slug; break; }
+    if (victim.isEmpty()) return false;
+    if (victim == channel) {
+        // the primary goes: promote the next wire into the primary slot so InputDevice stays meaningful
+        QString next;
+        for (const auto &i : m_layout.inputs) if (i.channel == channel && i.slug != channel) { next = i.slug; break; }
+        if (next.isEmpty()) return setChannelInputDevice(channel, QString());
+        const DeviceRef promoted = m_layout.input(next)->device;
+        removeInput(next);
+        return setChannelInputDevice(channel, promoted.ref());
+    }
+    removeInput(victim); Q_EMIT channelChanged(channel);
+    return true;
+}
+bool Mixer::channelInputPresentRef(const QString &channel, const QString &refStr) const {
+    const DeviceRef d = DeviceRef::fromRef(refStr);
+    for (const auto &i : m_layout.inputs) if (i.channel == channel && i.device == d) return inputPresent(i.slug);
+    return false;
+}
+bool Mixer::hasAnyInputFor(const QString &channel) const {
+    for (const auto &i : m_layout.inputs) if (i.channel == channel) return true;
+    return false;
+}
 bool Mixer::mixOutputPresent(const QString &slug) const {
     const auto outs = mixOutputs(slug);
     if (outs.isEmpty()) return true;
