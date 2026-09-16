@@ -213,7 +213,13 @@ def test_dv21_side_bound_output_sends_only_that_side_of_the_mix(stack):
     stack.cli("cell", "set", "game", "stream", "1.0")
     p = stack.pw.play_into("kmixdeck.channel.game")
     try:
-        a5 = wait_level(lambda: stack.pw.level_at_port(node + ".out", "monitor_AUX5"), lambda v: v > HOT)
+        a5 = wait_level(lambda: stack.pw.level_at_port(node + ".out", "monitor_AUX5"), lambda v: v > HOT, tries=12)
+        if not a5 > HOT:
+            links = subprocess.run(["pw-link", "-l"], env=stack.pw.env, capture_output=True, text=True).stdout
+            nodes = subprocess.run(["pw-cli", "ls", "Node"], env=stack.pw.env, capture_output=True, text=True).stdout
+            print("OUT LINKS:\n" + "\n".join(l for l in links.splitlines() if "kmixdeck.out.stream" in l or "|->" in l or "|<-" in l)[:3000])
+            print("STREAM MIX OUTPUTS:", stack.cli("mix", "outputs", "stream", json_out=True))
+            print("OUT NODES:", [l.strip() for l in nodes.splitlines() if "kmixdeck.out" in l or "out_ui24r" in l])
         assert a5 > HOT, f"stereo mix into one port must be audible there: AUX5={a5}"
     finally:
         p.kill(); p.wait()
