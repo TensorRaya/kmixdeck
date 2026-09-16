@@ -18,6 +18,9 @@ struct MeterStream {
     std::atomic<float> peak{0.f};   // RT thread: max-accumulate; publisher: exchange(0) — no lost tick either way
     float shown = 0.f;              // UX-16 ballistics (publisher thread only): instant rise, hold, then ≈ 20 dB/s fall
     int holdTicks = 0;
+    std::atomic<bool> seen{false};  // RT thread sets once the first buffer arrived; until then the key is NOT published
+                                    // (a fresh stream reads 0 for a tick or two while PipeWire links it — that 0 is
+                                    // "no data yet", not "silence", and showed up as a dropout under load)
 };
 
 struct Meters::Impl {
@@ -38,6 +41,7 @@ struct Meters::Impl {
             // max-accumulate against whatever the publisher has not consumed yet: two buffers in one tick keep the
             // louder one, a tick with no buffer keeps nothing (the publisher's exchange(0) then reads 0 and the
             // ballistics below hold the last value instead of dropping to silence)
+            m->seen.store(true, std::memory_order_relaxed);
             float cur = m->peak.load(std::memory_order_relaxed);
             while (p > cur && !m->peak.compare_exchange_weak(cur, p, std::memory_order_relaxed)) {}
         }
@@ -125,6 +129,7 @@ void Meters::publish() {
         QMutexLocker l(&d->mutex);
         for (auto it = d->streams.cbegin(); it != d->streams.cend(); ++it) {
             MeterStream *m = it.value();
+            if (!m->seen.load(std::memory_order_relaxed)) continue;
             const float raw = m->peak.exchange(0.f, std::memory_order_relaxed);
             if (raw >= m->shown) { m->shown = raw; m->holdTicks = kHoldTicks; }
             else if (m->holdTicks > 0) { m->holdTicks--; }

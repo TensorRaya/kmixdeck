@@ -85,7 +85,14 @@ def test_dv7_levels_and_mute_survive_daemon_restart(pw):
     """DV-7: cell volume + mute persist across pipewire/wireplumber restart without the app."""
     pw.set_volume(cell("voice", "stream"), 0.25, mute=False)
     pw.set_volume(cell("voice", "monitor"), 1.0, mute=True)
-    import time; time.sleep(1.0)  # WirePlumber writes state with a small delay
+    # WirePlumber flushes stream-properties on a ~1 s timer; wait for the VALUE on disk, not for a clock
+    # (ctest16: 1.0 s of sleep was not enough under full-suite load — the restart then read the old file).
+    import time
+    for _ in range(80):
+        f = next((pw.runtime_dir / "state").rglob("stream-properties"), None)
+        if f and f"media.name:{cell('voice', 'stream')}=" in f.read_text() and "0.25" in f.read_text(): break
+        time.sleep(0.1)
+    else: pytest.fail("WirePlumber never persisted the volume to stream-properties")
     pw.restart()
     assert pw.props(cell("voice", "stream")) == {"volume": pytest.approx(0.25), "mute": False}
     assert pw.props(cell("voice", "monitor")) == {"volume": pytest.approx(1.0), "mute": True}

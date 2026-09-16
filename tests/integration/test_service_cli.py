@@ -682,7 +682,8 @@ def test_ux16_meter_ballistics_no_dropouts_hold_and_slow_fall(stack):
     for k in keys:
         vals = [t[1][k] for t in ticks[5:]]
         zeros = sum(1 for v in vals if v == 0)
-        assert zeros == 0, f"{k}: {zeros} of {len(vals)} ticks dropped to 0 with a steady tone"
+        zero_at = [i for i, v in enumerate(vals) if v == 0]
+        assert zeros == 0, f"{k}: {zeros} of {len(vals)} ticks dropped to 0 with a steady tone (at {zero_at}; first {[round(v, 4) for v in vals[:8]]})"
         spread = max(db(v) for v in vals) - min(db(v) for v in vals)
         assert spread < 3.0, f"{k}: steady tone but meter spread {spread:.1f} dB"
     # (2) after the tone stops: hold, then fall ≈ 20 dB/s (accept 12–30 dB/s)
