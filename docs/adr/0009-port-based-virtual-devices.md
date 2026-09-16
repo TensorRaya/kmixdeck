@@ -111,3 +111,34 @@ listed as a normal input and output device and rebuilt on every start from the l
 instead of hand-made pw-cli nodes.
 
 **Not in scope:** arbitrary N×M matrices per channel (that is a patchbay, not a channel strip); per-side FX.
+
+## Amendment B (2026-09-16) — Patchbay, Loopback-style (DV-24…27), Web UI (AR-8/9)
+
+Michel: *"I meant more the variant: a hardware device like the Ui24R that has x connectors you can wire — like
+Loopback on the Mac."* Reference studied: rogueamoeba.com/loopback (tour screenshot). What we take from it:
+
+- **Cards, not boxes.** A source is a card with a header (title, on/off) and one row per connector: label, live
+  level bar, jack on the right edge. A destination card has jacks on the left edge. Channels have both.
+- **Wires jack→jack**, S-curves, accent colour, no arrowheads. Drag to create, click to delete.
+- **Three columns** Sources → Output Channels → Monitors; the Monitors column is hidden behind "Show Monitors".
+  Ours: Sources → Channels → Outputs (+ Monitors optional), because our channel IS the virtual device.
+- **A device with many connectors is one card** (Ui24R = 32 rows, collapsible to the wired ones).
+
+What we do NOT copy: Loopback's per-virtual-device sidebar (our devices are channels/mixes already listed on the
+Mixer page); Pass-Thru (a channel with no FX is that).
+
+**B1. Data model stays: wires are refs.** A wire is `node:POS>L|R` (A2). New: a channel may have SEVERAL input
+refs (`Channel.Inputs`, as) — one loopback edge each, playback side `[FL]` or `[FR]`; the existing
+`Channel.InputDevice` remains the "first/primary" view for simple frontends. Mix outputs already are a list.
+Two wires into the same side of the same channel are allowed (they sum in the channel's null-sink — that is what a
+sink does), so "USB Mic → L" and "Ui24R 3 → L" both work; the two-ports-into-one-side limit from A2 is an edge-level
+limit and does not apply to two separate edges.
+
+**B2. One view model for two frontends (AR-9).** The KDE patchbay and the web patchbay render the same JSON:
+`{cards:[{id, kind, title, on, rows:[{pos, label, level, jackIn, jackOut, usedBy}]}], wires:[{from:{card,pos},
+to:{card,pos}, ref}]}` — produced client-side from the D-Bus tree today, by `kmixdeck-web` for the browser.
+
+**B3. Web UI (AR-8)** is a bridge, not a second daemon: `kmixdeck-web` (Python, aiohttp + dbus-next) subscribes to
+the object manager, pushes state + 25 Hz meters over one WebSocket, forwards actions to D-Bus. Static
+HTML/JS, no build step, no framework lock-in. Reason: aether runs headless with the Ui24R on USB; the stream is
+mixed from wherever we sit.
