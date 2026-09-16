@@ -25,6 +25,7 @@ try:
     s.cli("channel", "add", "Guest"); s.cli("channel", "input", "guest", f"{ui}:AUX8>R")          # A2: right side only
     s.cli("mix", "output", "stream", f"{ui}.out:AUX5>L")                                          # A2: mix left → AUX5
     s.cli("channel", "input", "voice", "fake.mic")
+    s.cli("channel", "input-add", "guest", f"{ui}:AUX3>L")                                           # B1: second wire, other side
     p, app = start_fake_app(s)
     s.cli("app", "move", "FakeGame", "game")
     s.cli("cell", "set", "game", "monitor", "-6dB")

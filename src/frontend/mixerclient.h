@@ -94,6 +94,15 @@ public:
     Q_INVOKABLE QString deviceRefLabel(const QString &ref) const;
     /// Compact form for narrow boxes (routing view): "AUX7 · Soundcraft Ui24R" — port first so it survives eliding
     Q_INVOKABLE QString deviceRefShort(const QString &ref) const;
+    // ---- ADR 0009 B2 / AR-9: the patchbay view model. One JSON-shaped structure for every frontend:
+    //   { cards: [{id, kind: app|device|channel|mix|output, title, icon, on, present,
+    //              rows: [{pos, label, meterKey, jackIn, jackOut, usedBy}]}],
+    //     wires: [{from: {card, pos}, to: {card, pos}, ref, muted, meterKey, kind: input|cell|output}] }
+    // Card ids: "app/<path>", "dev/<node>", "ch/<slug>", "mix/<slug>", "out/<mix>/<ref>". Row pos for stereo cards is "L"/"R".
+    Q_INVOKABLE QVariantMap patchbay() const;
+    Q_INVOKABLE QStringList channelInputs(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Inputs")).toStringList(); }
+    Q_INVOKABLE void addChannelInput(const QString &slug, const QString &ref);
+    Q_INVOKABLE void removeChannelInput(const QString &slug, const QString &ref);
     bool metersEnabled() const { return m_metersEnabled; }
     void setMetersEnabled(bool on);
     /// Last peak (linear 0..1) for "channel/<slug>" or "mix/<slug>"; 0 when unknown.

@@ -95,6 +95,7 @@ int main(int argc, char *argv[])
         win->resize(wh.size() == 2 ? wh[0].toInt() : 1280, wh.size() == 2 ? wh[1].toInt() : 760); win->show();
         QTimer::singleShot(1200, &app, [win, file, open] {
             if (open == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
+            else if (open == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
             else if (open == QLatin1String("apps")) QMetaObject::invokeMethod(win, "showApps");
             else if (open == QLatin1String("channel-ports")) QMetaObject::invokeMethod(win, "addDialogOpenPorts");
             else if (!open.isEmpty()) QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, open));
