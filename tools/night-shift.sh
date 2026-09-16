@@ -29,8 +29,10 @@ for step in tools/night/[0-9]*.py; do
   log "--- $tag start"
   if python3 $step >> $N/log.txt 2>&1; then
     msg=$(python3 $step --message 2>/dev/null || echo "night: $tag")
-    green_commit $tag "$msg" || { log "$tag failed — reverting tree to HEAD"; git checkout -q -- . ; git clean -qfd -e build; }
-  else log "$tag script error"; git checkout -q -- .; git clean -qfd -e build; fi
+    green_commit $tag "$msg" || {   # never throw work away: park it on a branch, main stays clean
+      br="night/$tag-$(date +%H%M)"; git checkout -q -b "$br" && git add -A && git commit -qm "WIP (suite red): $msg" && git push -q -u origin "$br"
+      log "$tag RED → parked on $br"; git checkout -q main; }
+  else log "$tag script error"; br="night/$tag-err-$(date +%H%M)"; git checkout -q -b "$br" && git add -A && git commit -qm "WIP (script error): $tag" && git push -q -u origin "$br"; git checkout -q main; fi
 done
 
 # ---- Report
