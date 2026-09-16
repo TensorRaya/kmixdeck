@@ -56,8 +56,14 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
 
 bool Mixer::loadLayout() {
     Layout l;
-    if (!m_layoutPath.isEmpty() && l.load(m_layoutPath)) { m_layout = l; return true; }
-    return false;
+    const bool ok = !m_layoutPath.isEmpty() && l.load(m_layoutPath);
+    if (ok) m_layout = l;
+    // The layout IS the list of channels and mixes — publish them now, not when PipeWire happens to confirm their
+    // nodes. Before this, `channel list` right after the bus name came up could miss channels whose null-sink had
+    // not been replayed yet (ctest15/16, and the hotplug test on 2026-09-16: "no channel 'hot'" after a restart).
+    for (const auto &c : m_layout.channels) { bool f = false; for (const auto &ch : m_channels) if (ch.slug == c.slug) f = true; if (!f) m_channels.push_back({c.slug, c.name, c.icon, true}); }
+    for (const auto &m : m_layout.mixes)    { bool f = false; for (const auto &mx : m_mixes)    if (mx.slug == m.slug) f = true; if (!f) m_mixes.push_back({m.slug, m.name, m.icon, true}); }
+    return ok;
 }
 bool Mixer::saveLayout() const {
     bool ok = true;

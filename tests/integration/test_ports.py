@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from test_service_cli import BIN, Stack
+from test_service_cli import BIN, Stack, destroy_node
 from pw_sandbox import start_private_pipewire
 
 HOT, SILENT = -30.0, -60.0
@@ -335,3 +335,69 @@ def test_dv24_patchbay_gestures_reach_the_daemon(stack):
     assert f"{ui}.out:AUX3>L" not in stack.cli("mix", "outputs", "stream", json_out=True)
     assert stack.cli("cell", "get", "deck", "stream", json_out=True)["Muted"] is True
     stack.cli("channel", "remove", "deck"); stack.cli("devices", "virtual", "remove", "gesture_ui24r")
+
+
+def test_dv13_hotplug_new_multiport_device_is_listed_wired_replugged_and_persisted(stack):
+    """Michel 2026-09-16: 'Wird sauber erkannt wenn man was Neues anschließt? Beim Unplug/Replug wieder wie vorher?
+    Sauber persistiert?' — the golden rule, measured on a device that appears from OUTSIDE the daemon (like a USB
+    console), with a port-level wire on it, through unplug, replug and a daemon restart. Audio is measured, not
+    only properties."""
+    dev, desc = "hot.console", "Hotplug Console"
+    # (1) plug in a new 4-port device the daemon has never seen → listed with all its ports, wire-able at once
+    make_device(stack, dev, desc, "Audio/Source/Virtual")
+    ports = stack.cli("devices", "ports", dev).stdout
+    assert all(p in ports for p in ("AUX1", "AUX2", "AUX3", "AUX4")), ports
+    stack.cli("channel", "add", "Hot")
+    stack.cli("channel", "input-add", "hot", f"{dev}:AUX2>L")
+    stack.cli("channel", "input-add", "hot", f"{dev}:AUX4>R")
+    stack.pw.wait_node("kmixdeck.in.hot.in"); stack.pw.wait_node("kmixdeck.in.hot.w1.in"); time.sleep(0.8)
+
+    def sides():
+        return stack.pw.level_at_port("kmixdeck.channel.hot", "monitor_FL"), stack.pw.level_at_port("kmixdeck.channel.hot", "monitor_FR")
+    def hear(port, want_side):
+        p = stack.pw.play_into_port(dev, f"input_{port}")
+        try:
+            i = 0 if want_side == "L" else 1
+            v = wait_level(lambda: sides()[i], lambda x: x > HOT); other = sides()[1 - i]
+            assert v > HOT and other < SILENT, f"{port} must land on {want_side} only: L/R={sides()}"
+        finally:
+            p.kill(); p.wait()
+    hear("AUX2", "L"); hear("AUX4", "R")
+    assert stack.cli("channel", "input", "hot").stdout.strip() == f"{dev}:AUX2>L"
+
+    # (2) unplug → greyed out, wires KEPT (not deleted), the channel itself stays
+    destroy_node(stack, dev)
+    for _ in range(50):
+        ch = next(c for c in stack.cli("channel", "list", json_out=True) if c["Slug"] == "hot")
+        if not ch["InputPresent"]: break
+        time.sleep(0.1)
+    assert ch["InputPresent"] is False, ch
+    assert stack.cli("channel", "inputs", "hot", json_out=True) == [f"{dev}:AUX2>L", f"{dev}:AUX4>R"], "wires must survive the absence"
+    assert dev not in stack.cli("devices", "in", json_out=True)
+
+    # (3) replug (same node.name, new node id) → present again, BOTH wires carry audio again, no user action
+    make_device(stack, dev, desc, "Audio/Source/Virtual")
+    for _ in range(80):
+        ch = next(c for c in stack.cli("channel", "list", json_out=True) if c["Slug"] == "hot")
+        if ch["InputPresent"]: break
+        time.sleep(0.1)
+    assert ch["InputPresent"] is True, ch
+    stack.pw.wait_node("kmixdeck.in.hot.in"); stack.pw.wait_node("kmixdeck.in.hot.w1.in"); time.sleep(1.0)
+    hear("AUX2", "L"); hear("AUX4", "R")
+
+    # (4) daemon restart with the device present → same wires, same audio
+    stack.restart_daemon()
+    assert stack.cli("channel", "inputs", "hot", json_out=True) == [f"{dev}:AUX2>L", f"{dev}:AUX4>R"]
+    stack.pw.wait_node("kmixdeck.in.hot.in"); stack.pw.wait_node("kmixdeck.in.hot.w1.in"); time.sleep(1.0)
+    hear("AUX2", "L"); hear("AUX4", "R")
+
+    # (5) daemon restart while the device is UNPLUGGED → wires still in the layout, greyed; plug in → audio
+    destroy_node(stack, dev)
+    stack.restart_daemon()
+    assert stack.cli("channel", "inputs", "hot", json_out=True) == [f"{dev}:AUX2>L", f"{dev}:AUX4>R"], "absent device must not erase the wiring"
+    ch = next(c for c in stack.cli("channel", "list", json_out=True) if c["Slug"] == "hot"); assert ch["InputPresent"] is False
+    make_device(stack, dev, desc, "Audio/Source/Virtual")
+    stack.pw.wait_node("kmixdeck.in.hot.in"); stack.pw.wait_node("kmixdeck.in.hot.w1.in"); time.sleep(1.0)
+    hear("AUX2", "L"); hear("AUX4", "R")
+
+    stack.cli("channel", "remove", "hot"); destroy_node(stack, dev)
