@@ -87,8 +87,11 @@ QQC2.Control {
             QQC2.Label {   // "1 output" / device name / "No output" — click = output menu
                 id: outLabel
                 Layout.fillWidth: true
-                font: Kirigami.Theme.smallFont
-                opacity: header.outputPresent ? 0.6 : 0.9
+                // UX-2: the mix I hear gets a bold device line
+                font.family: Kirigami.Theme.smallFont.family
+                font.pointSize: Kirigami.Theme.smallFont.pointSize
+                font.weight: heard ? Font.DemiBold : Font.Normal
+                opacity: header.outputPresent ? (heard ? 0.9 : 0.6) : 0.9
                 color: header.outputPresent ? Kirigami.Theme.textColor : Kirigami.Theme.neutralTextColor
                 elide: Text.ElideRight
                 text: {
@@ -97,9 +100,7 @@ QQC2.Control {
                                : i18ncp("@label number of hardware outputs of a mix", "%1 output", "%1 outputs", header.outputs.length)
                     return header.outputPresent ? name : i18nc("@label %1 device name(s), unplugged", "%1 — unplugged", name)
                 }
-                // UX-2: this mix is what I hear → say so, the device name alone is long and gets elided
-                readonly property bool heard: header.outputs.indexOf(Mixer.listeningDevice) >= 0 && Mixer.listeningDevice.length > 0
-                font.weight: heard ? Font.DemiBold : Font.Normal
+                readonly property bool heard: Mixer.listeningDevice.length > 0 && header.outputs.indexOf(Mixer.listeningDevice) >= 0
                 TapHandler { onTapped: outMenu.popup() }
                 HoverHandler { id: outHover; cursorShape: Qt.PointingHandCursor }
                 QQC2.ToolTip.text: header.outputPresent

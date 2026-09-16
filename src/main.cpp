@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include <QApplication>
 #include <QQmlApplicationEngine>
+#include <QTimer>
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QIcon>
@@ -45,6 +46,8 @@ int main(int argc, char *argv[])
 
     QCommandLineParser parser;
     about.setupCommandLine(&parser);
+    const QCommandLineOption selfTest(QStringLiteral("self-test"), QStringLiteral("Load the UI, then exit (used by ctest)."));
+    parser.addOption(selfTest);
     parser.process(app);
     about.processCommandLine(&parser);
 
@@ -60,6 +63,12 @@ int main(int argc, char *argv[])
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.loadFromModule("org.kmixdeck", "Main");
     if (!engine.rootObjects().isEmpty()) kde.setMainWindow(qobject_cast<QQuickWindow *>(engine.rootObjects().first()));
+    // --self-test: load every QML file, then quit — ctest runs this offscreen so a broken binding
+    // (2026-09-16: a duplicate `font` assignment made the UI exit 1 without a message) fails the build, not the user.
+    if (parser.isSet(selfTest)) {
+        if (engine.rootObjects().isEmpty()) return 1;
+        QTimer::singleShot(1500, &app, [] { QCoreApplication::exit(0); });
+    }
 
     // Closing the window keeps the tray item (and the shortcuts) alive; quit via the tray menu (CT-4).
     app.setQuitOnLastWindowClosed(false);
