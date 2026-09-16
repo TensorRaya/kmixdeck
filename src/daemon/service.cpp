@@ -336,6 +336,17 @@ void MixerAdaptor::RemoveMix(const QDBusObjectPath &p) {
     m_mixer->removeMix(slug);
 }
 void MixerAdaptor::Save() { if (!m_mixer->saveLayout()) qWarning() << "Save(): could not write layout"; }
+// DV-23
+QString MixerAdaptor::AddVirtualDevice(const QString &name, int inputs, int outputs) {
+    QString err; const QString slug = m_mixer->addVirtualDevice(name, inputs, outputs, &err);
+    if (slug.isEmpty()) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), err); return {}; }
+    return QStringLiteral("kmixdeck.virt.") + slug;
+}
+void MixerAdaptor::RemoveVirtualDevice(const QString &slug) {
+    if (!m_mixer->removeVirtualDevice(slug.startsWith(QLatin1String("kmixdeck.virt.")) ? slug.mid(14) : slug))
+        static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no such virtual device"));
+}
+QStringList MixerAdaptor::virtualDevices() const { QStringList l; for (const auto &s : m_mixer->virtualDeviceSlugs()) l << QStringLiteral("kmixdeck.virt.") + s; return l; }
 
 // ---- Service
 Service::Service(QObject *parent) : QObject(parent) {
@@ -429,7 +440,7 @@ ManagedObjects Service::managedObjects() const {
     out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
         {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()},
          {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())},
-         {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor->devicePorts())},
+         {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor->devicePorts())}, {QStringLiteral("VirtualDevices"), m_mixerAdaptor->virtualDevices()},
          {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("ListeningDevice"), m_mixer.listeningDevice()}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}, {QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()},
          {QStringLiteral("FxTypes"), m_mixerAdaptor->fxTypes()}, {QStringLiteral("FxPresets"), m_mixerAdaptor->fxPresets()}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)

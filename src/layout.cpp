@@ -76,8 +76,10 @@ QJsonObject Layout::toJson() const {
     for (const auto &i : inputs) in.append(QJsonObject{{QStringLiteral("slug"), i.slug}, {QStringLiteral("name"), i.name}, {QStringLiteral("device"), i.device.toJson()}, {QStringLiteral("channel"), i.channel}});
     QJsonArray appArr;
     for (const auto &a : apps) appArr.append(QJsonObject{{QStringLiteral("key"), a.key}, {QStringLiteral("nodeName"), a.nodeName}, {QStringLiteral("channels"), QJsonArray::fromStringList(a.channels)}});
+    QJsonArray virtArr;
+    for (const auto &v : virtualDevices) virtArr.append(QJsonObject{{QStringLiteral("slug"), v.slug}, {QStringLiteral("name"), v.name}, {QStringLiteral("inputs"), v.inputs}, {QStringLiteral("outputs"), v.outputs}, {QStringLiteral("portPrefix"), v.portPrefix}});
     return {{QStringLiteral("version"), 2}, {QStringLiteral("channels"), ch}, {QStringLiteral("mixes"), mx}, {QStringLiteral("inputs"), in},
-            {QStringLiteral("apps"), appArr},
+            {QStringLiteral("apps"), appArr}, {QStringLiteral("virtualDevices"), virtArr},
             {QStringLiteral("defaultChannel"), defaultChannel}, {QStringLiteral("listeningDevice"), listeningDevice}, {QStringLiteral("knownApps"), QJsonArray::fromStringList(knownApps)},
             {QStringLiteral("links"), [this] { QJsonArray a; for (const auto &l : links) a.append(QJsonObject{{QStringLiteral("channel"), l.channel}, {QStringLiteral("mix"), l.mix}, {QStringLiteral("follows"), l.follows}}); return a; }()}};
 }
@@ -103,6 +105,13 @@ Layout Layout::fromJson(const QJsonObject &o) {
     for (const auto &v : o.value(QStringLiteral("inputs")).toArray()) {
         const auto i = v.toObject();
         l.inputs.push_back({i.value(QStringLiteral("slug")).toString(), i.value(QStringLiteral("name")).toString(), DeviceRef::fromJson(i.value(QStringLiteral("device")).toObject()), i.value(QStringLiteral("channel")).toString()});
+    }
+    for (const auto &v : o.value(QStringLiteral("virtualDevices")).toArray()) {   // DV-23
+        const auto j = v.toObject(); LayoutVirtualDevice d;
+        d.slug = j.value(QStringLiteral("slug")).toString(); d.name = j.value(QStringLiteral("name")).toString();
+        d.inputs = j.value(QStringLiteral("inputs")).toInt(8); d.outputs = j.value(QStringLiteral("outputs")).toInt(8);
+        d.portPrefix = j.value(QStringLiteral("portPrefix")).toString(QStringLiteral("AUX"));
+        if (!d.slug.isEmpty()) l.virtualDevices.push_back(d);
     }
     for (const auto &v : o.value(QStringLiteral("apps")).toArray()) {
         const auto a = v.toObject(); LayoutApp la;
@@ -165,6 +174,12 @@ QString Layout::toPipewireConf() const {
                           "# WirePlumber links them by itself when it appears. A mix with NO output configured parks on kmixdeck.null.\n\n");
     out += QStringLiteral("context.objects = [\n");
     out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = \"kmixdeck.null\" media.name = \"kmixdeck.null\" node.description = \"kmixdeck (unrouted)\" media.class = Audio/Sink object.linger = true audio.position = [ FL FR ] priority.session = 0 priority.driver = 0 node.passive = true } }\n");
+    for (const auto &v : virtualDevices) {   // DV-23: virtual multichannel device = one sink (its outputs) + one virtual source (its inputs)
+        out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = %1 media.name = %1 node.description = %2 media.class = Audio/Sink object.linger = true audio.position = %3 monitor.channel-volumes = true } }\n")
+                   .arg(q(v.outputNode()), q(v.name + QStringLiteral(" (virtual) outputs")), pos(v.positions(v.outputs)));
+        out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = %1 media.name = %1 node.description = %2 media.class = Audio/Source/Virtual object.linger = true audio.position = %3 } }\n")
+                   .arg(q(v.inputNode()), q(v.name + QStringLiteral(" (virtual)")), pos(v.positions(v.inputs)));
+    }
     const auto fxModule = [&](const fx::Chain &chain, const QString &desc, const QString &entry, const QString &exit,
                               const QString &mediaName, const QString &target, const QString &prefix) {
         const QString args = fx::renderFilterChainArgs(chain, desc, entry, exit, mediaName, target, prefix);

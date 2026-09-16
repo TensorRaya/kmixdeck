@@ -221,6 +221,7 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_PROPERTY(StringMap OutputDevices READ outputDevices)     // a{ss}: node.name → description
     Q_PROPERTY(StringMap InputDevices READ inputDevices)
     Q_PROPERTY(PortMap DevicePorts READ devicePorts)     // ADR 0009 D4: node → ["POS|port.name|port.alias", …]
+    Q_PROPERTY(QStringList VirtualDevices READ virtualDevices)   // DV-23: node.names (input side) of our virtual devices
     Q_PROPERTY(QDBusObjectPath DefaultChannel READ defaultChannel WRITE setDefaultChannel)   // CH-5; "/" = off
     Q_PROPERTY(QString ListeningDevice READ listeningDevice WRITE setListeningDevice)         // UX-2; node.name or ""
     Q_PROPERTY(QString UndoDescription READ undoDescription)   // CH-9: "" = nothing to undo, else e.g. channel “Music”
@@ -235,6 +236,7 @@ public:
     StringMap outputDevices() const;
     StringMap inputDevices() const;
     PortMap devicePorts() const;
+    QStringList virtualDevices() const;
     QDBusObjectPath defaultChannel() const;
     void setDefaultChannel(const QDBusObjectPath &p);
     QString listeningDevice() const { return m_mixer->listeningDevice(); }
@@ -252,6 +254,8 @@ public Q_SLOTS:
     void MoveMix(const QDBusObjectPath &path, int index);
     QDBusObjectPath AddChannel(const QString &name);
     QDBusObjectPath AddMix(const QString &name);
+    QString AddVirtualDevice(const QString &name, int inputs, int outputs);   // DV-23 → node.name of the input side
+    void RemoveVirtualDevice(const QString &slugOrNode);
     void RemoveChannel(const QDBusObjectPath &path);
     void RemoveMix(const QDBusObjectPath &path);
     void Save();

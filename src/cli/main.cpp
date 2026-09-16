@@ -221,6 +221,20 @@ int main(int argc, char *argv[]) {
         return true;
     };
     if (cmd == "devices") {
+        if (sub == "virtual") {   // DV-23: devices virtual list | add <name> [--in N] [--out N] | remove <slug|node>
+            const QString op = a.value(2);
+            if (op == "list" || op.isEmpty()) { for (const auto &n : unwrap(o.mixer.value("VirtualDevices")).toStringList()) out << n << "\n"; return Ok; }
+            if (op == "add") {
+                if (!need(4)) return Usage;
+                int in = 8, outN = 8;
+                for (int i = 4; i + 1 < a.size(); i += 2) { if (a[i] == "--in") in = a[i + 1].toInt(); else if (a[i] == "--out") outN = a[i + 1].toInt(); else return fail(Usage, "devices virtual add <name> [--in N] [--out N]"); }
+                const QDBusMessage r = mixer.call("AddVirtualDevice", a[3], in, outN);
+                if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
+                out << r.arguments().value(0).toString() << "\n"; return Ok;
+            }
+            if (op == "remove") { if (!need(4)) return Usage; const QDBusMessage r = mixer.call("RemoveVirtualDevice", a[3]); return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok; }
+            return fail(Usage, "devices virtual list|add|remove");
+        }
         if (sub == "ports") {   // devices ports <node> — ADR 0009 D4: what "node:POS,POS" may name, and who uses it
             if (!need(3)) return Usage;
             const PortMap pm = qdbus_cast<PortMap>(o.mixer.value("DevicePorts"));

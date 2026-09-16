@@ -140,6 +140,16 @@ public:
     QString channelInputDevice(const QString &channel) const;
     bool    channelInputPresent(const QString &channel) const;
     bool    setChannelInputDevice(const QString &channel, const QString &ref);   // ref = node[:POS,POS] (ADR 0009)
+    // DV-23 virtual multichannel devices (Ui24R stand-in for testing)
+    QString addVirtualDevice(const QString &displayName, int inputs, int outputs, QString *error);
+    bool    removeVirtualDevice(const QString &slug);
+    QStringList virtualDeviceSlugs() const;
+private:
+    // Nodes we asked PipeWire to create that have not shown up in the registry yet. reconcile() runs again on
+    // every graph event; without this, two reconciles a few ms apart created the same node twice (DV-23 test).
+    QSet<QString> m_nodeRequested;
+    void requestNullNode(const QString &name, const std::function<void()> &create);
+public:
     /// ADR 0009 D4: non-monitor ports of a device node, as "POSITION|port.name|port.alias" — for pickers.
     QStringList devicePorts(const QString &nodeName) const;
     /// Validate a reference against the live device: node known and every position an actual port. Empty = ok.

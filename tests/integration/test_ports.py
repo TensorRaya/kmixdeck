@@ -128,3 +128,43 @@ def test_dv18_mix_output_into_a_port_subset_leaves_other_ports_silent(stack):
     stack.restart_daemon()
     assert stack.cli("mix", "get", "stream", json_out=True)["Outputs"] == ["fake.rode.out:AUX3,AUX4"]
     stack.cli("mix", "output", "stream", "none")
+
+
+def test_dv23_virtual_multichannel_device_is_a_real_device_and_persists(stack):
+    """DV-23: `devices virtual add` gives us a Ui24R stand-in: 8 capture ports in the picker, an 8-port sink apps can
+    play into, port refs work on it, and it is still there after a daemon restart (it is layout)."""
+    node = stack.cli("devices", "virtual", "add", "Test Ui24R", "--in", "8", "--out", "8").stdout.strip()
+    assert node == "kmixdeck.virt.test_ui24r"
+    stack.pw.wait_node(node); stack.pw.wait_node(node + ".out")
+    for _ in range(50):
+        if node in stack.cli("devices", "in", json_out=True) and node + ".out" in stack.cli("devices", "out", json_out=True): break
+        time.sleep(0.1)
+    else: raise AssertionError("virtual device not listed as input AND output device")
+    ports = stack.cli("--json", "devices", "ports", node, json_out=False)
+    assert ports.returncode == 0 and all(f"AUX{i}" in ports.stdout for i in range(1, 9)), ports.stdout
+    # a channel from two of its ports hears exactly those (same measurement as DV-17, on the virtual device)
+    stack.cli("channel", "add", "Deck"); stack.cli("channel", "input", "deck", f"{node}:AUX5,AUX6")
+    stack.pw.wait_node("kmixdeck.in.deck.in"); time.sleep(0.8)
+    p = stack.pw.play_into_port(node, "input_AUX5")
+    try:
+        left = wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.deck", "monitor_FL"), lambda v: v > HOT)
+        right = stack.pw.level_at_port("kmixdeck.channel.deck", "monitor_FR")
+        assert left > HOT and right < SILENT, f"AUX5 → left only: L={left} R={right}"
+    finally:
+        p.kill(); p.wait()
+    # a mix into two of its output ports
+    stack.cli("mix", "output", "stream", f"{node}.out:AUX7,AUX8"); time.sleep(1.0)
+    p = stack.pw.play_into("kmixdeck.channel.game")
+    try:
+        stack.cli("cell", "set", "game", "stream", "1.0")
+        a7 = wait_level(lambda: stack.pw.level_at_port(node + ".out", "monitor_AUX7"), lambda v: v > HOT)
+        a1 = stack.pw.level_at_port(node + ".out", "monitor_AUX1")
+        assert a7 > HOT and a1 < SILENT, f"stream → AUX7 only: AUX7={a7} AUX1={a1}"
+    finally:
+        p.kill(); p.wait()
+    stack.restart_daemon(); time.sleep(2.0)
+    assert node in stack.cli("devices", "virtual", "list").stdout
+    assert stack.pw.node(node) is not None and stack.pw.node(node + ".out") is not None, "virtual device must survive a daemon restart"
+    stack.cli("mix", "output", "stream", "none"); stack.cli("channel", "remove", "deck")
+    stack.cli("devices", "virtual", "remove", "test_ui24r"); time.sleep(0.8)
+    assert stack.pw.node(node) is None

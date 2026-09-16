@@ -52,12 +52,26 @@ struct LayoutLink    { QString channel, mix, follows; };
 /// every assigned channel hears the app. nodeName = last seen node.name of the stream (relay capture side).
 struct LayoutApp     { QString key, nodeName; QStringList channels; };
 
+/// DV-23: a persistent virtual multichannel device (stands in for a Ui24R / RØDECaster when testing port routing).
+/// Rendered as TWO null-sink adapters: "<node>.out" (Audio/Sink, `outputs` ports — apps and mixes play into it) and
+/// "<node>" (Audio/Source/Virtual, `inputs` ports — channels capture from it; feeding its input_* ports emulates a mic).
+struct LayoutVirtualDevice {
+    QString slug, name;           // slug → node.name "kmixdeck.virt.<slug>"
+    int inputs = 8, outputs = 8;  // port counts, positions AUX1..AUXn
+    QString portPrefix = QStringLiteral("AUX");
+    QString inputNode() const { return QStringLiteral("kmixdeck.virt.") + slug; }
+    QString outputNode() const { return QStringLiteral("kmixdeck.virt.") + slug + QStringLiteral(".out"); }
+    QStringList positions(int n) const { QStringList p; for (int i = 1; i <= n; ++i) p << portPrefix + QString::number(i); return p; }
+};
+
 struct Layout {
     QVector<LayoutLink> links;
     QVector<LayoutChannel> channels;
     QVector<LayoutMix> mixes;
     QVector<LayoutInput> inputs;
     QVector<LayoutApp> apps;                       // CH-12: remembered per-app channel assignments
+    QVector<LayoutVirtualDevice> virtualDevices;   // DV-23
+    LayoutVirtualDevice *virtualDevice(const QString &slug) { for (auto &v : virtualDevices) if (v.slug == slug) return &v; return nullptr; }
     /// CH-5: where a never-seen application lands. Empty = leave it on the system default (no auto-routing).
     QString defaultChannel = QStringLiteral("system");
     /// UX-2: the device the user listens on (node.name). The mix routed to it is "what I hear". Empty = not chosen.

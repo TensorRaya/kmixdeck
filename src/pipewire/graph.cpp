@@ -375,6 +375,25 @@ void Graph::createNullSink(const QString &name, const QString &description, bool
     pw_thread_loop_unlock(d->loop);
 }
 
+void Graph::createNullNode(const QString &name, const QString &description, const QString &mediaClass, const QStringList &positions) {
+    pw_thread_loop_lock(d->loop);
+    const QByteArray pos = (QStringLiteral("[ ") + positions.join(QLatin1Char(' ')) + QStringLiteral(" ]")).toUtf8();
+    pw_properties *props = pw_properties_new(
+        PW_KEY_FACTORY_NAME, "support.null-audio-sink",
+        PW_KEY_NODE_NAME, name.toUtf8().constData(),
+        PW_KEY_MEDIA_NAME, name.toUtf8().constData(),
+        PW_KEY_NODE_DESCRIPTION, description.toUtf8().constData(),
+        PW_KEY_MEDIA_CLASS, mediaClass.toUtf8().constData(),
+        "audio.position", pos.constData(),
+        "monitor.channel-volumes", "true",
+        PW_KEY_OBJECT_LINGER, "true",
+        nullptr);
+    pw_proxy *p = static_cast<pw_proxy *>(pw_core_create_object(d->core, "adapter", PW_TYPE_INTERFACE_Node, PW_VERSION_NODE, &props->dict, 0));
+    pw_properties_free(props);
+    if (p) pw_proxy_destroy(p);
+    pw_thread_loop_unlock(d->loop);
+}
+
 void Graph::loadLoopback(const QString &args, const char *module) {
     pw_thread_loop_lock(d->loop);
     pw_context_load_module(d->context, module, args.toUtf8().constData(), nullptr);

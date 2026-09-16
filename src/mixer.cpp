@@ -72,12 +72,16 @@ void Mixer::reconcile() {
     if (!m_connected) return;
     if (!m_graph.node(QStringLiteral("kmixdeck.null"))) m_graph.createParkingSink();
     for (const auto &c : m_layout.channels) {
-        if (!m_graph.node(Names::channelNode(c.slug))) m_graph.createNullSink(Names::channelNode(c.slug), c.name, true);
+        requestNullNode(Names::channelNode(c.slug), [&] { m_graph.createNullSink(Names::channelNode(c.slug), c.name, true); });
         bool found = false; for (auto &ch : m_channels) if (ch.slug == c.slug) { found = true; if (ch.name != c.name || ch.icon != c.icon) { ch.name = c.name; ch.icon = c.icon; Q_EMIT channelChanged(c.slug); } }
         if (!found) m_channels.push_back({c.slug, c.name, c.icon, true});
     }
     for (const auto &m : m_layout.mixes) {
-        if (!m_graph.node(Names::mixNode(m.slug))) m_graph.createNullSink(Names::mixNode(m.slug), QStringLiteral("Mix: ") + m.name, false);
+        requestNullNode(Names::mixNode(m.slug), [&] { m_graph.createNullSink(Names::mixNode(m.slug), QStringLiteral("Mix: ") + m.name, false); });
+    for (const auto &v : m_layout.virtualDevices) {   // DV-23
+        requestNullNode(v.outputNode(), [&] { m_graph.createNullNode(v.outputNode(), v.name + QStringLiteral(" (virtual) outputs"), QStringLiteral("Audio/Sink"), v.positions(v.outputs)); });
+        requestNullNode(v.inputNode(),  [&] { m_graph.createNullNode(v.inputNode(),  v.name + QStringLiteral(" (virtual)"), QStringLiteral("Audio/Source/Virtual"), v.positions(v.inputs)); });
+    }
         bool found = false; for (auto &mx : m_mixes) if (mx.slug == m.slug) { found = true; if (mx.name != m.name || mx.icon != m.icon) { mx.name = m.name; mx.icon = m.icon; Q_EMIT mixChanged(m.slug); } }
         if (!found) m_mixes.push_back({m.slug, m.name, m.icon, true});
     }
@@ -127,6 +131,13 @@ void Mixer::reconcile() {
     Q_EMIT layoutChanged();
 }
 
+void Mixer::requestNullNode(const QString &name, const std::function<void()> &create) {
+    if (m_graph.node(name)) { m_nodeRequested.remove(name); return; }
+    // a removed node may still be in the registry snapshot for a moment; the destroy path clears the set explicitly
+    if (m_nodeRequested.contains(name)) return;   // asked already, registry has not caught up yet
+    m_nodeRequested.insert(name);
+    create();
+}
 // ---- effects (ADR 0008) ---------------------------------------------------------------------------------
 namespace {
 fx::Chain *chainOf(Layout &l, const QString &slug) {
@@ -780,6 +791,26 @@ QString Mixer::addChannel(const QString &displayName, QString *error) {
     saveLayout(); reconcile();
     return slug;
 }
+QString Mixer::addVirtualDevice(const QString &displayName, int inputs, int outputs, QString *error) {   // DV-23
+    const QString slug = Names::slugify(displayName);
+    if (slug.isEmpty()) { if (error) *error = QStringLiteral("name has no usable characters"); return {}; }
+    if (m_layout.virtualDevice(slug)) { if (error) *error = QStringLiteral("virtual device '%1' already exists").arg(slug); return {}; }
+    if (inputs < 1 || inputs > 64 || outputs < 0 || outputs > 64) { if (error) *error = QStringLiteral("inputs 1..64, outputs 0..64"); return {}; }
+    LayoutVirtualDevice v; v.slug = slug; v.name = displayName.trimmed(); v.inputs = inputs; v.outputs = outputs;
+    m_layout.virtualDevices.push_back(v);
+    saveLayout(); reconcile();
+    return slug;
+}
+bool Mixer::removeVirtualDevice(const QString &slug) {
+    auto *v = m_layout.virtualDevice(slug); if (!v) return false;
+    const QStringList nodes{v->inputNode(), v->outputNode()};
+    m_layout.virtualDevices.removeIf([&](const LayoutVirtualDevice &d) { return d.slug == slug; });
+    saveLayout();   // layout first: a reconcile triggered by the removal below must not re-create them
+    for (const QString &n : nodes) { m_nodeRequested.remove(n); if (auto node = m_graph.node(n)) m_graph.destroyObject(node->id); }
+    Q_EMIT layoutChanged();
+    return true;
+}
+QStringList Mixer::virtualDeviceSlugs() const { QStringList l; for (const auto &v : m_layout.virtualDevices) l << v.slug; return l; }
 QString Mixer::addMix(const QString &displayName, QString *error) {
     const QString slug = Names::slugify(displayName);
     if (slug.isEmpty()) { if (error) *error = QStringLiteral("name has no usable characters"); return {}; }
@@ -893,7 +924,7 @@ void Mixer::removeMix(const QString &slug) {
 // listed too so nothing is missed when the graph is in a half state. Snapshot first: destroy mutates m_graph.
 void Mixer::destroyOurNodes(const std::function<bool(const QString &)> &match) {
     QList<uint32_t> ids;
-    for (const auto &n : m_graph.nodes()) if (n.name.startsWith(QLatin1String("kmixdeck.")) && match(n.name)) ids << n.id;
+    for (const auto &n : m_graph.nodes()) if (n.name.startsWith(QLatin1String("kmixdeck.")) && match(n.name)) { ids << n.id; m_nodeRequested.remove(n.name); }
     for (uint32_t id : ids) m_graph.destroyObject(id);
 }
 
@@ -934,7 +965,8 @@ void Mixer::onNode(const pw::NodeInfo &n) {
             if (n.name == base || n.name.startsWith(base + QLatin1Char('.')) || n.name == EdgeNames::sourceNode(m.slug)) { Q_EMIT mixChanged(m.slug); break; }
         }
     }
-    else if ((n.mediaClass == QLatin1String("Audio/Sink") || n.mediaClass.startsWith(QLatin1String("Audio/Source"))) && !n.name.startsWith(QLatin1String("kmixdeck."))) {   // Audio/Source/Virtual = e.g. OBS/loopback virtual mics
+    else if ((n.mediaClass == QLatin1String("Audio/Sink") || n.mediaClass.startsWith(QLatin1String("Audio/Source")))
+             && (!n.name.startsWith(QLatin1String("kmixdeck.")) || n.name.startsWith(QLatin1String("kmixdeck.virt.")))) {   // our own plumbing is not a device — except DV-23 virtual devices, which are meant to be picked
         const bool wasNew = !m_devices.contains(n.name);
         m_devices[n.name] = n;
         // Remember the human name in the layout, so an unplugged device can still be named (DV-9). Layouts migrated
@@ -975,6 +1007,7 @@ void Mixer::onNode(const pw::NodeInfo &n) {
 void Mixer::onNodeRemoved(uint32_t id) {
     const QString name = m_idToName.take(id);
     m_pendingAutoRoute.remove(id);
+    m_nodeRequested.remove(name);   // gone for real → may be requested again (CH-9 undo re-creates a removed mix)
     if (m_apps.remove(id)) Q_EMIT appRemoved(id);
     if (name.isEmpty()) return;
     // CH-12 relays follow the app node: gone → tear the relay down (see ensureAppRelays for why a lingering one hurts)

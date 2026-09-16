@@ -61,6 +61,19 @@
       <arg name="name" type="s" direction="in"/>
       <arg name="path" type="o" direction="out"/>
     </method>
+    <!-- DV-23: persistent virtual multichannel device (Ui24R stand-in). Creates "<node>" (Audio/Source/Virtual, `inputs`
+         ports AUX1..n — channels capture from it, feeding its input_* ports emulates a mic) and "<node>.out" (Audio/Sink,
+         `outputs` ports — apps/mixes play into it). Returns the input-side node.name. -->
+    <method name="AddVirtualDevice">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="inputs" type="i" direction="in"/>
+      <arg name="outputs" type="i" direction="in"/>
+      <arg name="node" type="s" direction="out"/>
+    </method>
+    <method name="RemoveVirtualDevice">
+      <arg name="slugOrNode" type="s" direction="in"/>
+    </method>
+    <property name="VirtualDevices" type="as" access="read"/>
     <method name="RemoveChannel"><arg name="path" type="o" direction="in"/></method>
     <method name="RemoveMix"><arg name="path" type="o" direction="in"/></method>
     <!-- Persist the layout (channels, mixes) to the service's config; cell levels persist in WirePlumber anyway. -->

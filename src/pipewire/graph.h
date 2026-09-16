@@ -76,6 +76,8 @@ public:
 
     /// Create a null sink (channel or mix). Returns immediately; node appears via nodeAdded().
     void createNullSink(const QString &name, const QString &description, bool passive);
+    /// DV-23: a null-sink adapter with arbitrary media.class and channel layout (virtual multichannel devices)
+    void createNullNode(const QString &name, const QString &description, const QString &mediaClass, const QStringList &positions);
     /// Load a module-loopback with the given SPA-JSON args (built by kmixdeck::loopbackArgs so runtime and
     /// config fragment can never drift). Modules live in our context — as long as the daemon. The persistent
     /// graph is the generated pipewire.conf.d fragment (DV-1/DV-5).
