@@ -475,3 +475,54 @@ def _ux3_body(stack, prop, make_fake_sink, make_fake_source, start_fake_app):
     finally:
         p.kill(); p.wait()
         subprocess.run(["pw-metadata", "0", "default.audio.sink", '{"name":"fake.desk"}', "Spa:String:JSON"], env=stack.env, capture_output=True)
+
+
+def test_ch8_channel_groups_move_together_in_cli_window_and_tray(stack):
+    tray_probe = globals()["tray"]
+    """CH-8: channels sharing a group move together — trim as one dB delta for every member (their balance survives),
+    mute mirrored; leaving the group stops it. Set from CLI, seen in window (badge on each member) and tray (⛓);
+    a fader move in the WINDOW on one member moves the other in the daemon; group names persist over a restart."""
+    import math
+    db = lambda v: -99.0 if v <= 0 else 20 * math.log10(v)
+    def trims(): return {c["Slug"]: (round(db(c["Trim"]), 1), c["Muted"]) for c in stack.cli("channel", "list", json_out=True)}
+    for c in ("game", "system", "voice"): stack.cli("channel", "group", c, "none"); stack.cli("channel", "mute", c, "off")
+    stack.cli("channel", "trim", "game", "-6dB"); stack.cli("channel", "trim", "system", "-12dB"); stack.cli("channel", "trim", "voice", "0dB"); time.sleep(0.5)
+    # --- CLI: group two of three, move one → the other follows by the same delta, the third stays
+    stack.cli("channel", "group", "game", "Media"); stack.cli("channel", "group", "system", "Media")
+    assert stack.cli("channel", "groups", json_out=True) == {"Media": ["game", "system"]}
+    stack.cli("channel", "trim", "game", "-9dB"); time.sleep(0.5)
+    t = trims(); assert t["game"][0] == -9.0 and abs(t["system"][0] + 15.0) < 0.3 and t["voice"][0] == 0.0, t
+    stack.cli("channel", "mute", "system", "on"); time.sleep(0.4)
+    t = trims(); assert t["game"][1] is True and t["system"][1] is True and t["voice"][1] is False, "mute must mirror inside the group only"
+    stack.cli("channel", "mute", "system", "off"); time.sleep(0.3)
+    # --- window: badge on both members, none on voice; the group menu gesture joins voice; the badge appears
+    g = kde(stack, "--probe", "channelGroupBadge.visible", "--gesture", "group:voice|Media", "--probe", "channelGroupBadge.groupName", open_page="mixer")
+    assert g["channelGroupBadge.visible"] == "true", g
+    assert g["channelGroupBadge.groupName"] == "Media"
+    for _ in range(30):
+        if stack.cli("channel", "group", "voice").stdout.strip() == "Media": break
+        time.sleep(0.1)
+    assert stack.cli("channel", "groups", json_out=True) == {"Media": ["game", "system", "voice"]}
+    # --- a fader move in the window on ONE member moves the others in the daemon (trim dial of game: −9 → −3 = +6 dB)
+    before = trims()
+    r = kde(stack, "--gesture", "trim:game|" + str(round(_cubic(-3), 4)), "--probe", "channelTrimText/game.text", open_page="mixer")   # dial is cubic (CH-7)
+    for _ in range(30):
+        t = trims()
+        if abs(t["game"][0] + 3.0) < 0.3: break
+        time.sleep(0.1)
+    assert abs(t["game"][0] + 3.0) < 0.3, (before, t, r)
+    assert abs(t["system"][0] - (before["system"][0] + 6.0)) < 0.4, f"system should follow by +6 dB: {before['system']} → {t['system']}"
+    assert abs(t["voice"][0] - min(0.0, before["voice"][0] + 6.0)) < 0.4, f"voice (was 0 dB) is clamped at 0: {t['voice']}"
+    # --- tray: ⛓ on every member's name
+    tr = tray_probe(stack, "trayChannelName/game.text", "trayChannelName/system.text", "trayChannelName/voice.text")
+    assert all("⛓" in tr[k] for k in tr), tr
+    # --- leaving: voice out, game move no longer touches voice
+    stack.cli("channel", "group", "voice", "none"); stack.cli("channel", "trim", "game", "-9dB"); time.sleep(0.5)
+    t2 = trims(); assert t2["voice"][0] == t["voice"][0], "a channel that left the group must not follow any more"
+    tray2 = tray_probe(stack, "trayChannelName/voice.text"); assert "⛓" not in tray2["trayChannelName/voice.text"]
+    # --- persists
+    stack.restart_daemon(); time.sleep(1.0)
+    assert stack.cli("channel", "groups", json_out=True) == {"Media": ["game", "system"]}
+    # --- refused: a slash (would break slugs/paths in the tray keys) — and the CLI reports it
+    r = stack.cli("channel", "group", "game", "a/b", check=False); assert r.returncode != 0 and "group name" in r.stderr
+    for c in ("game", "system"): stack.cli("channel", "group", c, "none")

@@ -9,6 +9,9 @@
     <property name="Icon" type="s" access="readwrite"/>
     <!-- MX-5 colour code: "#rrggbb", or "" for the theme default. Rejected otherwise. -->
     <property name="Color" type="s" access="readwrite"/>
+    <!-- CH-8: channels sharing a Group name move together: trim changes are applied as the same dB delta to every
+         member (balance survives), mute is mirrored. "" = no group. -->
+    <property name="Group" type="s" access="readwrite"/>
     <!-- channel-wide trim before all mixes, linear 0..1 (CH-7); NOT the per-mix fader -->
     <property name="Trim" type="d" access="readwrite"/>
     <!-- DV-22: stereo position of the channel, -1 (left) … 0 (centre) … +1 (right); constant-power law on the channel sink; persisted -->

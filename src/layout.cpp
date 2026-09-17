@@ -70,6 +70,7 @@ QJsonObject Layout::toJson() const {
     for (const auto &c : channels) {
         QJsonObject o{{QStringLiteral("slug"), c.slug}, {QStringLiteral("name"), c.name}, {QStringLiteral("icon"), c.icon}};
         if (!c.color.isEmpty()) o.insert(QStringLiteral("color"), c.color);
+        if (!c.group.isEmpty()) o.insert(QStringLiteral("group"), c.group);
         if (c.pan != 0.0) o.insert(QStringLiteral("pan"), c.pan);   // DV-22
         if (!c.fx.effects.isEmpty() || !c.fx.enabled) o.insert(QStringLiteral("fx"), QJsonObject{{QStringLiteral("enabled"), c.fx.enabled}, {QStringLiteral("chain"), fxChainArray(c.fx)}});
         ch.append(o);
@@ -101,7 +102,7 @@ Layout Layout::fromJson(const QJsonObject &o) {
     for (const auto &v : o.value(QStringLiteral("knownApps")).toArray()) l.knownApps << v.toString();
     for (const auto &v : o.value(QStringLiteral("hiddenDevices")).toArray()) l.hiddenDevices << v.toString();
     for (const auto &v : o.value(QStringLiteral("links")).toArray()) { const auto j = v.toObject(); l.links.push_back({j.value(QStringLiteral("channel")).toString(), j.value(QStringLiteral("mix")).toString(), j.value(QStringLiteral("follows")).toString()}); }
-    for (const auto &v : o.value(QStringLiteral("channels")).toArray()) { const auto c = v.toObject(); l.channels.push_back({c.value(QStringLiteral("slug")).toString(), c.value(QStringLiteral("name")).toString(), c.value(QStringLiteral("icon")).toString(), readFx(c), std::clamp(c.value(QStringLiteral("pan")).toDouble(0.0), -1.0, 1.0), c.value(QStringLiteral("color")).toString()}); }
+    for (const auto &v : o.value(QStringLiteral("channels")).toArray()) { const auto c = v.toObject(); l.channels.push_back({c.value(QStringLiteral("slug")).toString(), c.value(QStringLiteral("name")).toString(), c.value(QStringLiteral("icon")).toString(), readFx(c), std::clamp(c.value(QStringLiteral("pan")).toDouble(0.0), -1.0, 1.0), c.value(QStringLiteral("color")).toString(), c.value(QStringLiteral("group")).toString()}); }
     for (const auto &v : o.value(QStringLiteral("mixes")).toArray()) {
         const auto m = v.toObject(); LayoutMix lm;
         lm.slug = m.value(QStringLiteral("slug")).toString(); lm.name = m.value(QStringLiteral("name")).toString(); lm.icon = m.value(QStringLiteral("icon")).toString();

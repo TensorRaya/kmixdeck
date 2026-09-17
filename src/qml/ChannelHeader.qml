@@ -20,6 +20,7 @@ Item {
     property bool hasFx: Mixer.fxEnabled("channel", channel)
     property string iconName: Mixer.channelIcon(channel)
     property string colorCode: Mixer.channelColor(channel)   // MX-5
+    property string group: Mixer.channelGroup(channel)       // CH-8
     readonly property bool compact: width < Kirigami.Units.gridUnit * 21   // only the FX button folds into ⋮; listen stays
     property bool dropActive: false           // UX-11: a drag hovers this row
 
@@ -33,6 +34,7 @@ Item {
             header.hasFx = Mixer.fxEnabled("channel", slug)
             header.iconName = Mixer.channelIcon(slug)
             header.colorCode = Mixer.channelColor(slug)
+            header.group = Mixer.channelGroup(slug)
         }
     }
 
@@ -97,11 +99,35 @@ Item {
             Layout.fillWidth: true
             Layout.minimumWidth: Kirigami.Units.gridUnit * 5
             spacing: 0
-            QQC2.Label {
+            RowLayout {
                 Layout.fillWidth: true
-                text: Mixer.channelName(header.channel)
-                font.weight: Font.DemiBold
-                elide: Text.ElideRight
+                spacing: Kirigami.Units.smallSpacing
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    text: Mixer.channelName(header.channel)
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                }
+                Rectangle {   // CH-8 group badge: same label on every member → you see who moves together
+                    objectName: "channelGroupBadge"
+                    visible: header.group !== ""
+                    readonly property string groupName: header.group
+                    radius: height / 2
+                    color: Kirigami.Theme.highlightColor
+                    implicitWidth: badgeLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
+                    implicitHeight: badgeLabel.implicitHeight + 2
+                    QQC2.Label {
+                        id: badgeLabel; anchors.centerIn: parent
+                        text: "⛓ " + header.group
+                        font: Kirigami.Theme.smallFont
+                        color: Kirigami.Theme.highlightedTextColor
+                    }
+                    QQC2.ToolTip.text: i18n("Group %1: these channels move together (trim and mute)", header.group)
+                    QQC2.ToolTip.visible: badgeHover.hovered
+                    HoverHandler { id: badgeHover }
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: i18n("in group %1", header.group)
+                }
             }
             QQC2.Label {
                 id: inLabel
@@ -249,6 +275,24 @@ Item {
         QQC2.MenuItem { text: i18n("Rename…"); icon.name: "edit-rename"; onTriggered: applicationWindow().renameDialogOpen("channel", header.channel) }
         QQC2.MenuItem { text: i18n("Icon…"); icon.name: "preferences-desktop-icons"; onTriggered: applicationWindow().iconDialogOpen("channel", header.channel) }
         ColorMenu { kind: "channel"; slug: header.channel }   // MX-5
+        QQC2.Menu {   // CH-8
+            title: i18n("Group")
+            icon.name: "insert-link"
+            Instantiator {   // existing groups first, so joining is one click
+                model: Mixer.channelGroups()
+                delegate: QQC2.MenuItem {
+                    required property string modelData
+                    text: modelData; checkable: true; checked: header.group === modelData
+                    onTriggered: Mixer.setChannelGroup(header.channel, checked ? modelData : "")
+                }
+                onObjectAdded: (i, o) => groupMenu.insertItem(i, o)
+                onObjectRemoved: (i, o) => groupMenu.removeItem(o)
+            }
+            id: groupMenu
+            QQC2.MenuSeparator { visible: Mixer.channelGroups().length > 0 }
+            QQC2.MenuItem { text: i18n("New group…"); icon.name: "list-add"; onTriggered: applicationWindow().groupDialogOpen(header.channel) }
+            QQC2.MenuItem { text: i18n("Leave group"); icon.name: "remove-link"; enabled: header.group !== ""; onTriggered: Mixer.setChannelGroup(header.channel, "") }
+        }
         QQC2.MenuItem {   // UX-9
             readonly property int idx: Mixer.channelSlugs.indexOf(header.channel)
             text: i18n("Move up"); icon.name: "go-up"; enabled: idx > 0

@@ -192,6 +192,9 @@ public:
     Q_INVOKABLE QString channelColor(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Color")).toString(); }
     Q_INVOKABLE QString mixColor(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("Color")).toString(); }
     Q_INVOKABLE void setChannelColor(const QString &slug, const QString &color);
+    Q_INVOKABLE QString channelGroup(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Group")).toString(); }   // CH-8
+    Q_INVOKABLE void setChannelGroup(const QString &slug, const QString &group);
+    Q_INVOKABLE QStringList channelGroups() const;   // every distinct group name, sorted
     Q_INVOKABLE void setMixColor(const QString &slug, const QString &color);
     // the palette every colour picker offers — same eight everywhere
     Q_INVOKABLE QStringList colorPalette() const { return {QStringLiteral("#e93d58"), QStringLiteral("#ef973c"), QStringLiteral("#e8cb2d"), QStringLiteral("#3dd425"), QStringLiteral("#00d3b8"), QStringLiteral("#3daee9"), QStringLiteral("#b875dc"), QStringLiteral("#926ee4")}; }

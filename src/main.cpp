@@ -3,6 +3,8 @@
 #include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlError>
+#include <QElapsedTimer>
+#include <QThread>
 #include <QTimer>
 #include <QDBusInterface>
 #include <QDBusConnection>
@@ -118,6 +120,7 @@ int main(int argc, char *argv[])
                 const QString op = g.section(QLatin1Char(':'), 0, 0), rest = g.section(QLatin1Char(':'), 1);
                 const QStringList a = rest.split(QLatin1Char('|'));
                 QVariant ret;
+                QCoreApplication::processEvents();   // let the previous gesture's bindings/animations settle before the next one reads
                 if (op == QLatin1String("connect") && a.size() == 4) QMetaObject::invokeMethod(win, "gestureConnect", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]), Q_ARG(QVariant, a[3]));
                 else if (op == QLatin1String("remove") && a.size() == 3) QMetaObject::invokeMethod(win, "gestureRemove", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]));
                 else if (op == QLatin1String("drop") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureDrop", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
@@ -152,7 +155,15 @@ int main(int argc, char *argv[])
                         ret = QStringLiteral("%1|%2|%3").arg(QString::fromLatin1(roles.valueToKey(iface->role())), iface->text(QAccessible::Name), iface->text(QAccessible::Description));
                     } else ret = QStringLiteral("<no accessible interface on %1>").arg(a[0]);
                 }
-                else if (op == QLatin1String("shot") && a.size() == 1) { QCoreApplication::processEvents(); ret = win->grabWindow().save(a[0]) ? QString() : QStringLiteral("<save failed>"); }
+                else if (op == QLatin1String("shot") && a.size() == 1) {
+                    // popups close through an exit animation that only completes when frames render; offscreen renders
+                    // none until grabWindow() — so pump events with time passing, then grab (a closed dialog stays closed)
+                    QElapsedTimer t; t.start(); while (t.elapsed() < 350) { QCoreApplication::processEvents(QEventLoop::AllEvents, 50); QThread::msleep(10); }
+                    win->grabWindow(); QCoreApplication::processEvents();
+                    ret = win->grabWindow().save(a[0]) ? QString() : QStringLiteral("<save failed>");
+                }
+                else if (op == QLatin1String("trim") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureTrim", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
+                else if (op == QLatin1String("group") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureGroup", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
                 else if (op == QLatin1String("firstrun") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureFirstRun", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 else if (op == QLatin1String("focus") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureFocus", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 else if (op == QLatin1String("hide") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureHide", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));

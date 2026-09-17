@@ -61,6 +61,8 @@ QString ChannelObject::name() const { return m_mixer->channelName(m_slug); }
 void ChannelObject::setName(const QString &n) { m_mixer->renameChannel(m_slug, n); }
 QString ChannelObject::icon() const { return m_mixer->channelIcon(m_slug); }
 void ChannelObject::setIcon(const QString &i) { m_mixer->setChannelIcon(m_slug, i); }
+QString ChannelObject::group() const { return m_mixer->channelGroup(m_slug); }
+void ChannelObject::setGroup(const QString &g) { if (!m_mixer->setChannelGroup(m_slug, g)) rejectProperty(QStringLiteral("Group"), QStringLiteral("group: up to 40 characters, no '/'")); }
 QString ChannelObject::color() const { return m_mixer->channelColor(m_slug); }
 void ChannelObject::setColor(const QString &c) { if (!m_mixer->setChannelColor(m_slug, c)) rejectProperty(QStringLiteral("Color"), QStringLiteral("colour must be #rrggbb or empty")); }
 double ChannelObject::trim() const { return m_mixer->channelTrim(m_slug); }
@@ -94,7 +96,7 @@ bool ChannelObject::SetFxControl(const QString &control, double value) {
     return true;
 }
 QVariantMap ChannelObject::properties() const {
-    return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), icon()}, {QStringLiteral("Color"), color()},
+    return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), icon()}, {QStringLiteral("Color"), color()}, {QStringLiteral("Group"), group()},
             {QStringLiteral("Trim"), trim()}, {QStringLiteral("Pan"), pan()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("NodeName"), nodeName()},
             {QStringLiteral("InputDevice"), inputDevice()}, {QStringLiteral("InputPresent"), inputPresent()},
             {QStringLiteral("Inputs"), inputs()}, {QStringLiteral("FxChain"), fxChainJson()}};

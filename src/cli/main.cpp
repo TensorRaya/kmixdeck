@@ -171,6 +171,7 @@ int main(int argc, char *argv[]) {
         "  import <file>                           restore such a backup (replaces the running layout)\n"
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
         "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
+        "  channel group <slug> [<name>|none]; channel groups   CH-8: grouped channels move together (trim as one dB delta, mute mirrored)\n"
         "  channel inputs <slug>                 all wires into a channel (ADR 0009 B1); input-add|input-remove <slug> <ref>\n"
         "  channel pan <slug> [<-1..1>|L|C|R]    stereo position of the channel (DV-22)\n"
         "  mix     list|add <name>|duplicate <slug> <new name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
@@ -372,6 +373,14 @@ int main(int argc, char *argv[]) {
             const QDBusObjectPath p(a[2] == "none" ? QStringLiteral("/") : pathOf(a[2]));
             return setProp(QString::fromLatin1(ROOT), "org.kmixdeck1.Mixer", "DefaultChannel", QVariant::fromValue(p), &e) ? Ok : fail(Rejected, e);
         }
+        if (sub == "groups" && cmd == "channel") {   // CH-8: every group with its members
+            QMap<QString, QStringList> groups;
+            Objects fresh; if (!fetch(fresh, &e)) return fail(NoService, e);   // `o` is the snapshot from startup; groups may have changed since
+            for (auto it = fresh.channels.constBegin(); it != fresh.channels.constEnd(); ++it) { const QString g = it.value().value("Group").toString(); if (!g.isEmpty()) groups[g] << it.value().value("Slug").toString(); }
+            if (g_json) { QJsonObject j; for (auto it = groups.constBegin(); it != groups.constEnd(); ++it) j.insert(it.key(), QJsonArray::fromStringList(it.value())); out << QJsonDocument(j).toJson(QJsonDocument::Compact) << "\n"; return Ok; }
+            for (auto it = groups.constBegin(); it != groups.constEnd(); ++it) out << it.key() << ": " << it.value().join(", ") << "\n";
+            return Ok;
+        }
         if (!need(3)) return Usage;
         if (!objs.contains(pathOf(a[2]))) return fail(NotFound, QStringLiteral("no %1 '%2'").arg(cmd, a[2]));
         if (sub == "remove") { QDBusMessage r = mixer.call(ch ? "RemoveChannel" : "RemoveMix", QVariant::fromValue(QDBusObjectPath(pathOf(a[2])))); return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok; }
@@ -383,6 +392,16 @@ int main(int argc, char *argv[]) {
         }
         if (sub == "rename") { if (!need(4)) return Usage; return setProp(pathOf(a[2]), iface, "Name", a[3], &e) ? Ok : fail(Rejected, e); }
         if (sub == "icon") { if (!need(4)) return Usage; return setProp(pathOf(a[2]), iface, "Icon", a[3] == "none" ? QString() : a[3], &e) ? Ok : fail(Rejected, e); }   // UX-8
+        if (sub == "group" && cmd == "channel") {   // CH-8: channel group <slug> [<name>|none]
+            if (!need(3)) return Usage;
+            if (a.size() < 4) { out << unwrap(QDBusInterface(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus()).property("Group")).toString() << "\n"; return Ok; }
+            const QString want = a[3] == "none" ? QString() : a[3].trimmed();
+            if (!setProp(pathOf(a[2]), iface, "Group", want, &e)) return fail(Rejected, e);
+            // property setters cannot return an error over the bus (same as Color) → read back and compare
+            const QString got = unwrap(QDBusInterface(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus()).property("Group")).toString();
+            if (got != want) return fail(Rejected, "group name: up to 40 characters, no '/'");
+            return Ok;
+        }
         if (sub == "color" || sub == "colour") {   // MX-5: channel|mix color <slug> <#rrggbb|none>
             if (!need(4)) return Usage;
             const QString want = a[3] == "none" ? QString() : a[3];

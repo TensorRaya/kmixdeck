@@ -57,7 +57,7 @@ struct DeviceRef {
     }
 };
 
-struct LayoutChannel { QString slug, name, icon; fx::Chain fx; double pan = 0.0; QString color; };   // MX-5: color = "#rrggbb" or empty (theme)   // DV-22: −1 = left … 0 = centre … +1 = right
+struct LayoutChannel { QString slug, name, icon; fx::Chain fx; double pan = 0.0; QString color; QString group; };   // CH-8: group = free name, "" = none   // MX-5: color = "#rrggbb" or empty (theme)   // DV-22: −1 = left … 0 = centre … +1 = right
 /// A physical input feeding a channel (mic, capture card, BT headset mic) — ADR 0007 D2.
 struct LayoutInput   { QString slug, name; DeviceRef device; QString channel; };
 struct LayoutMix     {

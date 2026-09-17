@@ -79,7 +79,7 @@ Kirigami.PromptDialog {
                 objectName: "firstRunSkip"
                 visible: !dlg.done
                 text: i18n("I'll set it up myself")
-                onClicked: { Mixer.dismissFirstRun(); dlg.close() }
+                onClicked: { Mixer.dismissFirstRun(); dlg.reject(); dlg.visible = false }
             }
             QQC2.Button {
                 objectName: "firstRunApply"
@@ -96,7 +96,7 @@ Kirigami.PromptDialog {
                 text: i18n("Start mixing")
                 icon.name: "dialog-ok"
                 highlighted: true
-                onClicked: dlg.close()
+                onClicked: { dlg.accept(); dlg.visible = false }
             }
         }
     }

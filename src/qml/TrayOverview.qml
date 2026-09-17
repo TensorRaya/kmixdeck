@@ -105,7 +105,13 @@ Kirigami.AbstractApplicationWindow {
                         Layout.fillWidth: true
                         Rectangle { objectName: "trayChannelColor/" + modelData.slug; visible: modelData.color.length > 0; color: modelData.color.length > 0 ? modelData.color : "transparent"; Layout.preferredWidth: Kirigami.Units.smallSpacing; Layout.fillHeight: true; radius: width / 2 }   // MX-5
                         Kirigami.Icon { source: modelData.icon; Layout.preferredWidth: Kirigami.Units.iconSizes.small; Layout.preferredHeight: width; opacity: modelData.inputPresent ? 1 : 0.4 }
-                        QQC2.Label { text: modelData.name; Layout.preferredWidth: pop.nameWidth; elide: Text.ElideRight; color: modelData.muted ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor }
+                        QQC2.Label {
+                            objectName: "trayChannelName/" + modelData.slug
+                            text: modelData.group ? modelData.name + " ⛓" : modelData.name   // CH-8: ⛓ = moves with its group
+                            Layout.preferredWidth: pop.nameWidth; elide: Text.ElideRight; color: modelData.muted ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+                            QQC2.ToolTip.text: modelData.group ? i18n("Group %1", modelData.group) : ""; QQC2.ToolTip.visible: modelData.group ? nameHover.hovered : false
+                            HoverHandler { id: nameHover }
+                        }
                         QQC2.Slider {   // CH-7 trim — same column and width as the mix masters so the grid stays one grid
                             objectName: "trayChannelTrim/" + modelData.slug
                             Layout.fillWidth: true

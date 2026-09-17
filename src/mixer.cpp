@@ -29,7 +29,12 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     QObject::connect(&m_graph, &pw::Graph::nodeChanged, this, &Mixer::onNode);
     QObject::connect(&m_graph, &pw::Graph::nodeRemoved, this, &Mixer::onNodeRemoved);
     QObject::connect(&m_graph, &pw::Graph::streamRouted, this, &Mixer::onStreamRouted);
-    QObject::connect(&m_graph, &pw::Graph::defaultDevicesChanged, this, [this](const QString &sink, const QString &source) {
+    QObject::connect(&m_graph, &pw::Graph::defaultDevicesChanged, this, [this](const QString &sinkIn, const QString &sourceIn) {
+        // our own nodes (parking sink, channel/mix sinks, monitor sources) are never a sensible "default device" to
+        // wire the desk to — WirePlumber picks kmixdeck.null as default sink on a machine with no hardware yet
+        // (seen in the sandbox screenshot 2026-09-17: wizard offered "Monitor mix plays on: kmixdeck.null")
+        auto ours = [](const QString &n) { return n.startsWith(QLatin1String("kmixdeck.")); };
+        const QString sink = ours(sinkIn) ? QString() : sinkIn, source = ours(sourceIn) ? QString() : sourceIn;
         if (sink == m_defaultSink && source == m_defaultSource) return;
         m_defaultSink = sink; m_defaultSource = source; Q_EMIT defaultDevicesChanged();
     });
@@ -363,11 +368,54 @@ void Mixer::setChannelPan(const QString &slug, double pan) {
 }
 void Mixer::setChannelTrim(const QString &slug, double linear) {
     auto it = m_sinks.find(Names::channelNode(slug)); if (it == m_sinks.end()) return;
+    const float before = it->volume;
     it->volume = static_cast<float>(std::clamp(linear, 0.0, 1.0)); applyChannelGain(slug); Q_EMIT channelChanged(slug);
+    propagateGroupTrim(slug, before, it->volume);
 }
 void Mixer::setChannelMuted(const QString &slug, bool muted) {
     auto it = m_sinks.find(Names::channelNode(slug)); if (it == m_sinks.end()) return;
     it->mute = muted; applyChannelGain(slug); Q_EMIT channelChanged(slug);
+    propagateGroupMute(slug, muted);
+}
+// ---- CH-8 groups -----------------------------------------------------------------------------------------------
+bool Mixer::setChannelGroup(const QString &slug, const QString &group) {
+    auto *l = m_layout.channel(slug); if (!l) return false;
+    const QString g = group.trimmed();
+    if (g.size() > 40 || g.contains(QLatin1Char('/'))) return false;
+    if (l->group == g) return true;
+    l->group = g; saveLayout(); Q_EMIT channelChanged(slug); return true;
+}
+QStringList Mixer::groupMembers(const QString &group) const {
+    QStringList out; if (group.isEmpty()) return out;
+    for (const auto &c : m_layout.channels) if (c.group == group) out << c.slug;
+    return out;
+}
+void Mixer::propagateGroupTrim(const QString &slug, float oldLinear, float newLinear) {
+    if (m_inGroupPropagation) return;
+    const QString g = channelGroup(slug); if (g.isEmpty()) return;
+    // same dB delta for everyone; from silence there is no ratio → members jump to the new absolute level
+    const bool ratio = oldLinear > 1e-4f && newLinear > 1e-4f;
+    const float factor = ratio ? newLinear / oldLinear : 0.0f;
+    m_inGroupPropagation = true;
+    for (const QString &m : groupMembers(g)) {
+        if (m == slug) continue;
+        auto it = m_sinks.find(Names::channelNode(m)); if (it == m_sinks.end()) continue;
+        const float target = ratio ? std::clamp(it->volume * factor, 0.0f, 1.0f) : newLinear;
+        if (std::abs(target - it->volume) < 1e-5f) continue;
+        it->volume = target; applyChannelGain(m); Q_EMIT channelChanged(m);
+    }
+    m_inGroupPropagation = false;
+}
+void Mixer::propagateGroupMute(const QString &slug, bool muted) {
+    if (m_inGroupPropagation) return;
+    const QString g = channelGroup(slug); if (g.isEmpty()) return;
+    m_inGroupPropagation = true;
+    for (const QString &m : groupMembers(g)) {
+        if (m == slug) continue;
+        auto it = m_sinks.find(Names::channelNode(m)); if (it == m_sinks.end() || it->mute == muted) continue;
+        it->mute = muted; applyChannelGain(m); Q_EMIT channelChanged(m);
+    }
+    m_inGroupPropagation = false;
 }
 double Mixer::mixVolume(const QString &slug) const { auto it = m_sinks.constFind(Names::mixNode(slug)); return it == m_sinks.constEnd() ? 1.0 : it->volume; }
 bool   Mixer::mixMuted(const QString &slug) const  { auto it = m_sinks.constFind(Names::mixNode(slug)); return it == m_sinks.constEnd() ? false : it->mute; }

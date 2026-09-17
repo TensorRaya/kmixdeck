@@ -484,7 +484,7 @@ QVariantMap MixerClient::overview() const {
     for (const QString &c : m_channelOrder)
         channels.push_back(QVariantMap{{QStringLiteral("slug"), c}, {QStringLiteral("name"), channelName(c)}, {QStringLiteral("icon"), channelIcon(c)}, {QStringLiteral("color"), channelColor(c)},
                                        {QStringLiteral("muted"), channelMuted(c)}, {QStringLiteral("trim"), channelTrim(c)}, {QStringLiteral("inputPresent"), m_channels.value(c).value(QStringLiteral("InputPresent"), true).toBool()},
-                                       {QStringLiteral("inputs"), channelInputs(c)}, {QStringLiteral("meterKey"), QStringLiteral("channel/") + c}});
+                                       {QStringLiteral("inputs"), channelInputs(c)}, {QStringLiteral("meterKey"), QStringLiteral("channel/") + c}, {QStringLiteral("group"), channelGroup(c)}});
     int running = 0; for (const auto &a : m_apps) if (a.value(QStringLiteral("Running"), true).toBool()) ++running;
     return {{QStringLiteral("serviceAvailable"), serviceAvailable()}, {QStringLiteral("connected"), connected()},
             {QStringLiteral("listeningDevice"), m_listeningDevice}, {QStringLiteral("listeningDescription"), m_listeningDevice.isEmpty() ? QString() : deviceDescription(m_listeningDevice)},
@@ -602,6 +602,12 @@ QVariantList MixerClient::hiddenDevices() const {
 }
 void MixerClient::setDeviceHidden(const QString &node, bool hidden) { callReportingErrors(QStringLiteral("SetDeviceHidden"), node, hidden); }
 void MixerClient::setChannelColor(const QString &slug, const QString &color) { setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Color"), color); }
+void MixerClient::setChannelGroup(const QString &slug, const QString &group) { setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Group"), group); }
+QStringList MixerClient::channelGroups() const {
+    QStringList out;
+    for (auto it = m_channels.constBegin(); it != m_channels.constEnd(); ++it) { const QString g = it.value().value(QStringLiteral("Group")).toString(); if (!g.isEmpty() && !out.contains(g)) out << g; }
+    out.sort(Qt::CaseInsensitive); return out;
+}
 void MixerClient::setMixColor(const QString &slug, const QString &color) { setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Color"), color); }
 void MixerClient::setMixIcon(const QString &slug, const QString &icon) { setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Icon"), icon); }
 void MixerClient::moveChannel(const QString &slug, int index) { callReportingErrors(QStringLiteral("MoveChannel"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/channel/%2").arg(ROOT, slug))), index); }

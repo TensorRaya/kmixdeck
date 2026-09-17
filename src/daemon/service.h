@@ -73,6 +73,7 @@ class ChannelObject : public ExportedObject {
     Q_PROPERTY(QString Slug READ slug CONSTANT)
     Q_PROPERTY(QString Name READ name WRITE setName)
     Q_PROPERTY(QString Icon READ icon WRITE setIcon)
+    Q_PROPERTY(QString Group READ group WRITE setGroup)   // CH-8: channels with the same group move together ("" = none)
     Q_PROPERTY(QString Color READ color WRITE setColor)   // MX-5: "#rrggbb" or "" = theme
     Q_PROPERTY(double Trim READ trim WRITE setTrim)
     Q_PROPERTY(double Pan READ pan WRITE setPan)     // DV-22: −1..+1
@@ -89,6 +90,7 @@ public:
     QString slug() const { return m_slug; }
     QString name() const; void setName(const QString &);
     QString icon() const; void setIcon(const QString &i);
+    QString group() const; void setGroup(const QString &g);
     QString color() const; void setColor(const QString &c);
     double trim() const; void setTrim(double);
     double pan() const; void setPan(double);

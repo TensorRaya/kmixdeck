@@ -188,6 +188,10 @@ Kirigami.ApplicationWindow {
         const f = findByName("cellFader/" + channel + "/" + mix); if (!f) return "<no fader " + channel + "/" + mix + ">"
         f.value = Number(value); f.moved(); return ""
     }
+    function gestureTrim(channel, value) {   // CH-7 dial as the user would turn it
+        const d = findByName("channelTrim/" + channel); if (!d) return "<no trim dial " + channel + ">"
+        d.value = Number(value); d.moved(); return ""
+    }
     function gestureHear(nodeName) { const h = findByName("hearingBar"); return h ? h.pickDevice(nodeName) : "<no hearing bar>" }
     function gestureMixOutput(mix, nodeName) { const h = findByName("mixHeader/" + mix); return h ? h.triggerOutput(nodeName) : "<no mix header " + mix + ">" }
     function gestureExport(path) { root.exportTo(Qt.resolvedUrl("file://" + path)); return Mixer.lastError.length ? Mixer.lastError : "" }
@@ -203,7 +207,7 @@ Kirigami.ApplicationWindow {
 
     // Meters cost CPU in the daemon (ADR 0006): only while the window is actually shown.
     onVisibleChanged: Mixer.metersEnabled = visible
-    Component.onCompleted: { Mixer.metersEnabled = visible; if (Mixer.firstRun && Mixer.connected) firstRunDialog.open() }
+    Component.onCompleted: { Mixer.metersEnabled = visible; if (Mixer.firstRun && Mixer.connected && !root.firstRunSuppressed) firstRunDialog.open() }
 
     AddDialog { id: addDialog }
     // ADR 0009 / DV-18: pick a port subset of a multichannel device as a mix output (or a channel input)
@@ -247,15 +251,19 @@ Kirigami.ApplicationWindow {
 
     // UX-3: first run — opens once when the daemon reports no layout on disk (and can be reopened from the menu)
     FirstRunDialog { id: firstRunDialog }
+    property bool firstRunSuppressed: false   // gesture firstrun:skip before the daemon connected must still win
     Connections {
         target: Mixer
-        function onFirstRunChanged() { if (Mixer.firstRun && Mixer.connected) firstRunDialog.open() }
-        function onConnectedChanged() { if (Mixer.firstRun && Mixer.connected) firstRunDialog.open() }
+        function onFirstRunChanged() { if (Mixer.firstRun && Mixer.connected && !root.firstRunSuppressed) firstRunDialog.open() }
+        function onConnectedChanged() { if (Mixer.firstRun && Mixer.connected && !root.firstRunSuppressed) firstRunDialog.open() }
     }
     function gestureFirstRun(what) {
         if (what === "open") { firstRunDialog.open(); return "" }
+        if (what === "closeonly") { firstRunDialog.close(); return "closed=" + !firstRunDialog.visible }
+        if (what === "hideonly") { firstRunDialog.visible = false; return "hidden=" + !firstRunDialog.visible }
+        if (what === "state") return "visible=" + firstRunDialog.visible + " firstRun=" + Mixer.firstRun + " connected=" + Mixer.connected + " suppressed=" + root.firstRunSuppressed
         if (what === "apply") { firstRunDialog.open(); firstRunDialog.refresh(); const r = Mixer.firstRunApply(); if (Object.keys(r).length > 0 || Mixer.lastError === "") firstRunDialog.done = r; return Mixer.lastError }
-        if (what === "skip") { Mixer.dismissFirstRun(); firstRunDialog.close(); return "" }
+        if (what === "skip") { root.firstRunSuppressed = true; Mixer.dismissFirstRun(); firstRunDialog.reject(); firstRunDialog.visible = false; return "" }
         return "<unknown " + what + ">"
     }
 
@@ -313,6 +321,19 @@ Kirigami.ApplicationWindow {
     function duplicateDialogOpen(slug) { renameDialog.open("mix", slug, true) }   // MX-8
     function gestureDuplicate(slug, name) { renameDialog.open("mix", slug, true); renameDialog.commit(name); renameDialog.close(); return "" }
     IconDialog { id: iconDialog }
+    // CH-8: name a new group for a channel
+    Kirigami.PromptDialog {
+        id: groupDialog
+        property string channel
+        title: i18n("New channel group")
+        subtitle: i18n("Channels in one group move together: trim as one dB step for all, mute mirrored.")
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        QQC2.TextField { id: groupField; objectName: "groupField"; placeholderText: i18n("e.g. Music & Game"); onAccepted: groupDialog.accept() }
+        onAccepted: if (groupField.text.trim() !== "") Mixer.setChannelGroup(channel, groupField.text.trim())
+        onOpened: { groupField.text = ""; groupField.forceActiveFocus() }
+    }
+    function groupDialogOpen(slug) { groupDialog.channel = slug; groupDialog.open() }
+    function gestureGroup(slug, name) { Mixer.setChannelGroup(slug, name === "none" ? "" : name); return Mixer.lastError }
     function iconDialogOpen(kind, slug) { iconDialog.open(kind, slug) }
     // FX panel opens as a dialog layer over the matrix — narrow windows keep the grid behind them.
     function fxPanelOpen(kind, slug) {

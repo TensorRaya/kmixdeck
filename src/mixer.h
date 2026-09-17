@@ -70,6 +70,12 @@ public:
     /// follower breaks the link (Wave Link semantics: "can be broken at any time").
     Q_INVOKABLE QString cellFollows(const QString &ch, const QString &mix) const;
     bool setCellFollows(const QString &ch, const QString &mix, const QString &follows);
+    // CH-8 channel groups: channels sharing a group name move together — trim changes are applied as the same dB
+    // delta to every member (so the balance you set between them survives), mute is mirrored. No master, no owner:
+    // touch any member, all follow. A group of one is just a label.
+    QString channelGroup(const QString &slug) const { const auto *c = m_layout.channel(slug); return c ? c->group : QString(); }
+    bool setChannelGroup(const QString &slug, const QString &group);
+    QStringList groupMembers(const QString &group) const;
 
     /// Channel-wide trim (CH-7) = channelVolumes on the channel null sink → affects every mix.
     Q_INVOKABLE double channelTrim(const QString &slug) const;
@@ -294,6 +300,9 @@ private:
     QHash<QString, QPair<float, bool>> m_pendingCellState;   // cell node → (volume, mute) to apply once the node exists
     void applyFx(const QString &slug);                                   // rebuild one chain live (ADR 0008)
     void propagateLinks(const QString &ch, const QString &sourceMix);   // source cell changed → push to followers
+    void propagateGroupTrim(const QString &slug, float oldLinear, float newLinear);   // CH-8
+    void propagateGroupMute(const QString &slug, bool muted);                          // CH-8
+    bool m_inGroupPropagation = false;
     void breakLink(const QString &ch, const QString &mix);
     void autoRouteNewApp(const App &a);
     static QString appKey(const App &a) { return a.name.isEmpty() ? a.nodeName : a.name; }
