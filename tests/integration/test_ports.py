@@ -571,6 +571,9 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
     make_fake_sink(stack, "fake.speakers", "Laptop Speakers"); make_fake_sink(stack, "fake.cans", "Headphones")
     stack.cli("devices", "virtual", "add", "Interface", "--in", "4", "--out", "2"); stack.pw.wait_nodes(["kmixdeck.virt.interface"])
     iface = "kmixdeck.virt.interface"
+    for _ in range(50):   # node first, its ports a moment later (ctest25 under load: "has no port 'AUX3'")
+        if "AUX3" in stack.cli("devices", "ports", iface, check=False).stdout: break
+        time.sleep(0.1)
     stack.cli("mix", "output-add", "monitor", "fake.cans"); stack.cli("listen", "fake.cans"); stack.cli("mix", "output-add", "stream", "fake.speakers")
     stack.cli("channel", "add", "Mic"); stack.cli("channel", "input-add", "mic", f"{iface}:AUX3")
     stack.cli("cell", "set", "mic", "stream", "-6dB"); stack.cli("channel", "mute", "game", "on")

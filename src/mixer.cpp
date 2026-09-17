@@ -1017,13 +1017,51 @@ bool Mixer::undo() {
     Q_EMIT undoChanged(); if (isCh) Q_EMIT defaultChannelChanged();
     return true;
 }
+QJsonObject Mixer::exportSettings() const {
+    QJsonObject doc = m_layout.toJson();
+    doc.insert(QStringLiteral("kmixdeck.export"), 1);
+    QJsonArray levels;
+    auto put = [&](const QString &node, const pw::NodeInfo &n) { levels.append(QJsonObject{{QStringLiteral("node"), node}, {QStringLiteral("volume"), n.volume}, {QStringLiteral("mute"), n.mute}}); };
+    for (auto it = m_cells.cbegin(); it != m_cells.cend(); ++it) put(it.key(), *it);
+    for (auto it = m_sinks.cbegin(); it != m_sinks.cend(); ++it) if (it.key().startsWith(QLatin1String("kmixdeck."))) put(it.key(), *it);
+    doc.insert(QStringLiteral("levels"), levels);
+    return doc;
+}
+bool Mixer::importSettings(const QJsonObject &doc, QString *error) {
+    if (!doc.contains(QStringLiteral("channels")) || !doc.contains(QStringLiteral("mixes"))) { if (error) *error = QStringLiteral("not a kmixdeck export (no channels/mixes)"); return false; }
+    Layout l = Layout::fromJson(doc);
+    if (l.channels.isEmpty() && l.mixes.isEmpty()) { if (error) *error = QStringLiteral("export contains no channels and no mixes"); return false; }
+    // relays of apps that are about to change hands: tear down, reconcile builds what the new layout needs
+    for (const auto &la : m_layout.apps) if (la.channels.size() > 1) removeAppRelays(la);
+    m_layout = l; m_undo = {}; Q_EMIT undoChanged();
+    m_pendingCellState.clear();
+    for (const auto &v : doc.value(QStringLiteral("levels")).toArray()) {
+        const auto j = v.toObject(); const QString node = j.value(QStringLiteral("node")).toString();
+        if (node.startsWith(QLatin1String("kmixdeck."))) m_pendingCellState.insert(node, {static_cast<float>(j.value(QStringLiteral("volume")).toDouble(1.0)), j.value(QStringLiteral("mute")).toBool()});
+    }
+    saveLayout(); reconcile(); restorePendingCellStates();
+    // a node that already exists keeps its old level unless we touch it — pending only fires for NEW nodes, so apply
+    // to the live ones right here (restorePendingCellStates() did exactly that for those present)
+    Q_EMIT layoutChanged(); Q_EMIT defaultChannelChanged(); Q_EMIT listeningDeviceChanged(); Q_EMIT inputsChanged();
+    for (const auto &c : m_layout.channels) Q_EMIT channelChanged(c.slug);
+    for (const auto &m : m_layout.mixes) Q_EMIT mixChanged(m.slug);
+    qInfo() << "import: layout replaced," << l.channels.size() << "channels," << l.mixes.size() << "mixes";
+    return true;
+}
 void Mixer::restorePendingCellStates() {
     for (auto it = m_pendingCellState.begin(); it != m_pendingCellState.end();) {
         const pw::NodeInfo *n = nullptr;
         if (auto c = m_cells.constFind(it.key()); c != m_cells.constEnd()) n = &*c;
         else if (auto s = m_sinks.constFind(it.key()); s != m_sinks.constEnd()) n = &*s;
         if (!n) { ++it; continue; }
-        m_graph.setVolume(n->id, it->first, it->second);
+        if (it.key().startsWith(QLatin1String("kmixdeck.channel."))) {
+            // a channel sink carries trim × pan (DV-22): write the pair, then let applyChannelGain() split it L/R —
+            // a plain setVolume() here silently dropped the pan after undo/import (CT-7 measured −6 dB off, 2026-09-17)
+            auto s = m_sinks.find(it.key()); if (s != m_sinks.end()) { s->volume = it->first; s->mute = it->second; }
+            applyChannelGain(it.key().mid(17));
+        } else {
+            m_graph.setVolume(n->id, it->first, it->second);
+        }
         it = m_pendingCellState.erase(it);
     }
 }

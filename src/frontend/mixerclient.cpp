@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "mixerclient.h"
+#include <QFile>
 #include <KLocalizedString>
 #include <QDBusInterface>
 #include <QSet>
@@ -505,6 +506,24 @@ void MixerClient::setMixOutputDevice(const QString &slug, const QString &nodeNam
     setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("OutputDevice"), nodeName);
 }
 void MixerClient::undo() { callReportingErrors(QStringLiteral("Undo"), QVariant()); }
+bool MixerClient::exportToFile(const QUrl &url) {
+    const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
+    const QDBusReply<QString> r = iface.call(QStringLiteral("Export"));
+    if (!r.isValid()) { m_lastError = r.error().message(); Q_EMIT lastErrorChanged(); return false; }
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) { m_lastError = f.errorString(); Q_EMIT lastErrorChanged(); return false; }
+    f.write(r.value().toUtf8()); m_lastError.clear(); Q_EMIT lastErrorChanged(); return true;
+}
+bool MixerClient::importFromFile(const QUrl &url) {
+    const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) { m_lastError = f.errorString(); Q_EMIT lastErrorChanged(); return false; }
+    QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
+    const QDBusMessage r = iface.call(QStringLiteral("Import"), QString::fromUtf8(f.readAll()));
+    if (r.type() == QDBusMessage::ErrorMessage) { m_lastError = r.errorMessage(); Q_EMIT lastErrorChanged(); Q_EMIT errorOccurred(m_lastError); return false; }
+    m_lastError.clear(); Q_EMIT lastErrorChanged(); return true;
+}
 void MixerClient::setListeningDevice(const QString &node) {
     setProperty(ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QStringLiteral("ListeningDevice"), node);
 }

@@ -4,6 +4,7 @@
 // The KDE frontend's view of the service: a mirror of org.kmixdeck1 kept live via ObjectManager +
 // PropertiesChanged. Same QML-facing API the old in-process Mixer had, so the QML did not change.
 #include <QObject>
+#include <QUrl>
 #include <QDBusConnection>
 #include <QDBusObjectPath>
 #include <QDBusMessage>
@@ -54,6 +55,13 @@ public:
     void setListeningDevice(const QString &node);
     QString undoDescription() const { return m_undoDescription; }
     Q_INVOKABLE void undo();
+    // CT-7: synchronous on purpose — the user waits for the file dialog's result anyway, and the notification needs
+    // the outcome. URLs from FileDialog, plain paths from the CLI-style probes both work.
+    Q_INVOKABLE bool exportToFile(const QUrl &url);
+    Q_INVOKABLE bool importFromFile(const QUrl &url);
+    Q_INVOKABLE QString displayPath(const QUrl &url) const { return url.isLocalFile() ? url.toLocalFile() : url.toString(); }
+    Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
+    QString lastError() const { return m_lastError; }
     void setDefaultChannel(const QString &slug);
     Q_INVOKABLE QString mixName(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("Name")).toString(); }
     Q_INVOKABLE bool   cellPresent(const QString &ch, const QString &mix) const { return m_cells.contains(cellKey(ch, mix)); }
@@ -193,6 +201,7 @@ Q_SIGNALS:
     void fxTypesReady();
     void metersEnabledChanged();
     void peaksChanged();                                        // once per tick
+    void lastErrorChanged();
     void mixChanged(const QString &slug);
 
 private Q_SLOTS:
@@ -221,6 +230,7 @@ private:
     bool m_metersEnabled = false;
     QHash<QString, double> m_peaks;
     QStringList m_channelOrder, m_mixOrder;
+    QString m_lastError;
 };
 
 } // namespace kmixdeck::frontend

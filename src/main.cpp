@@ -115,6 +115,10 @@ int main(int argc, char *argv[])
                 else if (op == QLatin1String("hear") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureHear", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 else if (op == QLatin1String("mixoutput") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureMixOutput", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
                 else if (op == QLatin1String("mute") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureMute", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
+                // CT-7: the file dialogs are native and cannot be scripted offscreen — the gesture takes the path the
+                // dialog would have returned and runs the SAME onAccepted handler (root.exportTo / root.importFrom)
+                else if (op == QLatin1String("export") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureExport", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
+                else if (op == QLatin1String("import") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureImport", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 else if (op == QLatin1String("traymenu") && a.size() == 1) { for (const QString &t : kde.trayMenuTexts()) fprintf(stdout, "traymenu %s\n", qPrintable(t)); ret = QString(); }
                 else if (op == QLatin1String("trayclick") && a.size() == 1) {   // UX-17: N clicks on the tray icon within the double-click interval
                     const int n = a[0].toInt(); for (int i = 0; i < n; ++i) kde.trayClick(QPoint(100, 100)); ret = QString();

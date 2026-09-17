@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import QtQuick
 import QtQuick.Controls as QQC2
+import QtQuick.Dialogs
+import QtCore
 import org.kde.kirigami as Kirigami
 import org.kmixdeck
 
@@ -51,6 +53,19 @@ Kirigami.ApplicationWindow {
                 icon.name: "applications-utilities"
                 checked: root.pageStack.currentItem === patchBayPage
                 onTriggered: { root.pageStack.clear(); root.pageStack.push(patchBayPage) }
+            },
+            Kirigami.Action { separator: true },
+            Kirigami.Action {   // CT-7
+                objectName: "exportAction"
+                text: i18n("Export settings…")
+                icon.name: "document-export"
+                onTriggered: exportDialog.open()
+            },
+            Kirigami.Action {   // CT-7
+                objectName: "importAction"
+                text: i18n("Import settings…")
+                icon.name: "document-import"
+                onTriggered: importDialog.open()
             },
             Kirigami.Action { separator: true },
             Kirigami.Action {
@@ -148,6 +163,8 @@ Kirigami.ApplicationWindow {
     }
     function gestureHear(nodeName) { const h = findByName("hearingBar"); return h ? h.pickDevice(nodeName) : "<no hearing bar>" }
     function gestureMixOutput(mix, nodeName) { const h = findByName("mixHeader/" + mix); return h ? h.triggerOutput(nodeName) : "<no mix header " + mix + ">" }
+    function gestureExport(path) { root.exportTo(Qt.resolvedUrl("file://" + path)); return Mixer.lastError.length ? Mixer.lastError : "" }
+    function gestureImport(path) { root.importFrom(Qt.resolvedUrl("file://" + path)); return Mixer.lastError.length ? Mixer.lastError : "" }
     function gestureMute(kind, slug) {
         const b = findByName((kind === "mix" ? "mixMute/" : "channelMute/") + slug); if (!b) return "<no mute button " + kind + "/" + slug + ">"
         b.toggle(); b.toggled(); return ""
@@ -200,6 +217,32 @@ Kirigami.ApplicationWindow {
         }
     }
     Shortcut { sequences: [StandardKey.Undo]; enabled: Mixer.undoDescription.length > 0; onActivated: Mixer.undo() }
+
+    // CT-7 backup / restore — the daemon owns the document, the window only picks the file
+    FileDialog {
+        id: exportDialog
+        title: i18n("Export kmixdeck settings")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [i18n("kmixdeck settings (*.kmixdeck.json)"), i18n("JSON (*.json)")]
+        defaultSuffix: "kmixdeck.json"
+        currentFile: "file:///" + StandardPaths.writableLocation(StandardPaths.DocumentsLocation).toString().replace("file:///", "") + "/kmixdeck-" + Qt.formatDate(new Date(), "yyyy-MM-dd") + ".kmixdeck.json"
+        onAccepted: root.exportTo(selectedFile)
+    }
+    FileDialog {
+        id: importDialog
+        title: i18n("Import kmixdeck settings")
+        fileMode: FileDialog.OpenFile
+        nameFilters: [i18n("kmixdeck settings (*.kmixdeck.json *.json)")]
+        onAccepted: root.importFrom(selectedFile)
+    }
+    function exportTo(url) {
+        const ok = Mixer.exportToFile(url)
+        root.showPassiveNotification(ok ? i18n("Settings exported to %1", Mixer.displayPath(url)) : i18n("Export failed: %1", Mixer.lastError), "long")
+    }
+    function importFrom(url) {
+        const ok = Mixer.importFromFile(url)
+        root.showPassiveNotification(ok ? i18n("Settings imported from %1", Mixer.displayPath(url)) : i18n("Import failed: %1", Mixer.lastError), "long")
+    }
     RenameDialog { id: renameDialog }
     function renameDialogOpen(kind, slug) { renameDialog.open(kind, slug) }
     IconDialog { id: iconDialog }

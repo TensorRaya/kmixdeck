@@ -306,6 +306,16 @@ void MixerAdaptor::Audition(const QDBusObjectPath &p) {
 void MixerAdaptor::Undo() {
     if (!m_mixer->undo()) static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.Failed"), QStringLiteral("nothing to undo"));
 }
+QString MixerAdaptor::Export() {
+    return QString::fromUtf8(QJsonDocument(m_mixer->exportSettings()).toJson(QJsonDocument::Indented));
+}
+void MixerAdaptor::Import(const QString &json) {
+    QJsonParseError err; const auto doc = QJsonDocument::fromJson(json.toUtf8(), &err);
+    auto *root = static_cast<RootObject *>(parent());
+    if (err.error != QJsonParseError::NoError || !doc.isObject()) { root->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("not JSON: ") + err.errorString()); return; }
+    QString why;
+    if (!m_mixer->importSettings(doc.object(), &why)) root->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), why);
+}
 QDBusObjectPath MixerAdaptor::defaultChannel() const {
     const QString s = m_mixer->defaultChannel();
     return QDBusObjectPath(s.isEmpty() ? QStringLiteral("/") : Service::channelPath(s));

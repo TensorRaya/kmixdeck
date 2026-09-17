@@ -8,6 +8,7 @@
 #include <QDBusMetaType>
 #include <QDBusObjectPath>
 #include <QDBusArgument>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -160,6 +161,8 @@ int main(int argc, char *argv[]) {
         "Commands:\n"
         "  status                                     matrix overview\n"
         "  undo                                    restore the last removed channel or mix (CH-9)\n"
+        "  export [file]                           backup: layout + every fader/trim/mute as JSON (CT-7)\n"
+        "  import <file>                           restore such a backup (replaces the running layout)\n"
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
         "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
         "  channel inputs <slug>                 all wires into a channel (ADR 0009 B1); input-add|input-remove <slug> <ref>\n"
@@ -207,6 +210,20 @@ int main(int argc, char *argv[]) {
     QDBusInterface mixer(BUS, ROOT, "org.kmixdeck1.Mixer", QDBusConnection::sessionBus());
 
     if (cmd == "status") return cmdStatus(o);
+    if (cmd == "export") {   // CT-7: kmixdeck export [file]  — stdout when no file
+        const QDBusReply<QString> r = mixer.call("Export");
+        if (!r.isValid()) return fail(Rejected, r.error().message());
+        if (a.size() < 2 || a[1] == "-") { out << r.value(); if (!r.value().endsWith(QLatin1Char('\n'))) out << "\n"; return Ok; }
+        QFile f(a[1]); if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return fail(Usage, "cannot write " + a[1]);
+        f.write(r.value().toUtf8()); out << "exported to " << a[1] << "\n"; return Ok;
+    }
+    if (cmd == "import") {   // CT-7: kmixdeck import <file>  — replaces the whole layout + levels
+        if (!need(2)) return Usage;
+        QFile f(a[1]); if (!f.open(QIODevice::ReadOnly)) return fail(NotFound, "cannot read " + a[1]);
+        const QDBusMessage r = mixer.call("Import", QString::fromUtf8(f.readAll()));
+        if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
+        out << "imported " << a[1] << "\n"; return Ok;
+    }
     if (cmd == "undo") {
         const QString what = unwrap(o.mixer.value("UndoDescription")).toString();
         if (what.isEmpty()) return fail(NotFound, "nothing to undo");

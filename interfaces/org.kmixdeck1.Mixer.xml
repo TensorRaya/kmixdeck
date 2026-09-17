@@ -34,6 +34,11 @@
     <!-- FX-4: one-click chains as JSON {name: chain}; a preset is just a starting point, editable afterwards -->
     <property name="FxPresets" type="s" access="read"/>
     <method name="Undo"/>
+    <!-- CT-7 backup/restore. Export: the complete layout plus every fader, trim and mute as one JSON document (what
+         layout.json holds, plus "levels"). Import: replaces the layout with the document, rebuilds the graph, applies
+         the levels; rejects anything that is not a kmixdeck export and leaves the running config untouched then. -->
+    <method name="Export"><arg name="json" type="s" direction="out"/></method>
+    <method name="Import"><arg name="json" type="s" direction="in"/></method>
     <!-- UX-12 solo audition: pass a channel/mix path to hold exactly that entity on the main output,
          "/" to stop and restore the previous state. Hold semantics = the frontend calls this on
          press and again with "/" on release. -->

@@ -217,6 +217,10 @@ public:
     /// cell's fader/mute come back. One level; anything that mutates the layout afterwards clears it.
     Q_INVOKABLE QString undoDescription() const { return m_undo.isEmpty() ? QString() : m_undo.value(QStringLiteral("what")).toString(); }
     Q_INVOKABLE bool   undo();
+    // CT-7 backup/restore: the whole layout PLUS every fader, trim and mute as one JSON document. import() replaces the
+    // layout, rebuilds the graph and applies the levels as each node comes up (same pending mechanism as undo()).
+    QJsonObject exportSettings() const;
+    bool importSettings(const QJsonObject &doc, QString *error = nullptr);
 
     static double linearToCubic(float lin) { return std::cbrt(static_cast<double>(lin)); }
     static float  cubicToLinear(double cub) { return static_cast<float>(cub * cub * cub); }

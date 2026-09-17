@@ -261,6 +261,8 @@ public:
     QStringList mixOrder() const;
 public Q_SLOTS:
     void Undo();                                      // CH-9: restore the last removed channel/mix
+    QString Export();                                 // CT-7
+    void Import(const QString &json);                 // CT-7
     /// UX-12 solo audition: hold = exactly one entity reaches the main output, release restores previous state.
     void Audition(const QDBusObjectPath &path);       // channel or mix path; empty path = stop
     void MoveChannel(const QDBusObjectPath &path, int index);   // UX-9
