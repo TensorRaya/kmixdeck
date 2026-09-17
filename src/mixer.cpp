@@ -772,7 +772,10 @@ bool Mixer::assignApp(uint32_t id, const QStringList &wantedIn, bool cumulative)
     }
     if (!m_graph.moveStream(id, m_layout.channelEntry(want.first()))) return false;
     m_pendingAutoRoute.remove(id);   // an explicit assignment wins over CH-5 auto-routing that may still be pending
-    if (la) { removeAppRelays(*la); la->channels = want; la->nodeName = it->nodeName; }
+    // Only tear relays down when the set of EXTRA channels actually changes. removeAppRelays + ensureAppRelays back
+    // to back does not work: pw_registry_destroy is asynchronous — the ".in" half is still visible when ensure looks,
+    // it says "keep", and a moment later the relay is gone for good (voice silent after a re-drop, 2026-09-17).
+    if (la) { if (la->channels.mid(1) != want.mid(1)) removeAppRelays(*la); la->channels = want; la->nodeName = it->nodeName; }
     else { m_layout.apps.push_back({key, it->nodeName, want}); la = m_layout.app(key); }
     if (!m_layout.knownApps.contains(key)) m_layout.knownApps << key;   // CH-5: this app has an explicit home now
     saveLayout();
@@ -1135,7 +1138,13 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         else { const QString live = slugForSinkId(m_graph.streamSink(n.id)); a.channels = live.isEmpty() ? QStringList{} : QStringList{live}; }
         if (isNew) { Q_EMIT appAdded(n.id); autoRouteNewApp(a); } else Q_EMIT appChanged(n.id);
         // CH-12: the app node is here → its relays may exist now (they are torn down while the node is absent)
-        if (isNew) if (const LayoutApp *la = m_layout.app(appKey(a)); la && la->channels.size() > 1) ensureAppRelays(*la);
+        if (isNew) if (LayoutApp *la = m_layout.app(appKey(a)); la && la->channels.size() > 1) {
+            // CH-6: the app may be back under a NEW node.name (pid/counter in the name — Sonusmix #38). The relay
+            // captures from the node by name, so the layout entry follows the node, else ensureAppRelays() looks for
+            // the old name, finds nothing and builds no relay (second channel silent, 2026-09-17).
+            if (la->nodeName != a.nodeName) { removeAppRelays(*la); la->nodeName = a.nodeName; saveLayout(); }
+            ensureAppRelays(*la);
+        }
     }
     if (layout) Q_EMIT layoutChanged();
 }

@@ -398,3 +398,52 @@ def test_ch9_undo_restores_mix_with_outputs_and_master_and_is_cleared_by_a_new_a
     stack.cli("mix", "remove", "recording"); stack.cli("mix", "add", "Monitor")
     assert wait(lambda: "kmixdeck.mix.monitor" in node_names(stack), tries=60)
     stack.cli("cell", "set", "game", "monitor", "1.0")
+
+
+def test_ch6_assignment_survives_node_id_name_and_metadata_churn(stack):
+    """CH-6 (Sonusmix #38): an app that comes back with a NEW node id, a NEW node.name, or a changed media.name /
+    stream id keeps its channel(s) — the layout keys on application.name. Three re-appearances, one assignment."""
+    from test_service_cli import start_fake_app, current_sink_of
+    import subprocess
+    def spawn(node_name, media):
+        props = f'{{ application.name = "FakeGame" application.process.binary = "fakegame" media.name = "{media}" media.role = "Game" node.name = "{node_name}" }}'
+        p = subprocess.Popen(["pw-play", "-P", props, str(stack.pw.tone())], env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(60):
+            apps = [a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame"]
+            if apps and current_sink_of(stack, node_name): return p, apps[0]
+            time.sleep(0.1)
+        raise AssertionError(f"{node_name} never appeared")
+    def wait_on(channels, node_name):
+        for _ in range(60):
+            apps = [a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame"]
+            if apps and sorted(apps[0]["Channels"]) == sorted(channels) and current_sink_of(stack, node_name) == "kmixdeck.channel." + channels[0]: return apps[0]
+            time.sleep(0.1)
+        raise AssertionError(f"expected {channels} on {node_name}, got {apps} linked to {current_sink_of(stack, node_name)}")
+    # baseline: the app on two channels (CH-12), assigned once — whichever two exist after the tests before us
+    chans = [c["Slug"] for c in stack.cli("status", json_out=True)["channels"]]
+    for need in ("voice", "game"):
+        if need not in chans: stack.cli("channel", "add", need.capitalize()); chans.append(need)
+    two = ["voice", "game"]
+    p, app = spawn("fakegame-out", "BGM")
+    stack.cli("app", "assign", "FakeGame", ",".join(two))
+    first = wait_on(two, "fakegame-out")
+    want = first["Channels"]; first_id = first["Path"]
+    p.kill(); p.wait(); time.sleep(0.8)
+    # 1) same node.name, new node id (a plain restart)
+    p, app = spawn("fakegame-out", "BGM")
+    try:
+        a = wait_on(want, "fakegame-out"); assert a["Path"] != first_id, "PipeWire reused the id — the test proves nothing"
+    finally: p.kill(); p.wait(); time.sleep(0.8)
+    # 2) NEW node.name (browsers/games do this: node.name carries a pid or a stream counter)
+    p, app = spawn("fakegame-out-7731", "BGM")
+    try: wait_on(want, "fakegame-out-7731")
+    finally: p.kill(); p.wait(); time.sleep(0.8)
+    # 3) new node.name AND new media.name (a different track / tab title)
+    p, app = spawn("fakegame-out-8002", "Level 2 music")
+    try:
+        wait_on(want, "fakegame-out-8002")
+        # relays (second channel) follow the new node too
+        if len(want) > 1:
+            names = stack.pw.node_names()
+            assert any(n.startswith("kmixdeck.relay.FakeGame.") for n in names), "CH-12 relay did not come back for the renamed node"
+    finally: p.kill(); p.wait()

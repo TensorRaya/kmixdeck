@@ -4,6 +4,8 @@
 #include <QQmlApplicationEngine>
 #include <QQmlError>
 #include <QTimer>
+#include <QDBusInterface>
+#include <QDBusConnection>
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QIcon>
@@ -109,6 +111,10 @@ int main(int argc, char *argv[])
                 if (op == QLatin1String("connect") && a.size() == 4) QMetaObject::invokeMethod(win, "gestureConnect", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]), Q_ARG(QVariant, a[3]));
                 else if (op == QLatin1String("remove") && a.size() == 3) QMetaObject::invokeMethod(win, "gestureRemove", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]));
                 else if (op == QLatin1String("drop") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureDrop", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
+                else if (op == QLatin1String("fader") && a.size() == 3) QMetaObject::invokeMethod(win, "gestureFader", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]));
+                else if (op == QLatin1String("hear") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureHear", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
+                else if (op == QLatin1String("mixoutput") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureMixOutput", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
+                else if (op == QLatin1String("mute") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureMute", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
                 else if (op == QLatin1String("traymenu") && a.size() == 1) { for (const QString &t : kde.trayMenuTexts()) fprintf(stdout, "traymenu %s\n", qPrintable(t)); ret = QString(); }
                 else if (op == QLatin1String("trayclick") && a.size() == 1) {   // UX-17: N clicks on the tray icon within the double-click interval
                     const int n = a[0].toInt(); for (int i = 0; i < n; ++i) kde.trayClick(QPoint(100, 100)); ret = QString();
@@ -119,7 +125,13 @@ int main(int argc, char *argv[])
             }
             fflush(stdout);
         });
-        if (!parser.isSet(probeArg)) QTimer::singleShot(2200, &app, [] { QCoreApplication::exit(0); });
+        // Leave only after the bus has ROUND-TRIPPED: every gesture ends in asyncCall()s, and under load the 1 s that
+        // used to remain before exit was not enough — the calls died with the process (ux14 red in the suite, green
+        // alone, 2026-09-17). A blocking Ping after the gestures is ordered behind our own calls on the same connection.
+        if (!parser.isSet(probeArg)) QTimer::singleShot(1500, &app, [] {
+            QDBusInterface(QStringLiteral("org.kmixdeck1"), QStringLiteral("/org/kmixdeck1"), QStringLiteral("org.freedesktop.DBus.Peer"), QDBusConnection::sessionBus()).call(QStringLiteral("Ping"));
+            QCoreApplication::exit(0);
+        });
     }
     if (parser.isSet(probeArg)) {
         if (engine.rootObjects().isEmpty()) return 1;
@@ -133,7 +145,10 @@ int main(int argc, char *argv[])
         });
         QTimer::singleShot(2000, &app, [win, probes] {
             for (const QString &p : probes) { QVariant ret; QMetaObject::invokeMethod(win, "probe", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, p)); fprintf(stdout, "probe %s = %s\n", qPrintable(p), qPrintable(ret.toString())); }
-            fflush(stdout); QCoreApplication::exit(0);
+            fflush(stdout);
+            // gestures (if any) ended in asyncCall()s — round-trip the bus before leaving, same as the gesture-only path
+            QDBusInterface(QStringLiteral("org.kmixdeck1"), QStringLiteral("/org/kmixdeck1"), QStringLiteral("org.freedesktop.DBus.Peer"), QDBusConnection::sessionBus()).call(QStringLiteral("Ping"));
+            QCoreApplication::exit(0);
         });
     }
     // --screenshot: the UI as a reviewable artefact without a compositor (docs, PR review, "what does it look like

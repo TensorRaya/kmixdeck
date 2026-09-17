@@ -100,9 +100,18 @@ class PwDaemon:
                             "sine=frequency=1000:sample_rate=48000", "-t", "120", "-ac", "2", str(p)], check=True)
         return p
 
-    def play_into(self, sink: str) -> subprocess.Popen:
+    def hot_tone(self) -> Path:
+        """CH-7 clip test: a sine that reaches full scale (float WAV: ffmpeg's sine sits at −21 dBFS, +24 dB → samples at 1.4; pw-play keeps floats, so samples
+        pass 1.0 and the daemon's clip counter sees them)."""
+        p = self.runtime_dir / "hot.wav"
+        if not p.exists():
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "quiet", "-y", "-f", "lavfi", "-i",
+                            "sine=frequency=1000:sample_rate=48000", "-t", "120", "-ac", "2", "-af", "volume=24dB", "-c:a", "pcm_f32le", str(p)], check=True)
+        return p
+
+    def play_into(self, sink: str, wav: Path | None = None) -> subprocess.Popen:
         """Play the test tone into `sink` with explicit port links (autoconnect off — deterministic)."""
-        p = subprocess.Popen(["pw-play", "-P", "{ node.autoconnect = false }", str(self.tone())],
+        p = subprocess.Popen(["pw-play", "-P", "{ node.autoconnect = false }", str(wav or self.tone())],
                              env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.6)
         for ch in ("FL", "FR"):
@@ -177,6 +186,19 @@ class PwDaemon:
             raise RuntimeError("private pipewire did not come up")
         time.sleep(1.0)  # let WirePlumber restore state + config modules load
 
+    def start_pulse(self) -> None:
+        """CT-5: what the Plasma volume applet talks to. pipewire-pulse on our private socket; PULSE_SERVER for clients."""
+        sock = self.runtime_dir / "pulse" / "native"; (self.runtime_dir / "pulse").mkdir(exist_ok=True)
+        self.env["PULSE_SERVER"] = f"unix:{sock}"; self.env["PULSE_RUNTIME_PATH"] = str(self.runtime_dir / "pulse")
+        # the socket path comes from PULSE_RUNTIME_PATH (module-protocol-pulse default: $PULSE_RUNTIME_PATH/native)
+        p = subprocess.Popen(["pipewire-pulse"], env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.procs.append(p)
+        for _ in range(60):
+            if sock.exists(): break
+            time.sleep(0.1)
+        else: raise RuntimeError("pipewire-pulse did not come up")
+        time.sleep(0.5)
+
     def _stop_procs(self) -> None:
         for p in reversed(self.procs):
             p.terminate()
@@ -192,9 +214,11 @@ class PwDaemon:
         shutil.rmtree(self.runtime_dir, ignore_errors=True)
 
 
-def start_private_pipewire(extra_conf: Path | None = PROTOTYPE_CONF) -> PwDaemon:
+def start_private_pipewire(extra_conf: Path | None = PROTOTYPE_CONF, session_conf: str | None = None) -> PwDaemon:
+    """session_conf: extra PipeWire context.properties text (DV-4: e.g. a 44.1 kHz / 256 quantum session)."""
     rt = Path(tempfile.mkdtemp(prefix="kmixdeck-pw-"))
     (rt / "pipewire.conf.d").mkdir()
+    if session_conf: (rt / "pipewire.conf.d" / "10-session.conf").write_text(session_conf)
     state = rt / "state"; state.mkdir()
     env = dict(os.environ)
     env.update({

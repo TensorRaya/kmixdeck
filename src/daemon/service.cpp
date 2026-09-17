@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "service.h"
+#include <cstring>
 #include "kmixdeck_version.h"
 #include <QDBusMessage>
 #include <QDBusMetaType>
@@ -242,6 +243,8 @@ void LevelsAdaptor::onNameOwnerChanged(const QString &name, const QString &, con
 //   kmixdeck.out.<m>[.n]      → out/<m>       (what leaves towards the device, post master)
 //   <app node, by id>         → app/<id>      (the application's own output — "who is talking")
 QString LevelsAdaptor::meterKey(const QString &n) const {
+    // CH-7 companions arrive as "rms/<node>" / "clip/<node>" and keep their prefix in front of the public key
+    for (const char *pre : {"rms/", "clip/"}) if (n.startsWith(QLatin1String(pre))) return QLatin1String(pre) + meterKey(n.mid(int(strlen(pre))));
     if (n.startsWith(QLatin1String("kmixdeck.channel."))) return QStringLiteral("channel/") + n.mid(17);
     if (n.startsWith(QLatin1String("kmixdeck.mix.")))     return QStringLiteral("mix/") + n.mid(13);
     if (n.startsWith(QLatin1String("kmixdeck.link.")))    { const auto p = n.mid(14).split(QLatin1Char('.')); if (p.size() == 2) return QStringLiteral("cell/%1/%2").arg(p[0], p[1]); }

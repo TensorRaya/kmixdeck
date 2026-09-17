@@ -16,6 +16,10 @@ struct MeterStream {
     spa_hook listener{};
     QString target;
     std::atomic<float> peak{0.f};   // RT thread: max-accumulate; publisher: exchange(0) — no lost tick either way
+    std::atomic<double> sumSq{0.0}; // RT thread: sum of squares since the last tick; publisher: exchange(0) → RMS (CH-7)
+    std::atomic<unsigned> samples{0};
+    std::atomic<unsigned> clipped{0}; // RT thread: samples at or above full scale since the last tick (CH-7 clip)
+    int clipTicks = 0;              // publisher: clip indicator stays lit ≈ 1.5 s after the last clipped sample
     float shown = 0.f;              // UX-16 ballistics (publisher thread only): instant rise, hold, then ≈ 20 dB/s fall
     int holdTicks = 0;
     std::atomic<bool> seen{false};  // RT thread sets once the first buffer arrived; until then the key is NOT published
@@ -36,8 +40,10 @@ struct Meters::Impl {
         if (d->data) {
             const unsigned n = d->chunk->size / sizeof(float);
             const auto *f = static_cast<const float *>(d->data);
-            float p = 0.f;
-            for (unsigned i = 0; i < n; i++) p = std::max(p, std::fabs(f[i]));
+            float p = 0.f; double sq = 0.0; unsigned clip = 0;
+            for (unsigned i = 0; i < n; i++) { const float a = std::fabs(f[i]); p = std::max(p, a); sq += double(f[i]) * f[i]; if (a >= 1.0f) ++clip; }
+            m->sumSq.fetch_add(sq, std::memory_order_relaxed); m->samples.fetch_add(n, std::memory_order_relaxed);
+            if (clip) m->clipped.fetch_add(clip, std::memory_order_relaxed);
             // max-accumulate against whatever the publisher has not consumed yet: two buffers in one tick keep the
             // louder one, a tick with no buffer keeps nothing (the publisher's exchange(0) then reads 0 and the
             // ballistics below hold the last value instead of dropping to silence)
@@ -60,18 +66,20 @@ struct Meters::Impl {
             PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture", PW_KEY_MEDIA_ROLE, "Music",
             PW_KEY_STREAM_MONITOR, "true",
             PW_KEY_TARGET_OBJECT, target.toUtf8().constData(),
-            "resample.peaks", "true",
+            // No resample.peaks: that mode hands us ONE peak sample per tick — fine for a peak meter, useless for RMS and
+            // clip counting (CH-7: RMS came out equal to peak, 2026-09-17). We take the graph's own rate, mono
+            // (channelmix folds to one), and reduce in onProcess: ~48k float multiply-adds per meter per second.
             PW_KEY_NODE_NAME, "kmixdeck.meter", PW_KEY_NODE_DESCRIPTION, "kmixdeck level meter",
             PW_KEY_NODE_PASSIVE, "true", PW_KEY_NODE_DONT_RECONNECT, "true", "node.dont-fallback", "true",
             nullptr);
         if (isSink) pw_properties_set(props, PW_KEY_STREAM_CAPTURE_SINK, "true");
-        pw_properties_setf(props, PW_KEY_NODE_RATE, "1/%d", kRateHz);
-        pw_properties_setf(props, PW_KEY_NODE_LATENCY, "1/%d", kRateHz);
+        // quantum = one publish tick worth of samples at the graph rate (48000/25 = 1920); PipeWire may split it
+        pw_properties_set(props, PW_KEY_NODE_LATENCY, "1920/48000");
         m->stream = pw_stream_new(graph->core(), "kmixdeck meter", props);
         static const pw_stream_events ev = events();
         pw_stream_add_listener(m->stream, &m->listener, &ev, m);
         uint8_t buf[1024]; spa_pod_builder b = SPA_POD_BUILDER_INIT(buf, sizeof buf);
-        spa_audio_info_raw info{}; info.format = SPA_AUDIO_FORMAT_F32; info.rate = kRateHz; info.channels = 1;
+        spa_audio_info_raw info{}; info.format = SPA_AUDIO_FORMAT_F32; info.channels = 1;   // rate: the graph's
         const spa_pod *params[1] = { spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &info) };
         pw_stream_connect(m->stream, PW_DIRECTION_INPUT, PW_ID_ANY,
                           static_cast<pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS),
@@ -124,6 +132,7 @@ void Meters::publish() {
     static constexpr int kHoldTicks = 8;
     static constexpr float kFallFactor = 0.912f;     // 10^(-0.8/20)
     static constexpr float kFloor = 1e-4f;           // −80 dBFS → 0
+    static constexpr int kClipTicks = 38;            // ≈ 1.5 s at 25 Hz
     QHash<QString, float> out;
     {
         QMutexLocker l(&d->mutex);
@@ -135,6 +144,12 @@ void Meters::publish() {
             else if (m->holdTicks > 0) { m->holdTicks--; }
             else { m->shown *= kFallFactor; if (m->shown < kFloor) m->shown = 0.f; }
             out.insert(it.key(), m->shown);
+            // CH-7: RMS over the tick's samples (a tick with no buffer repeats nothing — key absent), clip held
+            const unsigned n = m->samples.exchange(0, std::memory_order_relaxed);
+            const double sq = m->sumSq.exchange(0.0, std::memory_order_relaxed);
+            if (n) out.insert(QStringLiteral("rms/") + it.key(), float(std::sqrt(sq / n)));
+            if (m->clipped.exchange(0, std::memory_order_relaxed)) m->clipTicks = kClipTicks;
+            if (m->clipTicks > 0) { out.insert(QStringLiteral("clip/") + it.key(), 1.f); m->clipTicks--; }
         }
     }
     Q_EMIT peaks(out);

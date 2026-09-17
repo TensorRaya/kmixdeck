@@ -558,3 +558,74 @@ def test_dv28_ui24r_scale_32_in_32_out_every_port_routable_and_fast(stack):
     assert set(stack.cli("channel", "inputs", "in_21").stdout.split()) == {f"{din}:AUX21", f"{din}:AUX22>R"}
     layout = json.loads(open(os.path.join(stack.env["XDG_CONFIG_HOME"], "kmixdeck", "layout.json")).read())
     assert len([i for i in layout["inputs"] if i["channel"].startswith("in_")]) == 33
+
+
+def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(stack):
+    """DV-6: suspend/resume as PipeWire sees it — EVERY device node disappears at once (USB re-enumerates) and comes
+    back a moment later with new ids. Nothing the user set may be lost and nothing may need a restart: the listening
+    device, both mix outputs, the port-level input wire, faders/mutes and the app's channel all stand, and audio flows
+    input→channel→mix→speakers again within seconds. Measured, not read from properties."""
+    from test_service_cli import make_fake_sink, make_fake_source, destroy_node, start_fake_app
+    import subprocess
+    # the "laptop": speakers + headphones + a 4-in interface, one input wire, one app
+    make_fake_sink(stack, "fake.speakers", "Laptop Speakers"); make_fake_sink(stack, "fake.cans", "Headphones")
+    stack.cli("devices", "virtual", "add", "Interface", "--in", "4", "--out", "2"); stack.pw.wait_nodes(["kmixdeck.virt.interface"])
+    iface = "kmixdeck.virt.interface"
+    stack.cli("mix", "output-add", "monitor", "fake.cans"); stack.cli("listen", "fake.cans"); stack.cli("mix", "output-add", "stream", "fake.speakers")
+    stack.cli("channel", "add", "Mic"); stack.cli("channel", "input-add", "mic", f"{iface}:AUX3")
+    stack.cli("cell", "set", "mic", "stream", "-6dB"); stack.cli("channel", "mute", "game", "on")
+    p, app = start_fake_app(stack); stack.cli("app", "assign", "FakeGame", "voice")
+    stack.pw.wait_nodes(["kmixdeck.in.mic", "kmixdeck.out.stream", "kmixdeck.out.monitor"])
+    time.sleep(1.0)
+    tone = stack.pw.play_into_port(iface, "input_AUX3")
+    try:
+        before = wait_level(lambda: stack.pw.level_at("fake.speakers"), lambda v: v > SILENT + 10, tries=12)
+        assert before > SILENT + 10, "baseline: mic tone should reach the speakers via the stream mix"
+        snapshot = stack.cli("status", json_out=True)
+        # --- sleep: every device vanishes in one go (the virtual interface too — it is a "device" to the daemon)
+        destroy_node(stack, "fake.speakers"); destroy_node(stack, "fake.cans")
+        stack.cli("devices", "virtual", "remove", "interface", check=False)   # the USB interface is gone as well
+        for _ in range(50):
+            if not any(n in stack.pw.node_names() for n in ("fake.speakers", "fake.cans", iface)): break
+            time.sleep(0.1)
+        time.sleep(1.0)
+        st = stack.cli("status", json_out=True)
+        assert stack.cli("listen").stdout.strip().startswith("fake.cans"), "listening device must be remembered while it is gone"
+        assert "fake.speakers" in next(m for m in st["mixes"] if m["Slug"] == "stream")["Outputs"], "mix output must be remembered while it is gone"
+        assert stack.cli("channel", "inputs", "mic", json_out=True) == [f"{iface}:AUX3"], "input wire must be remembered"
+        assert next(c for c in st["channels"] if c["Slug"] == "mic")["InputPresent"] is False
+        assert next(m for m in st["mixes"] if m["Slug"] == "stream")["OutputPresent"] is False
+        # --- wake: everything re-enumerates (new ids), in a different order than it left
+        stack.cli("devices", "virtual", "add", "Interface", "--in", "4", "--out", "2")
+        make_fake_sink(stack, "fake.cans", "Headphones"); make_fake_sink(stack, "fake.speakers", "Laptop Speakers")
+        stack.pw.wait_nodes([iface, "fake.cans", "fake.speakers"])
+        tone.kill(); tone.wait()
+        tone = stack.pw.play_into_port(iface, "input_AUX3")
+        t0 = time.time()
+        after = wait_level(lambda: stack.pw.level_at("fake.speakers"), lambda v: v > SILENT + 10, tries=25)
+        assert after > SILENT + 10, f"after wake the mic tone does not reach the speakers again ({after:.1f} dB)"
+        took = time.time() - t0
+        assert abs(after - before) < 3, f"level after wake differs: {before:.1f} → {after:.1f} dB (a fader/trim was lost?)"
+        cans = wait_level(lambda: stack.pw.level_at("fake.cans"), lambda v: v > SILENT + 10, tries=10)
+        if not cans > SILENT + 10:
+            st2 = stack.cli("status", json_out=True)
+            raise AssertionError("monitor mix must play to the headphones again (%.1f dB)\n mixes: %s\n monitor mix level: %.1f  mic cell/monitor: %s\n out.monitor links: %s\n cans inputs: %s" % (
+                cans, [(m["Slug"], m["Outputs"], m["OutputPresent"]) for m in st2["mixes"]], stack.pw.level_at("kmixdeck.mix.monitor"),
+                [(round(c["Volume"], 2), c["Muted"]) for c in st2["cells"] if c["Path"].endswith("/mic/monitor")],
+                subprocess.run(["pw-link", "-l", "kmixdeck.out.monitor:output_FL"], env=stack.env, capture_output=True, text=True).stdout.replace("\n", " | ")[:300],
+                subprocess.run(["pw-link", "-l", "fake.cans:playback_FL"], env=stack.env, capture_output=True, text=True).stdout.replace("\n", " | ")[:300]))
+        st = stack.cli("status", json_out=True)
+        assert next(c for c in st["channels"] if c["Slug"] == "mic")["InputPresent"] is True
+        assert next(m for m in st["mixes"] if m["Slug"] == "stream")["OutputPresent"] is True
+        assert next(c for c in st["channels"] if c["Slug"] == "game")["Muted"] is True, "mute lost over sleep/wake"
+        assert abs(next(c for c in st["cells"] if c["Path"].endswith("/mic/stream"))["Volume"] - 10 ** (-6 / 20)) < 0.02, "cell fader lost"
+        assert next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")["Channels"] == ["voice"], "app assignment lost"
+        assert stack.cli("listen").stdout.strip().startswith("fake.cans")
+        # no restart happened: same daemon pid on the bus
+        owner = subprocess.run(["busctl", "--user", "status", "org.kmixdeck1"], env=stack.env, capture_output=True, text=True).stdout
+        assert f"PID={stack.daemon.pid}" in owner
+        print(f"DV-6: audio back {took:.1f}s after the devices returned")
+    finally:
+        tone.kill(); tone.wait(); p.kill(); p.wait()
+        stack.cli("channel", "mute", "game", "off"); stack.cli("channel", "remove", "mic", check=False)
+        stack.cli("mix", "output-remove", "stream", "fake.speakers", check=False); stack.cli("mix", "output-remove", "monitor", "fake.cans", check=False); stack.cli("listen", "none", check=False)

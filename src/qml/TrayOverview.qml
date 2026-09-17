@@ -86,8 +86,8 @@ Kirigami.AbstractApplicationWindow {
                     }
                     // the meter sits UNDER the row, full width, like the header bars in the window (UX-13) — a bar next to a
                     // slider read as a second broken slider in the first render (2026-09-17)
-                    LevelMeter { id: mm; horizontal: true; Layout.fillWidth: true; Layout.leftMargin: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing; Layout.rightMargin: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing; Layout.preferredHeight: 3
-                                 Connections { target: Mixer; function onPeaksChanged() { mm.peak = modelData.muted ? 0 : Mixer.peak(modelData.meterKey) } } }
+                    LevelMeter { id: mm; objectName: "trayMixMeter/" + modelData.slug; horizontal: true; Layout.fillWidth: true; Layout.leftMargin: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing; Layout.rightMargin: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing; Layout.preferredHeight: 3
+                                 Connections { target: Mixer; function onPeaksChanged() { mm.peak = modelData.muted ? 0 : Mixer.peak(modelData.meterKey); mm.rms = modelData.muted ? 0 : Mixer.peak("rms/" + modelData.meterKey); mm.clip = !modelData.muted && Mixer.peak("clip/" + modelData.meterKey) > 0 } } }
                 }
             }
             Kirigami.Separator { Layout.fillWidth: true }
@@ -123,8 +123,8 @@ Kirigami.AbstractApplicationWindow {
                             onToggled: { checked = Qt.binding(() => modelData.muted); Mixer.toggleChannelMute(modelData.slug) }
                         }
                     }
-                    LevelMeter { id: cm; horizontal: true; Layout.fillWidth: true; Layout.leftMargin: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing; Layout.rightMargin: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing; Layout.preferredHeight: 3
-                                 Connections { target: Mixer; function onPeaksChanged() { cm.peak = modelData.muted ? 0 : Mixer.peak(modelData.meterKey) } } }
+                    LevelMeter { id: cm; objectName: "trayChannelMeter/" + modelData.slug; horizontal: true; Layout.fillWidth: true; Layout.leftMargin: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing; Layout.rightMargin: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing; Layout.preferredHeight: 3
+                                 Connections { target: Mixer; function onPeaksChanged() { cm.peak = modelData.muted ? 0 : Mixer.peak(modelData.meterKey); cm.rms = modelData.muted ? 0 : Mixer.peak("rms/" + modelData.meterKey); cm.clip = !modelData.muted && Mixer.peak("clip/" + modelData.meterKey) > 0 } } }
                 }
             }
             Kirigami.Separator { Layout.fillWidth: true }

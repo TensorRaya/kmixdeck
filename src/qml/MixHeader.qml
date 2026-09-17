@@ -9,7 +9,9 @@ import org.kmixdeck
 
 QQC2.Control {
     id: header
+    objectName: "mixHeader/" + mix
     property string mix
+    function triggerOutput(nodeName) { return outMenu.triggerDevice(nodeName) }   // UX-14 gesture (the menu is a popup, not a child)
     property string channel                   // unused; Repeater contract
     property string outputDevice: Mixer.mixOutputDevice(mix)
     property bool outputPresent: Mixer.mixOutputPresent(mix)
@@ -53,7 +55,7 @@ QQC2.Control {
             height: 3
             // UX-13: what actually leaves towards the device (post master fader/mute) — out/<mix>; falls back to the
             // mix sink while the output edge is not metered yet
-            Connections { target: Mixer; function onPeaksChanged() { const o = Mixer.peak("out/" + header.mix); mixMeter.peak = header.masterMuted ? 0 : (o > 0 ? o : Mixer.peak("mix/" + header.mix)) } }
+            Connections { target: Mixer; function onPeaksChanged() { const o = Mixer.peak("out/" + header.mix); const k = o > 0 ? "out/" + header.mix : "mix/" + header.mix; mixMeter.peak = header.masterMuted ? 0 : Mixer.peak(k); mixMeter.rms = header.masterMuted ? 0 : Mixer.peak("rms/" + k); mixMeter.clip = !header.masterMuted && Mixer.peak("clip/" + k) > 0 } }
         }
     }
     TapHandler { acceptedButtons: Qt.RightButton; onTapped: mixCtxMenu.popup() }
@@ -121,6 +123,7 @@ QQC2.Control {
         // master: mute + fader (MX-6)
         QQC2.ToolButton {
             id: muteButton
+            objectName: "mixMute/" + header.mix   // UX-14 gesture
             icon.name: header.masterMuted ? "audio-volume-muted" : "audio-volume-high"
             icon.color: header.masterMuted ? Kirigami.Theme.negativeTextColor : undefined
             checkable: true; checked: header.masterMuted
@@ -197,6 +200,9 @@ QQC2.Control {
     }
             QQC2.Menu {
         id: outMenu
+        objectName: "outMenu/" + header.mix
+        // UX-14 gesture: trigger the entry for one device as a click on it would
+        function triggerDevice(nodeName) { for (let i = 0; i < outMenu.count; ++i) { const it = outMenu.itemAt(i); if (it && it.modelData && it.modelData.nodeName === nodeName) { it.triggered(); return "" } } return "<no entry " + nodeName + ">" }
         // MX-9: every entry is a toggle — a mix can play to headphones AND speakers
         QQC2.MenuItem {
             text: i18nc("@item mix output", "No output (capture only)")

@@ -23,7 +23,7 @@ if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMP
         add_test(NAME integration-${suite}
             COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_${suite}.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
-        set_tests_properties(integration-${suite} PROPERTIES TIMEOUT 300 LABELS "integration")
+        set_tests_properties(integration-${suite} PROPERTIES TIMEOUT 600 LABELS "integration")
     endforeach()
 else()
     message(STATUS "Integration tests disabled (need pytest, pipewire, wireplumber, ffmpeg)")

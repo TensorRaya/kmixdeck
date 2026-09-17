@@ -41,7 +41,8 @@ independent per-mix levels ([#72](https://codeberg.org/sonusmix/sonusmix/issues/
 
 ```sh
 cmake -S . -B build -G Ninja && ninja -C build
-ctest --test-dir build --output-on-failure      # QTest units + PipeWire sandbox integration
+pip install pytest pulsectl                       # integration tests: pytest + PulseAudio client (CT-5, talks to pipewire-pulse)
+ctest --test-dir build --output-on-failure      # QTest units + PipeWire sandbox integration (needs pipewire, wireplumber, pipewire-pulse, ffmpeg)
 
 ./build/bin/kmixdeckd &        # normally started by D-Bus activation
 ./build/bin/kmixdeck status    # CLI — every command also speaks --json

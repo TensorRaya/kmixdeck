@@ -4,7 +4,7 @@ One table row per core feature: the change is made through the CLI (rule 1: the 
 back through (a) the CLI itself, (b) the KDE window (`--probe`), (c) the tray popover (`--gesture trayclick:1
 --probe`). Adding a core feature = adding a row here; tools/sot-audit.py requires this file for every ✅ core row.
 """
-import subprocess, time
+import math, subprocess, time
 import pytest
 from test_service_cli import BIN, Stack, make_fake_sink  # noqa: F401
 from test_presentation import kde, stack  # noqa: F401
@@ -99,3 +99,44 @@ def test_ct4_tray_menu_offers_quick_mute_and_mix_switch(stack):
     assert any(i.startswith("[x] ") and "Stream" in i for i in items) and any(i.startswith("[ ] ") and "Monitor" in i for i in items), items
     assert items.count("[x] Monitor") >= 1, f"listening-to entry should show Monitor checked: {items}"   # the Listening-to section
     stack.cli("channel", "mute", "voice", "off"); stack.cli("mix", "mute", "stream", "off"); stack.cli("mix", "output-remove", "monitor", "fake.tray")
+
+
+def test_ch7_rms_and_clip_are_metered_in_the_daemon_and_shown_everywhere(stack):
+    """CH-7: the daemon publishes rms/<key> and clip/<key> next to every peak (one meter loop → every frontend agrees).
+    A 1 kHz sine at −20 dBFS: RMS is 3 dB under peak (√2). A sine past full scale lights clip/ on the channel and stays
+    lit ≈ 1.5 s after the tone stops. Window and tray meters show the clip cap; the CLI prints '!'."""
+    import json as _json
+    def ticks(n=8):
+        out = []
+        p = subprocess.Popen([str(BIN / "kmixdeck"), "--json", "levels"], env=stack.env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        for _ in range(n): out.append(_json.loads(p.stdout.readline()))
+        p.terminate(); p.wait(timeout=5); return out
+    stack.cli("channel", "mute", "game", "off"); stack.cli("channel", "trim", "game", "0dB")
+    p = stack.pw.play_into("kmixdeck.channel.game")
+    try:
+        time.sleep(1.2)
+        t = ticks()
+        pk = max(x.get("channel/game", 0) for x in t); rm = max(x.get("rms/channel/game", 0) for x in t)
+        assert pk > 0 and rm > 0, t[-1]
+        ratio_db = 20 * math.log10(pk / rm)
+        assert 2.0 < ratio_db < 4.0, f"sine: peak/RMS should be ≈ 3 dB, got {ratio_db:.1f} dB (peak {pk:.3f} rms {rm:.3f})"
+        assert not any(x.get("clip/channel/game") for x in t), "a −20 dBFS tone must not clip"
+    finally:
+        p.kill(); p.wait()
+    p = stack.pw.play_into("kmixdeck.channel.game", stack.pw.hot_tone())
+    try:
+        time.sleep(1.2)
+        t = ticks()
+        assert any(x.get("clip/channel/game") for x in t), "full-scale tone did not light the clip indicator: " + str([k for k in t[-1] if "game" in k])
+        # every frontend: window channel header, tray channel row, CLI text
+        w = kde(stack, "--probe", "channelMeter/game.clip")
+        assert w["channelMeter/game.clip"] == "true", w
+        tr = kde(stack, "--gesture", "trayclick:1", "--probe", "trayChannelMeter/game.clip")
+        assert tr["trayChannelMeter/game.clip"] == "true", tr
+        cli = subprocess.Popen([str(BIN / "kmixdeck"), "levels"], env=stack.env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        time.sleep(0.6); cli.terminate(); txt = cli.communicate(timeout=5)[0]
+        assert "]!" in txt and "=" in txt, txt[-300:]
+    finally:
+        p.kill(); p.wait()
+    time.sleep(2.2)
+    assert not any(x.get("clip/channel/game") for x in ticks(4)), "clip indicator must release ≈ 1.5 s after the last hot sample"

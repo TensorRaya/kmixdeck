@@ -9,6 +9,7 @@ import org.kmixdeck
 
 Item {
     id: cell
+    objectName: "cell/" + channel + "/" + mix   // UX-14 probe/gesture target
     property string channel
     property string mix
     property bool first: false
@@ -54,6 +55,7 @@ Item {
 
         Fader {
             id: slider
+            objectName: "cellFader/" + cell.channel + "/" + cell.mix
             Layout.fillWidth: true
             value: cell.value
             enabled: !cell.muted && cell.present

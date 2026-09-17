@@ -50,7 +50,10 @@ Kirigami.ScrollablePage {
     // currently heard mix (or the first mix) to it, so this bar and the mix headers never disagree (CT-5 spirit).
     Panel {
         id: hearing
+        objectName: "hearingBar"
         Layout.fillWidth: true
+        // UX-14 gesture: choose a listening device exactly as the combo box's onActivated does
+        function pickDevice(nodeName) { const i = Mixer.outputDevices.findIndex(d => d.nodeName === nodeName); if (i < 0) return "<no device " + nodeName + ">"; devBox.activated(i); return "" }
         // remembered per user session in the layout-independent UI settings; default: the first device that any mix plays to
         property string device: Mixer.listeningDevice
         readonly property var hearingMixes: page.mixes.filter(m => Mixer.mixOutputs(m).indexOf(hearing.device) >= 0)

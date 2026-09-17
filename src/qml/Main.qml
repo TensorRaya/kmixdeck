@@ -131,6 +131,27 @@ Kirigami.ApplicationWindow {
         const w = kind === "input" ? { kind: "input", channel: owner, ref: ref } : { kind: "output", mix: owner, ref: ref }
         return patchBayPage.openWirePopup(w)
     }
+    // UX-14: drive the mixer page's own handlers — the fader's onMoved, the header's Outputs menu entry, the "I hear" box
+    function findByName(name) {
+        function find(item) {
+            if (!item) return null
+            if (item.objectName === name) return item
+            for (let i = 0; i < (item.children ? item.children.length : 0); ++i) { const r = find(item.children[i]); if (r) return r }
+            if (item.contentItem && item.contentItem !== item) { const r = find(item.contentItem); if (r) return r }
+            return null
+        }
+        return find(root.contentItem) || find(root.pageStack)
+    }
+    function gestureFader(channel, mix, value) {
+        const f = findByName("cellFader/" + channel + "/" + mix); if (!f) return "<no fader " + channel + "/" + mix + ">"
+        f.value = Number(value); f.moved(); return ""
+    }
+    function gestureHear(nodeName) { const h = findByName("hearingBar"); return h ? h.pickDevice(nodeName) : "<no hearing bar>" }
+    function gestureMixOutput(mix, nodeName) { const h = findByName("mixHeader/" + mix); return h ? h.triggerOutput(nodeName) : "<no mix header " + mix + ">" }
+    function gestureMute(kind, slug) {
+        const b = findByName((kind === "mix" ? "mixMute/" : "channelMute/") + slug); if (!b) return "<no mute button " + kind + "/" + slug + ">"
+        b.toggle(); b.toggled(); return ""
+    }
     function gestureRemove(kind, owner, ref) {
         const w = kind === "input" ? { kind: "input", channel: owner, ref: ref } : kind === "output" ? { kind: "output", mix: owner, ref: ref } : kind === "cell" ? { kind: "cell", channel: owner, mix: ref } : { kind: "app", app: owner, channel: ref }
         Mixer.removeWire(w); return ""

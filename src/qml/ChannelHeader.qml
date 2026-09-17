@@ -180,6 +180,7 @@ Item {
         // screenshot (2026-09-16) whenever the channel was silent.
         LevelMeter {
             id: chMeter
+            objectName: "channelMeter/" + header.channel
             Layout.preferredWidth: Kirigami.Units.smallSpacing * 1.5
             Layout.preferredHeight: Kirigami.Units.gridUnit * 1.8
             Layout.alignment: Qt.AlignVCenter
@@ -188,7 +189,7 @@ Item {
             QQC2.ToolTip.text: i18n("Channel level (what every mix receives)")
             QQC2.ToolTip.visible: chMeterHover.hovered
             HoverHandler { id: chMeterHover }
-            Connections { target: Mixer; function onPeaksChanged() { chMeter.peak = header.muted ? 0 : Mixer.peak("channel/" + header.channel) } }
+            Connections { target: Mixer; function onPeaksChanged() { const k = "channel/" + header.channel; chMeter.peak = header.muted ? 0 : Mixer.peak(k); chMeter.rms = header.muted ? 0 : Mixer.peak("rms/" + k); chMeter.clip = !header.muted && Mixer.peak("clip/" + k) > 0 } }
         }
 
         // UX-12 listen: hold = only this channel reaches the main output, release restores everything.

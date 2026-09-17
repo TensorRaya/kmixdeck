@@ -23,7 +23,10 @@
            cell/<ch>/<mix>       post-fader signal of that cell
            in/<slug>             what the hardware input delivers into its channel
            out/<mix>             what leaves the mix towards its device (post master)
-           app/<nodeId>          the application's own output — "who is talking right now" -->
+           app/<nodeId>          the application's own output — "who is talking right now"
+         CH-7 companions, same tick, same keys with a prefix (absent when there is nothing to say):
+           rms/<key>             RMS of the tick's samples, linear (no ballistics — a true average)
+           clip/<key>            1.0 while the clip indicator is lit: a sample reached full scale within the last ≈ 1.5 s -->
     <signal name="Peaks">
       <arg name="peaks" type="a{sd}"/>
     </signal>

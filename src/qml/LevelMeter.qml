@@ -3,10 +3,16 @@
 // Input is linear 0..1; drawn on a dB scale from -60 to 0 with a slowly falling peak-hold line.
 import QtQuick
 import org.kde.kirigami as Kirigami
+import org.kmixdeck
 
 Item {
     id: meter
     property double peak: 0            // linear 0..1
+    property double rms: 0             // CH-7: linear 0..1, drawn as a solid core inside the peak bar (0 = not shown)
+    property bool clip: false          // CH-7: red cap at the top/right end while lit (the daemon holds it ≈ 1.5 s)
+    // Bind a daemon key and the meter feeds itself from Mixer.peak/rms/clip on every tick — one place, every frontend
+    property string meterKey: ""
+    Connections { target: Mixer; enabled: meter.meterKey.length > 0; function onPeaksChanged() { meter.peak = Mixer.peak(meter.meterKey); meter.rms = Mixer.peak("rms/" + meter.meterKey); meter.clip = Mixer.peak("clip/" + meter.meterKey) > 0 } }
     property double floorDb: -60
     property bool horizontal: false
     implicitWidth: horizontal ? Kirigami.Units.gridUnit * 4 : Kirigami.Units.smallSpacing * 1.5
@@ -14,6 +20,8 @@ Item {
 
     readonly property double db: peak > 0 ? 20 * Math.log10(peak) : floorDb
     readonly property double frac: Math.max(0, Math.min(1, (db - floorDb) / -floorDb))
+    readonly property double rmsDb: rms > 0 ? 20 * Math.log10(rms) : floorDb
+    readonly property double rmsFrac: Math.max(0, Math.min(1, (rmsDb - floorDb) / -floorDb))
     property double hold: 0
     // UX-16 colour bands with 2 dB hysteresis: a level hovering around a threshold must not flicker between two
     // colours (laptop 2026-09-16: "orange und grün wechselt sich zu schnell ab"). Ballistics (hold/fall) come from the
@@ -42,6 +50,29 @@ Item {
         color: meter.levelColor
         Behavior on width { enabled: meter.horizontal; NumberAnimation { duration: 40; easing.type: Easing.Linear } }
         Behavior on height { enabled: !meter.horizontal; NumberAnimation { duration: 40; easing.type: Easing.Linear } }
+    }
+    Rectangle {   // CH-7 RMS core: the "how loud does it feel" part, brighter than the peak envelope
+        visible: meter.rms > 0
+        anchors { left: parent.left; bottom: parent.bottom }
+        anchors.right: meter.horizontal ? undefined : parent.right
+        anchors.top: meter.horizontal ? parent.top : undefined
+        width: meter.horizontal ? parent.width * meter.rmsFrac : parent.width
+        height: meter.horizontal ? parent.height : parent.height * meter.rmsFrac
+        radius: Math.min(width, height) / 2
+        color: Qt.lighter(meter.levelColor, 1.35)
+        Behavior on width { enabled: meter.horizontal; NumberAnimation { duration: 40; easing.type: Easing.Linear } }
+        Behavior on height { enabled: !meter.horizontal; NumberAnimation { duration: 40; easing.type: Easing.Linear } }
+    }
+    Rectangle {   // CH-7 clip indicator: a red cap at the 0 dBFS end, set off by a light gap so it reads as its own
+        objectName: "clipIndicator"   // element even when the bar below it is red too — stays lit as long as the daemon says so
+        visible: meter.clip
+        color: Kirigami.Theme.negativeTextColor
+        border { width: 1; color: Kirigami.Theme.backgroundColor }
+        anchors.right: parent.right
+        anchors.top: parent.top
+        width: meter.horizontal ? Math.max(5, parent.height * 1.5) : parent.width
+        height: meter.horizontal ? parent.height : Math.max(5, parent.width * 1.5)
+        radius: 1
     }
     Rectangle {   // peak hold
         visible: meter.hold > 0.02

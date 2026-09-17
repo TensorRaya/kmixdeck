@@ -128,9 +128,14 @@ public Q_SLOTS:
         QStringList keys = p.keys(); keys.sort();
         QString line;
         for (const auto &k : keys) {
+            if (k.startsWith(QLatin1String("rms/")) || k.startsWith(QLatin1String("clip/"))) continue;   // CH-7 companions, folded into their key's line
             const double v = p.value(k).toDouble(); const double db = v > 0 ? 20 * std::log10(v) : -90;
-            const int bar = std::clamp(static_cast<int>((db + 60) / 60 * 20), 0, 20);   // −60…0 dB → 0…20 chars
-            line += QStringLiteral("%1 [%2%3] %4  ").arg(k, -16).arg(QString(bar, QLatin1Char('#'))).arg(QString(20 - bar, QLatin1Char(' '))).arg(v > 0 ? QStringLiteral("%1 dB").arg(db, 6, 'f', 1) : QStringLiteral("   -inf"));
+            const double r = p.value(QStringLiteral("rms/") + k).toDouble(); const double rdb = r > 0 ? 20 * std::log10(r) : -90;
+            const int bar = std::clamp(static_cast<int>((db + 60) / 60 * 20), 0, 20);    // −60…0 dB → 0…20 chars: peak = '#'
+            const int core = std::clamp(static_cast<int>((rdb + 60) / 60 * 20), 0, bar); // RMS = '=' inside the peak bar
+            const bool clip = p.value(QStringLiteral("clip/") + k).toDouble() > 0;
+            line += QStringLiteral("%1 [%2%3%4]%5 %6  ").arg(k, -16).arg(QString(core, QLatin1Char('='))).arg(QString(bar - core, QLatin1Char('#'))).arg(QString(20 - bar, QLatin1Char(' ')))
+                        .arg(clip ? QStringLiteral("!") : QStringLiteral(" ")).arg(v > 0 ? QStringLiteral("%1 dB").arg(db, 6, 'f', 1) : QStringLiteral("   -inf"));
         }
         out << "\r" << line; out.flush();
     }
@@ -164,7 +169,7 @@ int main(int argc, char *argv[]) {
         "  mix     output-add|output-remove <slug> <node.name>\n"
         "  mix     fallback <slug> <node.name|none>   played while every output is unplugged (DV-15)\n"
         "  devices [in]                               hardware outputs a mix can play to (in: sources a channel can be fed by)\n"
-        "  levels                                     live peak meters (Ctrl-C to stop)\n"
+        "  levels                                     live meters: peak '#', RMS '=', clip '!' (Ctrl-C to stop)\n"
         "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
         "  cell    link <ch> <mix> <other-mix|none>   MX-7: this cell follows the other mix's cell (volume+mute)\n"
         "  fx      types                                  built-in effect catalog (JSON)\n"
