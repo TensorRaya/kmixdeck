@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import QtQuick
 import QtQuick.Controls as QQC2
+import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtCore
 import org.kde.kirigami as Kirigami
@@ -55,6 +56,13 @@ Kirigami.ApplicationWindow {
                 onTriggered: { root.pageStack.clear(); root.pageStack.push(patchBayPage) }
             },
             Kirigami.Action { separator: true },
+            Kirigami.Action {   // CH-11
+                objectName: "hiddenDevicesAction"
+                text: i18np("Hidden device… (%1)", "Hidden devices… (%1)", Mixer.hiddenDevices.length)
+                icon.name: "view-hidden"
+                enabled: Mixer.hiddenDevices.length > 0
+                onTriggered: hiddenDevicesDialog.open()
+            },
             Kirigami.Action {   // CT-7
                 objectName: "exportAction"
                 text: i18n("Export settings…")
@@ -218,6 +226,30 @@ Kirigami.ApplicationWindow {
     }
     Shortcut { sequences: [StandardKey.Undo]; enabled: Mixer.undoDescription.length > 0; onActivated: Mixer.undo() }
 
+    // CH-11: bring hidden devices back
+    Kirigami.PromptDialog {
+        id: hiddenDevicesDialog
+        objectName: "hiddenDevicesDialog"
+        title: i18n("Hidden devices")
+        standardButtons: Kirigami.Dialog.Close
+        preferredWidth: Kirigami.Units.gridUnit * 26
+        ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+            QQC2.Label { text: i18n("These devices are left out of the pickers. Routing that uses them is untouched."); wrapMode: Text.WordWrap; Layout.fillWidth: true; opacity: 0.7 }
+            Repeater {
+                model: Mixer.hiddenDevices
+                RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    Kirigami.Icon { source: modelData.present ? "audio-card" : "audio-card-symbolic"; opacity: modelData.present ? 1 : 0.5; Layout.preferredWidth: Kirigami.Units.iconSizes.small; Layout.preferredHeight: width }
+                    QQC2.Label { text: modelData.description + (modelData.present ? "" : i18n(" (not connected)")); elide: Text.ElideMiddle; Layout.fillWidth: true }
+                    QQC2.Button { objectName: "unhide/" + modelData.nodeName; text: i18n("Show again"); icon.name: "view-visible"; onClicked: Mixer.setDeviceHidden(modelData.nodeName, false) }
+                }
+            }
+        }
+    }
+    function gestureHide(node, hidden) { Mixer.setDeviceHidden(node, hidden === "1" || hidden === "true"); return "" }
+
     // CT-7 backup / restore — the daemon owns the document, the window only picks the file
     FileDialog {
         id: exportDialog
@@ -245,6 +277,8 @@ Kirigami.ApplicationWindow {
     }
     RenameDialog { id: renameDialog }
     function renameDialogOpen(kind, slug) { renameDialog.open(kind, slug) }
+    function duplicateDialogOpen(slug) { renameDialog.open("mix", slug, true) }   // MX-8
+    function gestureDuplicate(slug, name) { renameDialog.open("mix", slug, true); renameDialog.commit(name); renameDialog.close(); return "" }
     IconDialog { id: iconDialog }
     function iconDialogOpen(kind, slug) { iconDialog.open(kind, slug) }
     // FX panel opens as a dialog layer over the matrix — narrow windows keep the grid behind them.

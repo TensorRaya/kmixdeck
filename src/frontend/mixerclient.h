@@ -34,6 +34,7 @@ class MixerClient : public QObject {
     Q_PROPERTY(QVariantList apps READ apps NOTIFY appsChanged)   // [{path,name,binary,mediaName,channel}] for QML
     Q_PROPERTY(QVariantList outputDevices READ outputDevices NOTIFY outputDevicesChanged)   // [{nodeName, description}]
     Q_PROPERTY(QVariantList inputDevices READ inputDevices NOTIFY inputDevicesChanged)   // hardware sources a channel can be fed by
+    Q_PROPERTY(QVariantList hiddenDevices READ hiddenDevices NOTIFY hiddenDevicesChanged)  // CH-11: [{nodeName, description, present}]
     Q_PROPERTY(int devicePortsVersion READ devicePortsVersion NOTIFY devicePortsChanged)   // bump → QML re-asks devicePorts()
     Q_PROPERTY(bool metersEnabled READ metersEnabled WRITE setMetersEnabled NOTIFY metersEnabledChanged)   // Levels.Subscribe while true
     Q_PROPERTY(QString defaultChannel READ defaultChannel WRITE setDefaultChannel NOTIFY defaultChannelChanged)   // CH-5, slug or ""
@@ -93,6 +94,9 @@ public:
     QVariantList apps() const;
     QVariantList outputDevices() const;
     QVariantList inputDevices() const;
+    QVariantList hiddenDevices() const;
+    Q_INVOKABLE bool deviceInUse(const QString &node) const;
+    Q_INVOKABLE void setDeviceHidden(const QString &node, bool hidden);   // CH-11
     /// ADR 0009 / DV-20: [{position, port, label, usedBy:[names]}] for one device; empty until the daemon told us.
     Q_INVOKABLE QVariantList devicePorts(const QString &nodeName) const;
     int devicePortsVersion() const { return m_devicePortsVersion; }
@@ -138,6 +142,7 @@ public:
     Q_INVOKABLE void    setMixOutputDevice(const QString &slug, const QString &nodeName);
     Q_INVOKABLE void    renameChannel(const QString &slug, const QString &name);
     Q_INVOKABLE void    renameMix(const QString &slug, const QString &name);
+    Q_INVOKABLE void    duplicateMix(const QString &slug, const QString &name);   // MX-8
     Q_INVOKABLE void    setChannelIcon(const QString &slug, const QString &icon);   // UX-8
     Q_INVOKABLE void    setMixIcon(const QString &slug, const QString &icon);
     Q_INVOKABLE void    moveChannel(const QString &slug, int index);              // UX-9
@@ -209,6 +214,7 @@ Q_SIGNALS:
     void metersEnabledChanged();
     void peaksChanged();                                        // once per tick
     void lastErrorChanged();
+    void hiddenDevicesChanged();
     void mixChanged(const QString &slug);
 
 private Q_SLOTS:
@@ -238,6 +244,7 @@ private:
     QHash<QString, double> m_peaks;
     QStringList m_channelOrder, m_mixOrder;
     QString m_lastError;
+    QStringList m_hiddenDevices;
 };
 
 } // namespace kmixdeck::frontend

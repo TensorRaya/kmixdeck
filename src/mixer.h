@@ -224,6 +224,13 @@ public:
     Q_INVOKABLE bool   undo();
     // CT-7 backup/restore: the whole layout PLUS every fader, trim and mute as one JSON document. import() replaces the
     // layout, rebuilds the graph and applies the levels as each node comes up (same pending mechanism as undo()).
+    // MX-8: new mix from an existing one — name, icon, colour, FX chain, master level/mute and every cell fader/mute
+    // are copied; outputs are NOT (two mixes on one device = the same audio twice) and MX-7 links are not either.
+    QString duplicateMix(const QString &from, const QString &displayName, QString *error = nullptr);
+    // CH-11: hide a physical device from every picker without touching it (still listed in InputDevices/OutputDevices,
+    // still routable by name — hidden is a presentation flag the daemon owns so every frontend agrees)
+    QStringList hiddenDevices() const { return m_layout.hiddenDevices; }
+    bool setDeviceHidden(const QString &node, bool hidden);
     QJsonObject exportSettings() const;
     bool importSettings(const QJsonObject &doc, QString *error = nullptr);
 
@@ -246,6 +253,7 @@ Q_SIGNALS:
     void defaultChannelChanged();
     void listeningDeviceChanged();
     void undoChanged();
+    void hiddenDevicesChanged();
 
 private:
     void onNode(const pw::NodeInfo &n);

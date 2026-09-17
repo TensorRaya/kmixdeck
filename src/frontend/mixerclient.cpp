@@ -76,6 +76,10 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
             const QString d = props.value(QStringLiteral("ListeningDevice")).toString();
             if (d != m_listeningDevice) { m_listeningDevice = d; Q_EMIT listeningDeviceChanged(); }
         }
+        if (props.contains(QStringLiteral("HiddenDevices"))) {   // CH-11
+            const QStringList h = props.value(QStringLiteral("HiddenDevices")).toStringList();
+            if (h != m_hiddenDevices) { m_hiddenDevices = h; Q_EMIT hiddenDevicesChanged(); Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged(); }
+        }
         if (props.contains(QStringLiteral("DefaultChannel"))) {
             const QString p = props.value(QStringLiteral("DefaultChannel")).toString();
             const QString slug = p == QLatin1String("/") ? QString() : p.section(QLatin1Char('/'), -1);
@@ -229,8 +233,12 @@ QVariantList MixerClient::apps() const {
 }
 QVariantList MixerClient::outputDevices() const {
     QVariantList out;
-    for (auto it = m_outputDevices.cbegin(); it != m_outputDevices.cend(); ++it)
-        out.push_back(QVariantMap{{QStringLiteral("nodeName"), it.key()}, {QStringLiteral("description"), it.value()}});
+    for (auto it = m_outputDevices.cbegin(); it != m_outputDevices.cend(); ++it) {
+        // CH-11: hidden devices leave every picker — except one that is in use (the user must still see where a mix
+        // plays / what they listen on; hiding is about the list, not about the routing)
+        if (m_hiddenDevices.contains(it.key()) && !deviceInUse(it.key())) continue;
+        out.push_back(QVariantMap{{QStringLiteral("nodeName"), it.key()}, {QStringLiteral("description"), it.value()}, {QStringLiteral("hidden"), m_hiddenDevices.contains(it.key())}});
+    }
     std::sort(out.begin(), out.end(), [](const QVariant &a, const QVariant &b) { return a.toMap().value(QStringLiteral("description")).toString().localeAwareCompare(b.toMap().value(QStringLiteral("description")).toString()) < 0; });
     return out;
 }
@@ -375,6 +383,7 @@ QVariantMap MixerClient::patchbay() const {
     }
     for (auto it = m_inputDevices.cbegin(); it != m_inputDevices.cend(); ++it) {
         const QString node = it.key();
+        if (m_hiddenDevices.contains(node) && !deviceInUse(node)) continue;   // CH-11: hidden and unused → no card
         QVariantList rows;
         const QVariantList ports = devicePorts(node);
         if (ports.isEmpty()) { rows << row(QStringLiteral("FL"), QStringLiteral("L"), QStringLiteral("dev/") + node, false, true, used.value(node + QStringLiteral("|FL"))) << row(QStringLiteral("FR"), QStringLiteral("R"), QStringLiteral("dev/") + node, false, true, used.value(node + QStringLiteral("|FR"))); }
@@ -436,6 +445,7 @@ QVariantMap MixerClient::patchbay() const {
     QStringList outList = outDevs.values(); std::sort(outList.begin(), outList.end(), [this](const QString &a, const QString &b) { return deviceDescription(a).localeAwareCompare(deviceDescription(b)) < 0; });
     for (const QString &node : outList) {
         const bool present = m_outputDevices.contains(node);
+        if (m_hiddenDevices.contains(node) && !deviceInUse(node)) continue;   // CH-11
         QVariantList rows;
         const QVariantList ports = devicePorts(node);
         if (ports.isEmpty()) { rows << row(QStringLiteral("FL"), QStringLiteral("L"), QStringLiteral("dev/") + node, true, false, used.value(node + QStringLiteral("|FL"))) << row(QStringLiteral("FR"), QStringLiteral("R"), QStringLiteral("dev/") + node, true, false, used.value(node + QStringLiteral("|FR"))); }
@@ -478,8 +488,10 @@ QVariantMap MixerClient::overview() const {
 }
 QVariantList MixerClient::inputDevices() const {
     QVariantList out;
-    for (auto it = m_inputDevices.cbegin(); it != m_inputDevices.cend(); ++it)
-        out.push_back(QVariantMap{{QStringLiteral("nodeName"), it.key()}, {QStringLiteral("description"), it.value()}});
+    for (auto it = m_inputDevices.cbegin(); it != m_inputDevices.cend(); ++it) {
+        if (m_hiddenDevices.contains(it.key()) && !deviceInUse(it.key())) continue;   // CH-11
+        out.push_back(QVariantMap{{QStringLiteral("nodeName"), it.key()}, {QStringLiteral("description"), it.value()}, {QStringLiteral("hidden"), m_hiddenDevices.contains(it.key())}});
+    }
     std::sort(out.begin(), out.end(), [](const QVariant &a, const QVariant &b) { return a.toMap().value(QStringLiteral("description")).toString().localeAwareCompare(b.toMap().value(QStringLiteral("description")).toString()) < 0; });
     return out;
 }
@@ -555,6 +567,22 @@ void MixerClient::toggleMixMute(const QString &slug) {
     QDBusInterface(BUS, QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("ToggleMute"));
 }
 void MixerClient::setChannelIcon(const QString &slug, const QString &icon) { setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Icon"), icon); }
+void MixerClient::duplicateMix(const QString &slug, const QString &name) { callReportingErrors(QStringLiteral("DuplicateMix"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/mix/%2").arg(ROOT, slug))), name); }
+bool MixerClient::deviceInUse(const QString &node) const {
+    if (m_listeningDevice == node) return true;
+    for (auto it = m_mixes.cbegin(); it != m_mixes.cend(); ++it) for (const QString &o : it->value(QStringLiteral("Outputs")).toStringList()) if (o.section(QLatin1Char(':'), 0, 0) == node) return true;
+    for (auto it = m_channels.cbegin(); it != m_channels.cend(); ++it) for (const QString &i : it->value(QStringLiteral("Inputs")).toStringList()) if (i.section(QLatin1Char(':'), 0, 0) == node) return true;
+    return false;
+}
+QVariantList MixerClient::hiddenDevices() const {
+    QVariantList out;
+    for (const QString &n : m_hiddenDevices) {
+        const QString d = m_outputDevices.contains(n) ? m_outputDevices.value(n) : m_inputDevices.value(n, n);
+        out.push_back(QVariantMap{{QStringLiteral("nodeName"), n}, {QStringLiteral("description"), d}, {QStringLiteral("present"), m_outputDevices.contains(n) || m_inputDevices.contains(n)}});
+    }
+    return out;
+}
+void MixerClient::setDeviceHidden(const QString &node, bool hidden) { callReportingErrors(QStringLiteral("SetDeviceHidden"), node, hidden); }
 void MixerClient::setChannelColor(const QString &slug, const QString &color) { setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Color"), color); }
 void MixerClient::setMixColor(const QString &slug, const QString &color) { setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Color"), color); }
 void MixerClient::setMixIcon(const QString &slug, const QString &icon) { setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Icon"), icon); }

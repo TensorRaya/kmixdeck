@@ -591,8 +591,11 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
         for _ in range(50):
             if not any(n in stack.pw.node_names() for n in ("fake.speakers", "fake.cans", iface)): break
             time.sleep(0.1)
-        time.sleep(1.0)
-        st = stack.cli("status", json_out=True)
+        # the daemon learns of the removal from PipeWire's registry — under a full ctest run that took > 1 s (ctest26/28)
+        for _ in range(100):
+            st = stack.cli("status", json_out=True)
+            if next(m for m in st["mixes"] if m["Slug"] == "stream")["OutputPresent"] is False and next(c for c in st["channels"] if c["Slug"] == "mic")["InputPresent"] is False: break
+            time.sleep(0.1)
         assert stack.cli("listen").stdout.strip().startswith("fake.cans"), "listening device must be remembered while it is gone"
         assert "fake.speakers" in next(m for m in st["mixes"] if m["Slug"] == "stream")["Outputs"], "mix output must be remembered while it is gone"
         assert stack.cli("channel", "inputs", "mic", json_out=True) == [f"{iface}:AUX3"], "input wire must be remembered"

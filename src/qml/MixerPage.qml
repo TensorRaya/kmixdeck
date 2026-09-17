@@ -51,6 +51,7 @@ Kirigami.ScrollablePage {
     Panel {
         id: hearing
         objectName: "hearingBar"
+        readonly property string deviceNames: Mixer.outputDevices.map(d => d.description).join("|")   // CH-11 probe
         Layout.fillWidth: true
         // UX-14 gesture: choose a listening device exactly as the combo box's onActivated does
         function pickDevice(nodeName) { const i = Mixer.outputDevices.findIndex(d => d.nodeName === nodeName); if (i < 0) return "<no device " + nodeName + ">"; devBox.activated(i); return "" }

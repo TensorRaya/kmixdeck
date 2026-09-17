@@ -4,7 +4,7 @@ One table row per core feature: the change is made through the CLI (rule 1: the 
 back through (a) the CLI itself, (b) the KDE window (`--probe`), (c) the tray popover (`--gesture trayclick:1
 --probe`). Adding a core feature = adding a row here; tools/sot-audit.py requires this file for every ✅ core row.
 """
-import math, subprocess, time
+import json, math, subprocess, time
 import pytest
 from test_service_cli import BIN, Stack, make_fake_sink  # noqa: F401
 from test_presentation import kde, stack  # noqa: F401
@@ -258,3 +258,114 @@ def test_mx5_eight_mixes_all_faders_visible_and_bad_colour_refused(stack):
     finally:
         for sl in slugs: stack.cli("mix", "remove", sl, check=False)
         stack.cli("mix", "color", "stream", "none", check=False); stack.cli("channel", "color", "voice", "none", check=False)
+
+
+def test_mx8_duplicate_mix_copies_levels_fx_colour_not_outputs_from_cli_and_window(stack):
+    """MX-8: a duplicated mix starts with the source's icon, colour, FX chain, master level/mute and every cell
+    fader/mute — measured on the copy — but with NO outputs (two mixes on one device would double the audio).
+    Once via the CLI, once via the window's menu handler; the copy's slug comes from the new name."""
+    from test_service_cli import make_fake_sink
+    make_fake_sink(stack, "fake.dup.out", "Dup Out")
+    stack.cli("mix", "output-add", "stream", "fake.dup.out"); stack.cli("mix", "color", "stream", "#ef973c"); stack.cli("mix", "icon", "stream", "camera-web")
+    stack.cli("mix", "volume", "stream", "-6dB"); stack.cli("cell", "set", "game", "stream", "-12dB"); stack.cli("cell", "mute", "system", "stream", "on")
+    presets = stack.cli("fx", "presets", json_out=True)
+    preset = presets[0] if isinstance(presets, list) else next(iter(presets.values()))
+    stack.cli("fx", "set", "mix", "stream", json.dumps(preset.get("chain", preset)), check=False)
+    time.sleep(0.8)
+    src_fx = stack.cli("fx", "get", "mix", "stream", json_out=True)
+    created = []
+    try:
+        for how in ("cli", "window"):
+            name = "Stream copy" if how == "cli" else "Stream two"
+            if how == "cli":
+                slug = stack.cli("mix", "duplicate", "stream", name).stdout.strip()
+            else:
+                assert kde(stack, "--gesture", f"duplicate:stream|{name}")[0].endswith("-> ok")
+                slug = next(m["Slug"] for m in stack.cli("status", json_out=True)["mixes"] if m["Name"] == name)
+            created.append(slug)
+            stack.pw.wait_nodes([f"kmixdeck.mix.{slug}", f"kmixdeck.link.game.{slug}", f"kmixdeck.link.system.{slug}"])
+            for _ in range(50):   # levels are applied as the nodes come up
+                st = stack.cli("status", json_out=True)
+                if abs(next(x for x in st["mixes"] if x["Slug"] == slug)["Volume"] - 10 ** (-6 / 20)) < 0.01: break
+                time.sleep(0.1)
+            m = next(x for x in st["mixes"] if x["Slug"] == slug); src = next(x for x in st["mixes"] if x["Slug"] == "stream")
+            assert m["Name"] == name and m["Icon"] == "camera-web" and m["Color"] == "#ef973c", m
+            assert m["Outputs"] == [] and src["Outputs"] == ["fake.dup.out"], "outputs must not be copied"
+            assert stack.cli("fx", "get", "mix", slug, json_out=True) == src_fx, "FX chain must be copied"
+            assert abs(m["Volume"] - 10 ** (-6 / 20)) < 0.01, m["Volume"]
+            cells = {c["Path"].rsplit("/", 2)[-2]: (round(c["Volume"], 3), c["Muted"]) for c in st["cells"] if c["Path"].endswith("/" + slug)}
+            assert cells["game"][0] < 0.99 and cells["system"][1] is True, cells
+            # measured on the copy: game plays −12 dB (cell) −6 dB (master) under the channel; system is silent
+            stack.cli("channel", "mute", "voice", "on")
+            tone = stack.pw.play_into("kmixdeck.channel.game")
+            try:
+                ch = wait_level(lambda: stack.pw.level_at("kmixdeck.channel.game"), lambda v: v > -50, tries=12)
+                mx = wait_level(lambda: stack.pw.level_at(f"kmixdeck.mix.{slug}"), lambda v: v > -60, tries=6)
+                # the mix sink's monitor is post master: −12 dB (cell) −6 dB (master) under the channel
+                assert abs((mx - ch) - (-18)) < 3, f"copy {slug}: channel {ch:.1f}, mix {mx:.1f} (expected −18 dB apart)"
+            finally:
+                tone.kill(); tone.wait(); stack.cli("channel", "mute", "voice", "off")
+            # the window shows the copy with the same colour stripe as the source
+            g = kde(stack, "--probe", f"mixColorStripe/{slug}.color", "--probe", f"mixHeaderTitle/{slug}.text")
+            assert g[f"mixColorStripe/{slug}.color"] == "#ef973c" and name in g[f"mixHeaderTitle/{slug}.text"], g
+        r = stack.cli("mix", "duplicate", "nope", "x", check=False); assert r.returncode != 0
+        r = stack.cli("mix", "duplicate", "stream", "Stream copy", check=False); assert r.returncode != 0 and "exists" in r.stderr, r
+    finally:
+        for sl in created: stack.cli("mix", "remove", sl, check=False)
+        stack.cli("mix", "output-remove", "stream", "fake.dup.out", check=False); stack.cli("mix", "color", "stream", "none", check=False)
+        stack.cli("mix", "icon", "stream", "none", check=False); stack.cli("mix", "volume", "stream", "0dB", check=False)
+        stack.cli("cell", "set", "game", "stream", "0dB", check=False); stack.cli("cell", "mute", "system", "stream", "off", check=False)
+        stack.cli("fx", "clear", "mix", "stream", check=False)
+
+
+def test_ch11_hidden_device_leaves_every_picker_stays_routable_and_comes_back(stack):
+    """CH-11: hide a device → gone from the listening-device box, the mix Outputs menu, the channel Inputs menu, the
+    AddDialog and the patchbay card list; still in `devices` (marked) and still routable by name; a hidden device that
+    is IN USE stays visible where it is used. Unhide from the window's dialog handler → back everywhere."""
+    from test_service_cli import make_fake_sink, make_fake_source
+    make_fake_sink(stack, "fake.hide.out", "Hideable Out"); make_fake_source(stack, "fake.hide.in", "Hideable In"); time.sleep(0.8)
+    def picker_state():
+        g = kde(stack, "--probe", "listeningDeviceBox.count", "--probe", "hearingBar.deviceNames", "--probe", "mixHeader/stream.outputDeviceNames",
+                "--probe", "channelHeader/voice.inputDeviceNames", "--probe", "patchbay.cardIds", open_page="patchbay")
+        return g
+    try:
+        before = picker_state()
+        assert "Hideable Out" in before["hearingBar.deviceNames"] and "Hideable Out" in before["mixHeader/stream.outputDeviceNames"]
+        assert "Hideable In" in before["channelHeader/voice.inputDeviceNames"] and "dev/fake.hide.in" in before["patchbay.cardIds"] and "outdev/fake.hide.out" in before["patchbay.cardIds"]
+        # hide both via CLI
+        stack.cli("devices", "hide", "fake.hide.out"); stack.cli("devices", "hide", "fake.hide.in")
+        assert set(stack.cli("devices", "hidden").stdout.split()) == {"fake.hide.out", "fake.hide.in"}
+        assert "(hidden)" in [l for l in stack.cli("devices").stdout.splitlines() if "fake.hide.out" in l][0]
+        assert "fake.hide.out" in stack.cli("devices", json_out=True), "hidden ≠ removed: still a device"
+        hidden = picker_state()
+        for k in ("hearingBar.deviceNames", "mixHeader/stream.outputDeviceNames"): assert "Hideable Out" not in hidden[k], (k, hidden[k])
+        assert "Hideable In" not in hidden["channelHeader/voice.inputDeviceNames"]
+        assert "dev/fake.hide.in" not in hidden["patchbay.cardIds"] and "outdev/fake.hide.out" not in hidden["patchbay.cardIds"]
+        assert int(hidden["listeningDeviceBox.count"]) == int(before["listeningDeviceBox.count"]) - 1
+        # still routable by name, and once in use it is visible where it is used
+        stack.cli("mix", "output-add", "stream", "fake.hide.out")
+        assert "fake.hide.out" in next(m for m in stack.cli("status", json_out=True)["mixes"] if m["Slug"] == "stream")["Outputs"]
+        tone = stack.pw.play_into("kmixdeck.channel.game")
+        try:
+            assert wait_level(lambda: stack.pw.level_at("fake.hide.out"), lambda v: v > -50, tries=12) > -50, "a hidden device must still carry audio"
+        finally:
+            tone.kill(); tone.wait()
+        inuse = picker_state()
+        assert "Hideable Out" in inuse["mixHeader/stream.outputDeviceNames"] and "outdev/fake.hide.out" in inuse["patchbay.cardIds"], "in use → visible where used"
+        stack.cli("mix", "output-remove", "stream", "fake.hide.out")
+        # survives a daemon restart
+        stack.restart_daemon(); time.sleep(1.5)
+        assert set(stack.cli("devices", "hidden").stdout.split()) == {"fake.hide.out", "fake.hide.in"}
+        # unhide through the window (the dialog's "Show again" handler) and via the tray's hidden-count
+        assert kde(stack, "--gesture", "hide:fake.hide.out|0")[0].endswith("-> ok")
+        stack.cli("devices", "unhide", "fake.hide.in")
+        for _ in range(30):
+            if not stack.cli("devices", "hidden").stdout.strip(): break
+            time.sleep(0.1)
+        after = picker_state()
+        assert "Hideable Out" in after["hearingBar.deviceNames"] and "Hideable In" in after["channelHeader/voice.inputDeviceNames"]
+        assert "dev/fake.hide.in" in after["patchbay.cardIds"] and "outdev/fake.hide.out" in after["patchbay.cardIds"]
+        r = stack.cli("devices", "hide", "kmixdeck.channel.game", check=False); assert r.returncode != 0, "our own nodes are not devices"
+    finally:
+        stack.cli("devices", "unhide", "fake.hide.out", check=False); stack.cli("devices", "unhide", "fake.hide.in", check=False)
+        stack.cli("mix", "output-remove", "stream", "fake.hide.out", check=False)

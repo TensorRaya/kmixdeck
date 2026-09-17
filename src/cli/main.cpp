@@ -167,11 +167,12 @@ int main(int argc, char *argv[]) {
         "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
         "  channel inputs <slug>                 all wires into a channel (ADR 0009 B1); input-add|input-remove <slug> <ref>\n"
         "  channel pan <slug> [<-1..1>|L|C|R]    stereo position of the channel (DV-22)\n"
-        "  mix     list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
+        "  mix     list|add <name>|duplicate <slug> <new name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
         "  mix     outputs <slug>                 list all hardware outputs of a mix (MX-9)\n"
         "  mix     output-add|output-remove <slug> <node.name>\n"
         "  mix     fallback <slug> <node.name|none>   played while every output is unplugged (DV-15)\n"
         "  devices [in]                               hardware outputs a mix can play to (in: sources a channel can be fed by)\n"
+        "  devices hide|unhide <node.name>|hidden      CH-11: keep a device out of every picker (still routable by name)\n"
         "  levels                                     live meters: peak '#', RMS '=', clip '!' (Ctrl-C to stop)\n"
         "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
         "  cell    link <ch> <mix> <other-mix|none>   MX-7: this cell follows the other mix's cell (volume+mute)\n"
@@ -294,9 +295,16 @@ int main(int argc, char *argv[]) {
             }
             return Ok;
         }
+        if (sub == "hide" || sub == "unhide") {   // CH-11: devices hide|unhide <node.name>
+            if (!need(3)) return Usage;
+            QDBusMessage r = mixer.call("SetDeviceHidden", a[2], sub == "hide");
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        if (sub == "hidden") { for (const auto &n : unwrap(o.mixer.value("HiddenDevices")).toStringList()) out << n << "\n"; return Ok; }
         const StringMap devs = qdbus_cast<StringMap>(o.mixer.value(sub == "in" ? "InputDevices" : "OutputDevices"));
+        const QStringList hidden = unwrap(o.mixer.value("HiddenDevices")).toStringList();
         if (g_json) { QJsonObject j; for (auto it = devs.cbegin(); it != devs.cend(); ++it) j[it.key()] = it.value(); out << QJsonDocument(j).toJson(); return Ok; }
-        for (auto it = devs.cbegin(); it != devs.cend(); ++it) out << QStringLiteral("%1  %2\n").arg(it.key(), -48).arg(it.value());
+        for (auto it = devs.cbegin(); it != devs.cend(); ++it) out << QStringLiteral("%1  %2%3\n").arg(it.key(), -48).arg(it.value()).arg(hidden.contains(it.key()) ? QStringLiteral("  (hidden)") : QString());
         return Ok;
     }
     if (cmd == "channel" || cmd == "mix") {
@@ -313,6 +321,12 @@ int main(int argc, char *argv[]) {
         if (!need(3)) return Usage;
         if (!objs.contains(pathOf(a[2]))) return fail(NotFound, QStringLiteral("no %1 '%2'").arg(cmd, a[2]));
         if (sub == "remove") { QDBusMessage r = mixer.call(ch ? "RemoveChannel" : "RemoveMix", QVariant::fromValue(QDBusObjectPath(pathOf(a[2])))); return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok; }
+        if (sub == "duplicate" && !ch) {   // MX-8: mix duplicate <slug> <new name>
+            if (!need(4)) return Usage;
+            QDBusMessage r = mixer.call("DuplicateMix", QVariant::fromValue(QDBusObjectPath(pathOf(a[2]))), a[3]);
+            if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
+            out << r.arguments().value(0).value<QDBusObjectPath>().path().section(QLatin1Char('/'), -1) << "\n"; return Ok;
+        }
         if (sub == "rename") { if (!need(4)) return Usage; return setProp(pathOf(a[2]), iface, "Name", a[3], &e) ? Ok : fail(Rejected, e); }
         if (sub == "icon") { if (!need(4)) return Usage; return setProp(pathOf(a[2]), iface, "Icon", a[3] == "none" ? QString() : a[3], &e) ? Ok : fail(Rejected, e); }   // UX-8
         if (sub == "color" || sub == "colour") {   // MX-5: channel|mix color <slug> <#rrggbb|none>

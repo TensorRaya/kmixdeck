@@ -355,6 +355,16 @@ QDBusObjectPath MixerAdaptor::AddMix(const QString &name) {
     if (slug.isEmpty()) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), err); return QDBusObjectPath(QStringLiteral("/")); }
     return QDBusObjectPath(Service::mixPath(slug));
 }
+QDBusObjectPath MixerAdaptor::DuplicateMix(const QDBusObjectPath &source, const QString &name) {
+    const QString from = source.path().section(QLatin1Char('/'), -1);
+    if (!source.path().startsWith(Service::mixPath(QString())) || !m_mixer->mixSlugs().contains(from)) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no such mix")); return QDBusObjectPath(QStringLiteral("/")); }
+    QString err; const QString slug = m_mixer->duplicateMix(from, name, &err);
+    if (slug.isEmpty()) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), err); return QDBusObjectPath(QStringLiteral("/")); }
+    return QDBusObjectPath(Service::mixPath(slug));
+}
+void MixerAdaptor::SetDeviceHidden(const QString &node, bool hidden) {
+    if (!m_mixer->setDeviceHidden(node, hidden)) static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("not a device node"));
+}
 void MixerAdaptor::RemoveChannel(const QDBusObjectPath &p) {
     const QString slug = p.path().section(QLatin1Char('/'), -1);
     if (!p.path().startsWith(Service::channelPath(QString())) || !m_mixer->channelSlugs().contains(slug)) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no such channel")); return; }
@@ -409,6 +419,9 @@ Service::Service(QObject *parent) : QObject(parent) {
     });
     connect(&m_mixer, &Mixer::undoChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("UndoDescription"), m_mixer.undoDescription()}});
+    });
+    connect(&m_mixer, &Mixer::hiddenDevicesChanged, this, [this] {   // CH-11
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("HiddenDevices"), m_mixer.hiddenDevices()}});
     });
     connect(&m_mixer, &Mixer::listeningDeviceChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("ListeningDevice"), m_mixer.listeningDevice()}});
@@ -473,7 +486,7 @@ ManagedObjects Service::managedObjects() const {
     out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
         {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()},
          {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())},
-         {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor->devicePorts())}, {QStringLiteral("VirtualDevices"), m_mixerAdaptor->virtualDevices()},
+         {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor->devicePorts())}, {QStringLiteral("VirtualDevices"), m_mixerAdaptor->virtualDevices()}, {QStringLiteral("HiddenDevices"), m_mixerAdaptor->hiddenDevices()},
          {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("ListeningDevice"), m_mixer.listeningDevice()}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}, {QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()},
          {QStringLiteral("FxTypes"), m_mixerAdaptor->fxTypes()}, {QStringLiteral("FxPresets"), m_mixerAdaptor->fxPresets()}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)

@@ -21,6 +21,13 @@
          device (sinks: playback ports, sources: capture ports). A device reference anywhere on this bus is
          "node" or "node:POS[,POS]" (mono / stereo subset); POS is one of these POSITION values. -->
     <property name="DevicePorts" type="a{sas}" access="read"/>
+    <!-- CH-11: devices the user hid from the pickers. They stay in InputDevices/OutputDevices and stay routable; the
+         daemon owns the flag so the window, the tray and the CLI leave out the same ones. -->
+    <property name="HiddenDevices" type="as" access="read"/>
+    <method name="SetDeviceHidden">
+      <arg name="node" type="s" direction="in"/>
+      <arg name="hidden" type="b" direction="in"/>
+    </method>
     <!-- CH-5: never-seen applications are moved here on first appearance. "/" disables auto-routing. -->
     <property name="DefaultChannel" type="o" access="readwrite"/>
     <!-- UX-2: the device (node.name) the user listens on; "" = not chosen. The mix whose Outputs contain it is
@@ -63,6 +70,13 @@
       <arg name="path" type="o" direction="out"/>
     </method>
     <method name="AddMix">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="path" type="o" direction="out"/>
+    </method>
+    <!-- MX-8: a new mix that starts as a copy of `source` (icon, colour, FX, master and every cell fader/mute).
+         Outputs are not copied — two mixes on one device would play the same audio twice. -->
+    <method name="DuplicateMix">
+      <arg name="source" type="o" direction="in"/>
       <arg name="name" type="s" direction="in"/>
       <arg name="path" type="o" direction="out"/>
     </method>

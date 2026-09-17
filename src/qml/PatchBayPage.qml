@@ -10,6 +10,8 @@ import org.kmixdeck
 
 Kirigami.ScrollablePage {
     id: page
+    objectName: "patchbay"
+    readonly property string cardIds: cards.map(c => c.id).join("|")   // CH-11 probe
     title: i18n("Patchbay")
     padding: Kirigami.Units.largeSpacing
 
@@ -404,7 +406,21 @@ Kirigami.ScrollablePage {
                 }
             }
         }
-        TapHandler { onTapped: card.clicked() }
+        TapHandler { acceptedButtons: Qt.LeftButton; onTapped: card.clicked() }
+        TapHandler {   // CH-11: right-click on a device card → hide it from every picker (it stays routable)
+            acceptedButtons: Qt.RightButton
+            enabled: card.info.kind === "device" || card.info.kind === "output"
+            onTapped: cardMenu.popup()
+        }
+        QQC2.Menu {
+            id: cardMenu
+            QQC2.MenuItem {
+                objectName: "hideDevice/" + (card.info.node || "")
+                text: Mixer.deviceInUse(card.info.node || "") ? i18n("Hide from pickers (in use — stays visible here)") : i18n("Hide from pickers")
+                icon.name: "view-hidden"
+                onTriggered: Mixer.setDeviceHidden(card.info.node, true)
+            }
+        }
         HoverHandler { cursorShape: Qt.PointingHandCursor }
     }
 

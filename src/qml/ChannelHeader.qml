@@ -9,6 +9,8 @@ import org.kmixdeck
 
 Item {
     id: header
+    objectName: "channelHeader/" + channel
+    readonly property string inputDeviceNames: Mixer.inputDevices.map(d => d.description).join("|")   // CH-11 probe: what the Inputs menu offers
     property string channel
     property string mix                       // unused; Loader/Repeater contract with CellFader
     property bool first: false

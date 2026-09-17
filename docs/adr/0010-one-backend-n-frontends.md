@@ -42,7 +42,18 @@ Not every frontend shows everything (the tray must not become the window). Each 
 |---|---|---|---|---|---|
 | **core** | you would miss it on a live stream: levels, mute, listening device, mix master, presence | must | must | must | must |
 | **full** | everything else that has a UI: FX, pan, wire trim, patchbay, icons, ordering | must | must | — | must |
-| **api** | daemon/CLI only: import/export, virtual devices, self-test hooks | must | optional | — | optional |
+| **api** | daemon/CLI only: virtual devices, self-test hooks | must | optional | — | optional |
+
+Placements decided on 2026-09-17 while closing rows (the rule is the tier's meaning, not the row's letter code):
+- **MX-5 colour code → core.** A colour is there to be recognised at a glance, and the tray is the glance. Stripe on
+  the window header, stripe on the tray row, `Color` on the bus, one palette from `MixerClient::colorPalette()`.
+- **CT-7 import/export → full**, not api: the window offers it through the menu (file dialog); the tray does not —
+  a file dialog has no place in a popover. The daemon owns the document (`Mixer.Export/Import`).
+- **CH-11 hidden devices → full.** Hiding is a picker concern; the tray has no pickers except the listening device,
+  which reads the same filtered `outputDevices` and therefore agrees for free. A hidden device that is *in use*
+  stays visible where it is used — hiding is about the list, never about the routing.
+- **MX-8 duplicate → full.** Copies icon, colour, FX, master and every cell level; never outputs (one device would
+  carry the same audio twice).
 
 The tier is a column in `docs/spec/requirements.md`. `tools/sot-audit.py` refuses a ✅ whose test list does not
 name a proof for every frontend the tier demands (D5).

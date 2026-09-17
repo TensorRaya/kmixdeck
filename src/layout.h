@@ -103,6 +103,7 @@ struct Layout {
     /// Apps kmixdeck has routed at least once — keyed by application.name (falls back to node.name).
     /// WirePlumber restores THEIR target itself; this set only exists to tell "new" from "known".
     QStringList knownApps;
+    QStringList hiddenDevices;    // CH-11: node.names the pickers do not offer (device is untouched, still routable)
 
     static QString defaultPath();                   // $XDG_CONFIG_HOME/kmixdeck/layout.json
     static QString defaultPipewireConfPath();       // $XDG_CONFIG_HOME/pipewire/pipewire.conf.d/90-kmixdeck.conf

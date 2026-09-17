@@ -44,6 +44,7 @@ QQC2.Control {
 
     // header card: darker than the panel, red tint while muted (MX-10); the mix meter is the card's bottom edge
     property string colorCode: Mixer.mixColor(header.mix)   // MX-5
+    readonly property string outputDeviceNames: Mixer.outputDevices.map(d => d.description).join("|")   // CH-11 probe: what the Outputs menu offers
     background: Rectangle {
         objectName: "mixHeaderBg/" + header.mix     // MX-10 probe
         radius: Kirigami.Units.smallSpacing * 1.5
@@ -194,6 +195,7 @@ QQC2.Control {
         QQC2.MenuItem { text: i18n("Rename…"); icon.name: "edit-rename"; onTriggered: applicationWindow().renameDialogOpen("mix", header.mix) }
         QQC2.MenuItem { text: i18n("Icon…"); icon.name: "preferences-desktop-icons"; onTriggered: applicationWindow().iconDialogOpen("mix", header.mix) }
         ColorMenu { id: mixColorMenu; kind: "mix"; slug: header.mix }   // MX-5
+        QQC2.MenuItem { objectName: "mixDuplicate/" + header.mix; text: i18n("Duplicate…"); icon.name: "edit-copy"; onTriggered: applicationWindow().duplicateDialogOpen(header.mix) }   // MX-8
         QQC2.MenuItem {   // UX-9
             readonly property int idx: Mixer.mixSlugs.indexOf(header.mix)
             text: i18n("Move left"); icon.name: "go-previous"; enabled: idx > 0

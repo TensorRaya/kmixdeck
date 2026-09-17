@@ -965,6 +965,26 @@ QString Mixer::addMix(const QString &displayName, QString *error) {
     saveLayout(); reconcile();
     return slug;
 }
+QString Mixer::duplicateMix(const QString &from, const QString &displayName, QString *error) {
+    const LayoutMix *srcPtr = m_layout.mix(from);
+    if (!srcPtr) { if (error) *error = QStringLiteral("no mix '%1'").arg(from); return {}; }
+    const LayoutMix src = *srcPtr;               // by value: we append to m_layout.mixes below, which may move it
+    const QString slug = Names::slugify(displayName);
+    if (slug.isEmpty()) { if (error) *error = QStringLiteral("name has no usable characters"); return {}; }
+    if (m_layout.mix(slug)) { if (error) *error = QStringLiteral("mix '%1' already exists").arg(slug); return {}; }
+    // levels FIRST: master and every cell of the source → pending for the copy's nodes. reconcile() below creates the
+    // nodes and onNode() applies the pending state as each one appears — the order matters (addMix() first would
+    // reconcile before the pending entries exist and the copy came up at unity, 2026-09-17).
+    if (auto s = m_sinks.constFind(Names::mixNode(from)); s != m_sinks.constEnd()) m_pendingCellState.insert(Names::mixNode(slug), {s->volume, s->mute});
+    for (const auto &c : m_layout.channels)
+        if (auto cell = m_cells.constFind(Names::cellNode(c.slug, from)); cell != m_cells.constEnd()) m_pendingCellState.insert(Names::cellNode(c.slug, slug), {cell->volume, cell->mute});
+    LayoutMix dst; dst.slug = slug; dst.name = displayName.trimmed(); dst.icon = src.icon; dst.color = src.color; dst.fx = src.fx;
+    m_layout.mixes.push_back(dst);
+    if (!m_undo.isEmpty()) { m_undo = {}; Q_EMIT undoChanged(); }
+    saveLayout(); reconcile(); restorePendingCellStates();
+    Q_EMIT mixChanged(slug);
+    return slug;
+}
 // CH-9 -----------------------------------------------------------------------------------------------------
 void Mixer::snapshotForUndo(const QString &kind, const QString &slug) {
     QJsonObject u{{QStringLiteral("kind"), kind}};
@@ -1026,6 +1046,13 @@ bool Mixer::undo() {
     Q_EMIT undoChanged(); if (isCh) Q_EMIT defaultChannelChanged();
     return true;
 }
+bool Mixer::setDeviceHidden(const QString &node, bool hidden) {
+    if (node.isEmpty() || node.startsWith(QLatin1String("kmixdeck."))) return false;   // our own nodes are not devices
+    const bool was = m_layout.hiddenDevices.contains(node);
+    if (was == hidden) return true;
+    if (hidden) m_layout.hiddenDevices << node; else m_layout.hiddenDevices.removeAll(node);
+    saveLayout(); Q_EMIT hiddenDevicesChanged(); return true;
+}
 QJsonObject Mixer::exportSettings() const {
     QJsonObject doc = m_layout.toJson();
     doc.insert(QStringLiteral("kmixdeck.export"), 1);
@@ -1070,6 +1097,12 @@ void Mixer::restorePendingCellStates() {
             applyChannelGain(it.key().mid(17));
         } else {
             m_graph.setVolume(n->id, it->first, it->second);
+            // WirePlumber applies its stored/default volume to a NEW node right after it appears — for a node it has
+            // never seen (a duplicated mix, an imported channel) that write lands after ours and resets it to unity
+            // (MX-8 measured 1.0 after we wrote 0.501, 2026-09-17). Undo worked only because WirePlumber remembered
+            // the old value. Write once more after WirePlumber had its turn; the later write wins in PipeWire.
+            const uint32_t id = n->id; const float vol = it->first; const bool mute = it->second;
+            QTimer::singleShot(400, this, [this, id, vol, mute] { if (m_idToName.contains(id)) m_graph.setVolume(id, vol, mute); });
         }
         it = m_pendingCellState.erase(it);
     }
