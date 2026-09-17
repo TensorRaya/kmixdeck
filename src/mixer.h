@@ -313,6 +313,7 @@ private:
     int m_reconnectMs = 500;      // channel + mix null sinks, key: node name
     QHash<uint32_t, QString> m_idToName;
     bool m_firstRun = false;              // no layout.json existed when we started (UX-3)
+    QHash<QString, quint64> m_cellWriteSeq;   // per cell node: last setCellVolume() generation (WirePlumber-race retry)
     QString m_defaultSink, m_defaultSource;
 };
 

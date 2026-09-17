@@ -285,6 +285,18 @@ void Mixer::setCellVolume(const QString &ch, const QString &mix, double cubic) {
     const float lin = cubicToLinear(std::clamp(cubic, 0.0, 1.0));
     it->volume = lin;                         // optimistic; PipeWire echoes via nodeChanged
     m_graph.setVolume(it->id, lin, it->mute);
+    // WirePlumber's restore-stream writes ITS value (default 1.0 for a node it has never seen) shortly after a new
+    // stream appears; a user write in that window loses (DV-6 under ctest31: `cell set -6dB` on a channel created a
+    // second earlier read back as 1.000 — same mechanism restorePendingCellStates() already guards against, MX-8).
+    // Re-assert once after WirePlumber had its turn; identical values are a no-op in PipeWire.
+    // Guard: the LAST user intent wins — a newer setCellVolume() bumps m_cellWriteSeq and this retry stands down.
+    const uint32_t id = it->id; const bool mute = it->mute; const quint64 seq = ++m_cellWriteSeq[Names::cellNode(ch, mix)];
+    QTimer::singleShot(400, this, [this, id, lin, mute, ch, mix, seq] {
+        const QString node = Names::cellNode(ch, mix);
+        auto c = m_cells.constFind(node);
+        if (c == m_cells.constEnd() || c->id != id || m_cellWriteSeq.value(node) != seq) return;
+        if (std::abs(c->volume - lin) > 1e-3f) { qInfo() << "cell" << node << "volume was overwritten to" << c->volume << "after our write of" << lin << "- re-asserting"; m_graph.setVolume(id, lin, mute); }
+    });
     Q_EMIT cellChanged(ch, mix);
     propagateLinks(ch, mix);
 }

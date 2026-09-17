@@ -398,13 +398,26 @@ def test_ux5_german_catalog_covers_every_string_and_window_speaks_it(stack):
     assert de["hearingBar.hearLabelText"] == "Ich höre:", f"window did not switch to German: {de}"
 
 
-def test_ux3_first_run_wizard_wires_defaults_from_cli_and_window(stack):
+def test_ux3_first_run_wizard_wires_defaults_from_cli_and_window():
     """UX-3: the daemon owns the first-run logic (FirstRunPlan/FirstRunApply). Fresh config dir → FirstRun is true;
     the plan names the session's default sink/source (WirePlumber's "default" metadata) and where each running app
     would go (by media.role); Apply routes Monitor → default sink, listens there, Voice ← default mic, apps → channels;
     CLI `kmixdeck setup` prints the same plan, the window's dialog opens on first run and reads the same fields."""
     from test_service_cli import make_fake_sink, make_fake_source, start_fake_app
-    def prop(name): return stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", name).stdout.strip()
+    from pw_sandbox import start_private_pipewire
+    # own stack: the module-wide one has a layout.json written by every test before this one → FirstRun is false there
+    pw = start_private_pipewire(); pw.wait_node("kmixdeck.mix.stream"); stack = Stack(pw)
+    try:
+        _ux3_body(stack, prop_of(stack), make_fake_sink, make_fake_source, start_fake_app)
+    finally:
+        stack.close(); pw.close()
+
+
+def prop_of(stack):
+    return lambda name: stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", name).stdout.strip()
+
+
+def _ux3_body(stack, prop, make_fake_sink, make_fake_source, start_fake_app):
     assert prop("FirstRun") == "b true", "a sandbox has no layout.json → the daemon must report FirstRun"
     make_fake_sink(stack, "fake.desk", "Desk Speakers"); make_fake_source(stack, "fake.usbmic", "USB Microphone"); time.sleep(0.8)
     subprocess.run(["pw-metadata", "0", "default.audio.sink", '{"name":"fake.desk"}', "Spa:String:JSON"], env=stack.env, capture_output=True)

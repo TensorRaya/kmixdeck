@@ -601,6 +601,17 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
     stack.cli("mix", "output-add", "monitor", "fake.cans"); stack.cli("listen", "fake.cans"); stack.cli("mix", "output-add", "stream", "fake.speakers")
     stack.cli("channel", "add", "Mic"); stack.cli("channel", "input-add", "mic", f"{iface}:AUX3")
     stack.cli("cell", "set", "mic", "stream", "-6dB"); stack.cli("channel", "mute", "game", "on")
+    # the cell loopback of a brand-new channel is created asynchronously; WirePlumber writes its default volume to a
+    # node it has never seen right after creation (MX-8, 2026-09-17). Make sure the -6 dB really landed before the
+    # sleep/wake part measures whether it SURVIVED — otherwise "lost over sleep" and "never applied" look the same.
+    for _ in range(50):
+        v = next((c["Volume"] for c in stack.cli("status", json_out=True)["cells"] if c["Path"].endswith("/mic/stream")), None)
+        if v is not None and abs(v - 10 ** (-6 / 20)) < 0.02: break
+        time.sleep(0.1)
+    else:
+        stack.cli("cell", "set", "mic", "stream", "-6dB"); time.sleep(0.5)
+        v = next(c["Volume"] for c in stack.cli("status", json_out=True)["cells"] if c["Path"].endswith("/mic/stream"))
+        assert abs(v - 10 ** (-6 / 20)) < 0.02, f"cell set -6dB never applied (status {v:.3f}) — a daemon bug, not a sleep/wake one"
     p, app = start_fake_app(stack); stack.cli("app", "assign", "FakeGame", "voice")
     # the app plays the SAME test tone as the mic; two coherent tones summed in the stream mix land anywhere between
     # +6 dB and cancellation depending on their phase (measured −20.7 vs −25.5 dB between runs, ctest29). The level
