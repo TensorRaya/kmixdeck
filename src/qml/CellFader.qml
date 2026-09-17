@@ -44,11 +44,13 @@ Item {
         spacing: Kirigami.Units.smallSpacing * 2   // fader cap → link button had 5 px on the laptop (2026-09-16)
 
         QQC2.ToolButton {
+            objectName: "cellMute/" + cell.channel + "/" + cell.mix
             icon.name: cell.muted ? "audio-volume-muted" : "audio-volume-high"
             icon.color: cell.muted ? Kirigami.Theme.negativeTextColor : undefined
             checkable: true; checked: cell.muted
             display: QQC2.AbstractButton.IconOnly
             text: cell.muted ? i18n("Unmute") : i18n("Mute")
+            Accessible.name: i18nc("@label mute button of channel %1 in mix %2", "Mute %1 in %2", Mixer.channelName(cell.channel), Mixer.mixName(cell.mix))
             onToggled: Mixer.setCellMuted(cell.channel, cell.mix, checked)
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
         }
@@ -56,6 +58,7 @@ Item {
         Fader {
             id: slider
             objectName: "cellFader/" + cell.channel + "/" + cell.mix
+            accessibleName: i18nc("@label fader of channel %1 in mix %2", "%1 in %2", Mixer.channelName(cell.channel), Mixer.mixName(cell.mix))
             Layout.fillWidth: true
             value: cell.value
             enabled: !cell.muted && cell.present
@@ -74,6 +77,7 @@ Item {
             icon.name: "link"
             icon.color: cell.follows.length > 0 ? Kirigami.Theme.highlightColor : undefined
             checkable: true; checked: cell.follows.length > 0
+            Accessible.name: cell.follows.length > 0 ? i18n("Follows %1 — click to unlink", Mixer.mixName(cell.follows)) : i18nc("@label link button of channel %1 in mix %2", "Link %1 in %2 to another mix", Mixer.channelName(cell.channel), Mixer.mixName(cell.mix))
             display: QQC2.AbstractButton.IconOnly
             visible: Mixer.mixSlugs.length > 1
             opacity: cell.follows.length > 0 || hover.hovered ? 1 : 0

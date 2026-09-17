@@ -123,10 +123,15 @@ import subprocess, os
 from test_service_cli import start_fake_app
 
 
-def kde(stack, *args, open_page=None, timeout=90):
+def kde(stack, *args, open_page=None, timeout=90, lang=None):
     b = BIN / "kmixdeck-kde"
     if not b.exists(): pytest.skip("kmixdeck-kde not built")
     env = dict(stack.env); env["QT_QPA_PLATFORM"] = "offscreen"
+    if lang:   # UX-5: pick a UI language; catalogs from the build tree, glibc locale from LOCPATH if the box has none
+        env["LANGUAGE"] = lang; env["LANG"] = {"de": "de_DE.UTF-8", "en": "en_US.UTF-8"}.get(lang, lang)
+        env["KMIXDECK_LOCALE_DIR"] = str(BIN.parent / "locale")
+        locpath = Path.home() / ".local/lib/locale"
+        if (locpath / env["LANG"]).exists(): env["LOCPATH"] = str(locpath)
     cmd = [str(b)] + (["--open", open_page] if open_page else []) + list(args)
     try:
         r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout)
@@ -327,3 +332,59 @@ def test_ux14_mix_end_to_end_from_the_ui_alone(stack):
         p.kill(); p.wait()
     kde(stack, "--gesture", "mute:channel|game", "--gesture", "mute:channel|system")   # leave it as found
     stack.cli("mix", "output-remove", "stream", "fake.phones", check=False)
+
+
+def test_ux4_keyboard_drives_faders_and_mutes_and_every_control_has_a_screen_reader_name(stack):
+    """UX-4 (KDE HIG: full keyboard operability, screen-reader labels): without a mouse — focus a cell fader, Left/Right
+    move it in 1 dB steps (Shift 3 dB, PageDown 6 dB, End = 0 dB, Home = −∞), the change lands in the daemon; Tab
+    reaches the cell's mute and link buttons and Space toggles the mute; the accessibility tree names every fader/
+    button after its channel and mix (a screen reader says "Game in Stream, slider, −3.0 dB", not "slider")."""
+    stack.cli("cell", "set", "game", "stream", "0dB")
+    g = kde(stack, "--gesture", "focus:cellFader/game/stream", "--gesture", "a11y:focus",
+            "--gesture", "key:Left", "--gesture", "key:Left", "--gesture", "key:Left", "--gesture", "a11y:focus",
+            "--gesture", "key:Shift+Left", "--gesture", "a11y:focus",
+            "--gesture", "key:PgDown", "--gesture", "a11y:focus",
+            "--gesture", "key:End", "--gesture", "a11y:focus",
+            "--gesture", "key:PgDown", "--gesture", "key:PgDown", "--gesture", "a11y:focus",
+            "--gesture", "key:Shift+Tab", "--gesture", "a11y:focus", "--gesture", "key:Space", "--gesture", "a11y:focus",
+            "--gesture", "key:Tab", "--gesture", "key:Tab", "--gesture", "a11y:focus",
+            open_page="mixer")
+    got = [l.split(" -> ", 1)[1] for l in g]
+    assert got[1] == "Slider|Game in Stream|0.0 dB", g
+    assert got[5] == "Slider|Game in Stream|-3.0 dB", "three Left presses = −3 dB"
+    assert got[7] == "Slider|Game in Stream|-6.0 dB", "Shift+Left = −3 dB more"
+    assert got[9] == "Slider|Game in Stream|-12.0 dB", "PageDown = −6 dB"
+    assert got[11] == "Slider|Game in Stream|0.0 dB", "End = unity"
+    assert got[14] == "Slider|Game in Stream|-12.0 dB"
+    # cell row reads mute · fader · link, so Shift+Tab from the fader is the mute, Tab twice is the link
+    assert got[16].startswith("CheckBox|Mute Game in Stream|"), f"Shift+Tab from the fader must reach its mute button: {got[16]}"
+    assert got[18].startswith("CheckBox|Mute Game in Stream|"), got[18]
+    # (what follows the fader in Tab order is Kirigami's page toolbar, checked in the walk below — not ours to name)
+    # the keyboard changes are real: the daemon has −12 dB and mute on this cell
+    def cell():
+        st = stack.cli("status", json_out=True)
+        return next(c for c in st["cells"] if c["Path"].endswith("/game/stream"))
+    for _ in range(30):
+        c = cell()
+        if abs(c["Volume"] - 10 ** (-12 / 20)) < 0.01 and c["Muted"]: break
+        time.sleep(0.1)
+    c = cell()
+    assert abs(c["Volume"] - 10 ** (-12 / 20)) < 0.01, f"keyboard fader change did not reach the daemon: {c['Volume']}"
+    assert c["Muted"] is True, "Space on the focused mute button must mute the cell in the daemon"
+    stack.cli("cell", "mute", "game", "stream", "off"); stack.cli("cell", "set", "game", "stream", "0dB")
+    # every control a keyboard user can land on carries a name — walk Tab through the mixer page and collect the tree
+    walk = kde(stack, *sum((["--gesture", "key:Tab", "--gesture", "a11y:focus"] for _ in range(60)), []), open_page="mixer")
+    pairs = list(zip([l.split(" -> ", 1)[1] for l in walk if l.startswith("gesture key:Tab")], [l.split(" -> ", 1)[1] for l in walk if l.startswith("gesture a11y:focus")]))
+    seen = [a for _, a in pairs]
+    # Kirigami's own chrome (page-action toolbar buttons, the drawer handle) is not ours to label — it reports as
+    # <PrivateActionToolButton…>/<HandleButton…> without an objectName. Everything WE put on the page must be named.
+    ours = [(who, a) for who, a in pairs if not who.startswith("<")]
+    nameless = [(who, a) for who, a in ours if a.split("|")[0] in ("Slider", "Button", "CheckBox", "ComboBox", "RadioButton", "Dial", "ButtonMenu") and a.split("|")[1] == ""]
+    assert not nameless, f"our controls without an accessible name in the Tab order: {nameless}"
+    assert len(ours) >= 20, f"Tab should walk through the whole mixer (mutes, faders, dials, menus): only {len(ours)} of ours reached"
+    roles = {s.split("|")[0] for s in seen}
+    assert "Slider" in roles and ("Button" in roles or "CheckBox" in roles), f"Tab must reach faders and buttons: {roles}"
+    # mix master via keyboard, too (Home = −∞ mutes nothing, just silence — then End back)
+    m = kde(stack, "--gesture", "focus:mixFader/stream", "--gesture", "key:Home", "--gesture", "a11y:focus", "--gesture", "key:End", "--gesture", "a11y:focus", open_page="mixer")
+    got = [l.split(" -> ", 1)[1] for l in m]
+    assert got[2] == "Slider|Master volume of mix Stream|−∞ dB" and got[4] == "Slider|Master volume of mix Stream|0.0 dB", got

@@ -148,6 +148,7 @@ QQC2.Control {
         Fader {
             id: master
             objectName: "mixFader/" + header.mix   // AR-12 probe
+            accessibleName: i18n("Master volume of mix %1", header.title)
             Layout.fillWidth: true
             Layout.preferredWidth: Kirigami.Units.gridUnit * 4
             Layout.minimumWidth: Kirigami.Units.gridUnit * 2.5
@@ -170,6 +171,7 @@ QQC2.Control {
             onReleased: Mixer.stopAudition()
             onCanceled: Mixer.stopAudition()
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+            Accessible.name: Mixer.mixName(header.mix) + " — " + text
         }
         QQC2.ToolButton {
             visible: !header.compact || header.hasFx     // an active chain stays visible — it changes what you hear
@@ -179,6 +181,7 @@ QQC2.Control {
             text: header.hasFx ? i18n("Effects (active)…") : i18n("Effects…")
             onClicked: applicationWindow().fxPanelOpen("mix", header.mix)
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+            Accessible.name: Mixer.mixName(header.mix) + " — " + text
         }
         QQC2.ToolButton {
             icon.name: "overflow-menu"
@@ -186,6 +189,7 @@ QQC2.Control {
             text: i18n("Mix actions")
             onClicked: mixCtxMenu.popup()
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+            Accessible.name: Mixer.mixName(header.mix) + " — " + text
         }
         Item { Layout.preferredWidth: Kirigami.Units.smallSpacing / 2 }
     }

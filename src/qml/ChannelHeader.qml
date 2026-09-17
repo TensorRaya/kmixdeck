@@ -127,20 +127,23 @@ Item {
             checkable: true; checked: header.muted
             display: QQC2.AbstractButton.IconOnly
             text: header.muted ? i18n("Unmute channel") : i18n("Mute channel")
+            Accessible.name: Mixer.channelName(header.channel) + " — " + text
             onToggled: { checked = Qt.binding(() => header.muted); Mixer.toggleChannelMute(header.channel) }
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
         }
         // CH-7 trim: input gain before every mix, same dial idiom as pan; double-click = unity. Shown for every channel
         // (apps have a trim too — it is the channel's gain, not the device's).
         ColumnLayout {
-            spacing: 0
+            spacing: -2
             Layout.alignment: Qt.AlignVCenter
+            Layout.maximumHeight: header.height - Kirigami.Units.smallSpacing   // never taller than the row: the dial pushed its label under the next channel (seen 2026-09-17)
             QQC2.Dial {
                 id: trimDial
                 objectName: "channelTrim/" + header.channel
+                Accessible.name: i18nc("@label trim dial of channel %1", "Trim of %1", Mixer.channelName(header.channel))
                 from: 0; to: 1; stepSize: 0.01
                 value: Mixer.channelTrim(header.channel)
-                Layout.preferredWidth: Kirigami.Units.gridUnit * 1.6
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 1.4
                 Layout.preferredHeight: width
                 wheelEnabled: true
                 onMoved: Mixer.setChannelTrim(header.channel, value)
@@ -161,14 +164,16 @@ Item {
         // legible without reading the needle. Only meaningful with an input; hidden for apps-only channels.
         ColumnLayout {
             visible: header.inputDevice.length > 0
-            spacing: 0
+            spacing: -2
             Layout.alignment: Qt.AlignVCenter
+            Layout.maximumHeight: header.height - Kirigami.Units.smallSpacing
             QQC2.Dial {
                 id: panDial
                 objectName: "channelPan/" + header.channel
+                Accessible.name: i18nc("@label pan dial of channel %1", "Pan of %1", Mixer.channelName(header.channel))
                 from: -1; to: 1; stepSize: 0.05
                 value: Mixer.channelPan(header.channel)
-                Layout.preferredWidth: Kirigami.Units.gridUnit * 1.6
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 1.4
                 Layout.preferredHeight: width
                 wheelEnabled: true
                 onMoved: Mixer.setChannelPan(header.channel, value)
@@ -215,6 +220,7 @@ Item {
             onReleased: Mixer.stopAudition()
             onCanceled: Mixer.stopAudition()
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+            Accessible.name: Mixer.channelName(header.channel) + " — " + text
         }
 
         // effects — highlighted when a chain is active (ADR 0008)
@@ -226,6 +232,7 @@ Item {
             text: header.hasFx ? i18n("Effects (active)…") : i18n("Effects…")
             onClicked: applicationWindow().fxPanelOpen("channel", header.channel)
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+            Accessible.name: Mixer.channelName(header.channel) + " — " + text
         }
         QQC2.ToolButton {
             icon.name: "overflow-menu"
@@ -233,6 +240,7 @@ Item {
             text: i18n("Channel actions")
             onClicked: ctxMenu.popup()
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+            Accessible.name: Mixer.channelName(header.channel) + " — " + text
         }
     }
 

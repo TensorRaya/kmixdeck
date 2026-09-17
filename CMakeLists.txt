@@ -31,6 +31,9 @@ find_package(KF6QQC2DesktopStyle REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PipeWire REQUIRED IMPORTED_TARGET libpipewire-0.3>=1.0)
 
+# UX-5: catalogs in po/<lang>/kmixdeck.po → <KDE_INSTALL_LOCALEDIR>/kmixdeck/<lang>/LC_MESSAGES/kmixdeck.mo
+ki18n_install(po)
+
 add_subdirectory(src)
 add_subdirectory(data)
 

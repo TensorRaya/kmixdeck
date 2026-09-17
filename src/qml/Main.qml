@@ -135,6 +135,19 @@ Kirigami.ApplicationWindow {
         const v = it[prop]
         return v === undefined ? "<no property " + prop + ">" : String(v)
     }
+    // UX-4: the item behind an objectName (visual tree, not QObject parents — findChild() does not see QML items)
+    function itemByName(name) {
+        function find(item) {
+            if (!item) return null
+            if (item.objectName === name) return item
+            for (let i = 0; i < (item.children ? item.children.length : 0); ++i) { const r = find(item.children[i]); if (r) return r }
+            if (item.contentItem && item.contentItem !== item) { const r = find(item.contentItem); if (r) return r }
+            if (item.background) { const r = find(item.background); if (r) return r }
+            return null
+        }
+        return find(root.contentItem) || find(root.pageStack) || (patchBayPage && patchBayPage.probeItem ? patchBayPage.probeItem(name) : null)
+    }
+    function gestureFocus(name) { const it = itemByName(name); if (!it) return "<not found: " + name + ">"; it.forceActiveFocus(); return "" }
     function gestureMonitors(on) { if (patchBayPage) patchBayPage.showMonitors = (on === "on" || on === "true" || on === "1"); return "" }
     function gestureDrop(appPath, channel) {
         function find(item) {

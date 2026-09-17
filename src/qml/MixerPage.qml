@@ -51,6 +51,7 @@ Kirigami.ScrollablePage {
     Panel {
         id: hearing
         objectName: "hearingBar"
+        readonly property string hearLabelText: hearLabel.text   // UX-5 probe: which catalog is active
         readonly property string deviceNames: Mixer.outputDevices.map(d => d.description).join("|")   // CH-11 probe
         Layout.fillWidth: true
         // UX-14 gesture: choose a listening device exactly as the combo box's onActivated does
@@ -63,13 +64,14 @@ Kirigami.ScrollablePage {
             Layout.margins: Kirigami.Units.smallSpacing * 2
             spacing: Kirigami.Units.largeSpacing
             Kirigami.Icon { source: "audio-headphones"; Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium; Layout.preferredHeight: width }
-            QQC2.Label { text: i18nc("@label what am I hearing", "I hear:"); font.bold: true }
+            QQC2.Label { id: hearLabel; objectName: "hearLabel"; text: i18nc("@label what am I hearing", "I hear:"); font.bold: true }
             // mix selector: exactly the mixes as toggle buttons, checked = plays on my device
             Repeater {
                 model: page.mixes
                 delegate: QQC2.ToolButton {
                     required property string modelData
                     text: Mixer.mixName(modelData)
+                    Accessible.name: i18n("Listen to %1 on %2", text, Mixer.deviceDescription(hearing.device))
                     icon.name: Mixer.mixIcon(modelData).length > 0 ? Mixer.mixIcon(modelData) : "audio-speakers"
                     checkable: true
                     checked: hearing.hearingMixes.indexOf(modelData) >= 0
@@ -91,6 +93,7 @@ Kirigami.ScrollablePage {
             QQC2.ComboBox {
                 id: devBox
                 objectName: "listeningDeviceBox"   // AR-12 probe: displayText names the listening device
+                Accessible.name: i18nc("@label the device I listen on", "Listening device")
                 Layout.preferredWidth: Kirigami.Units.gridUnit * 16
                 model: Mixer.outputDevices
                 textRole: "description"
@@ -203,6 +206,7 @@ Kirigami.ScrollablePage {
             text: i18n("Add mix")
             onClicked: applicationWindow().addDialogOpen("mix")
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+            Accessible.name: text
         }
     }
     }   // ColumnLayout (hearing bar + desk)

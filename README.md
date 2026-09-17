@@ -42,6 +42,7 @@ independent per-mix levels ([#72](https://codeberg.org/sonusmix/sonusmix/issues/
 ```sh
 cmake -S . -B build -G Ninja && ninja -C build
 pip install pytest pulsectl                       # integration tests: pytest + PulseAudio client (CT-5, talks to pipewire-pulse)
+sudo apt install gettext                          # UX-5 test: msgfmt/xgettext; a de_DE.UTF-8 glibc locale (or ~/.local/lib/locale via localedef) for the German window probe
 ctest --test-dir build --output-on-failure      # QTest units + PipeWire sandbox integration (needs pipewire, wireplumber, pipewire-pulse, ffmpeg)
 
 ./build/bin/kmixdeckd &        # normally started by D-Bus activation
@@ -97,3 +98,15 @@ tests/                 QTest units + pytest integration against a private PipeWi
 ## License
 
 GPL-3.0-or-later (KDE ecosystem standard). See [LICENSE](LICENSE).
+
+## Translations
+
+English is the source language, German ships in `po/de/`. After adding or changing an `i18n()` string:
+
+```sh
+sh tools/extract-messages.sh      # refresh po/kmixdeck.pot and merge into every po/<lang>/kmixdeck.po
+$EDITOR po/de/kmixdeck.po         # translate what msgmerge marked fuzzy/empty
+```
+
+`ctest` fails on a stale `.pot` or an incomplete German catalog (`test_ux5_*`). Running from the build tree:
+`KMIXDECK_LOCALE_DIR=build/locale LANGUAGE=de build/bin/kmixdeck-kde`.

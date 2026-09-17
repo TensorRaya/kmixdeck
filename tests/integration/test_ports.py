@@ -48,6 +48,19 @@ def wait_level(fn, pred, tries=6):
     return v
 
 
+def settled_level(fn, pred, tries=12, within=1.0):
+    """Like wait_level, but returns the level only once two consecutive readings agree within `within` dB — right
+    after a device comes back the meter is still rising (loopback buffers filling) and a first-above-threshold
+    reading is 5 dB short of the steady state under ctest load (DV-6, ctest29). Comparing levels needs settled ones."""
+    prev = None
+    for _ in range(tries):
+        v = fn()
+        if pred(v) and prev is not None and abs(v - prev) < within: return v
+        prev = v if pred(v) else None
+        time.sleep(0.4)
+    return prev if prev is not None else float("-inf")
+
+
 def test_dv20_daemon_publishes_ports_of_a_device(stack):
     make_device(stack, "fake.ui24r", "Fake Ui24R", "Audio/Source/Virtual")
     r = subprocess.run(["busctl", "--user", "get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", "DevicePorts"],
@@ -578,11 +591,16 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
     stack.cli("channel", "add", "Mic"); stack.cli("channel", "input-add", "mic", f"{iface}:AUX3")
     stack.cli("cell", "set", "mic", "stream", "-6dB"); stack.cli("channel", "mute", "game", "on")
     p, app = start_fake_app(stack); stack.cli("app", "assign", "FakeGame", "voice")
+    # the app plays the SAME test tone as the mic; two coherent tones summed in the stream mix land anywhere between
+    # +6 dB and cancellation depending on their phase (measured −20.7 vs −25.5 dB between runs, ctest29). The level
+    # comparison below is about the mic path, so the app's send into the stream mix is muted; it keeps playing into
+    # the monitor mix, which is what the app part of this test checks.
+    stack.cli("cell", "mute", "voice", "stream", "on")
     stack.pw.wait_nodes(["kmixdeck.in.mic", "kmixdeck.out.stream", "kmixdeck.out.monitor"])
     time.sleep(1.0)
     tone = stack.pw.play_into_port(iface, "input_AUX3")
     try:
-        before = wait_level(lambda: stack.pw.level_at("fake.speakers"), lambda v: v > SILENT + 10, tries=12)
+        before = settled_level(lambda: stack.pw.level_at("fake.speakers"), lambda v: v > SILENT + 10, tries=15)
         assert before > SILENT + 10, "baseline: mic tone should reach the speakers via the stream mix"
         snapshot = stack.cli("status", json_out=True)
         # --- sleep: every device vanishes in one go (the virtual interface too — it is a "device" to the daemon)
@@ -611,7 +629,18 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
         after = wait_level(lambda: stack.pw.level_at("fake.speakers"), lambda v: v > SILENT + 10, tries=25)
         assert after > SILENT + 10, f"after wake the mic tone does not reach the speakers again ({after:.1f} dB)"
         took = time.time() - t0
-        assert abs(after - before) < 3, f"level after wake differs: {before:.1f} → {after:.1f} dB (a fader/trim was lost?)"
+        after = settled_level(lambda: stack.pw.level_at("fake.speakers"), lambda v: v > SILENT + 10, tries=15)
+        if abs(after - before) >= 3:
+            vols = {}
+            for o in stack.pw.dump():
+                n = o.get("info", {}).get("props", {}).get("node.name", "")
+                if n.startswith(("kmixdeck.in.mic", "kmixdeck.channel.mic", "kmixdeck.link.mic.stream", "kmixdeck.mix.stream", "kmixdeck.out.stream")):
+                    vols[n] = [p.get("channelVolumes") for p in o["info"].get("params", {}).get("Props", []) if "channelVolumes" in p]
+            chain = {n: round(stack.pw.level_at(n), 1) for n in ("kmixdeck.channel.mic", "kmixdeck.channel.voice", "kmixdeck.channel.game", "kmixdeck.channel.system", "kmixdeck.mix.stream", "fake.speakers")}
+            chain["voice/stream cell"] = [(round(c["Volume"], 3), c["Muted"]) for c in stack.cli("status", json_out=True)["cells"] if c["Path"].endswith("/voice/stream")]
+            chain["fakegame links"] = subprocess.run(["pw-link", "-o", "-l", "fakegame-out"], env=stack.env, capture_output=True, text=True).stdout.replace("\n", " | ")[:300]
+            links = subprocess.run(["pw-link", "-l", "fake.speakers:playback_FL"], env=stack.env, capture_output=True, text=True).stdout.replace("\n", " | ")[:400]
+            raise AssertionError(f"level after wake differs: {before:.1f} → {after:.1f} dB\n volumes: {vols}\n chain: {chain}\n speakers FL links: {links}")
         cans = wait_level(lambda: stack.pw.level_at("fake.cans"), lambda v: v > SILENT + 10, tries=10)
         if not cans > SILENT + 10:
             st2 = stack.cli("status", json_out=True)
@@ -624,7 +653,11 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
         assert next(c for c in st["channels"] if c["Slug"] == "mic")["InputPresent"] is True
         assert next(m for m in st["mixes"] if m["Slug"] == "stream")["OutputPresent"] is True
         assert next(c for c in st["channels"] if c["Slug"] == "game")["Muted"] is True, "mute lost over sleep/wake"
-        assert abs(next(c for c in st["cells"] if c["Path"].endswith("/mic/stream"))["Volume"] - 10 ** (-6 / 20)) < 0.02, "cell fader lost"
+        cellv = next(c for c in st["cells"] if c["Path"].endswith("/mic/stream"))["Volume"]
+        if abs(cellv - 10 ** (-6 / 20)) >= 0.02:
+            pwv = [(o["id"], [p.get("channelVolumes") for p in o["info"].get("params", {}).get("Props", []) if "channelVolumes" in p]) for o in stack.pw.dump() if o.get("info", {}).get("props", {}).get("node.name", "") == "kmixdeck.link.mic.stream"]
+            log = subprocess.run(["grep", "-a", "-n", "-i", "mic", stack.daemon_log_path], capture_output=True, text=True).stdout[-1500:]
+            raise AssertionError(f"cell fader lost: status {cellv:.3f}, pipewire {pwv}\n daemon log (mic): {log}")
         assert next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")["Channels"] == ["voice"], "app assignment lost"
         assert stack.cli("listen").stdout.strip().startswith("fake.cans")
         # no restart happened: same daemon pid on the bus

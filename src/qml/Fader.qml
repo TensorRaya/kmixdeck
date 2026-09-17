@@ -11,8 +11,39 @@ import org.kde.kirigami as Kirigami
 QQC2.Slider {
     id: fader
     property double peak: 0                 // linear 0..1 of the signal AFTER this fader
+    property string accessibleName: ""      // UX-4: what a screen reader calls this fader ("Game in Stream")
     signal reset()
     from: 0; to: 1; stepSize: 0.005
+    // UX-4 keyboard: Left/Right = 1 dB, Shift = 3 dB, PageUp/PageDown = 6 dB, Home = -inf, End = 0 dB. Slider's own
+    // stepSize (0.005 linear) is far too fine near -inf and too coarse near 0 dB; dB steps behave like a desk.
+    focusPolicy: Qt.StrongFocus
+    Accessible.role: Accessible.Slider
+    Accessible.name: accessibleName
+    Accessible.description: value > 0 ? i18n("%1 dB", toDb(value).toFixed(1)) : i18n("−∞ dB")
+    // The fader's 0..1 is the PulseAudio/CT-5 *cubic* scale everywhere in kmixdeck (value³ = linear gain), so
+    // dB = 60·log10(value). Stepping with 20·log10 moved the daemon 3 dB per "1 dB" key press (found by UX-4's test).
+    readonly property double dbPerDecade: 60
+    readonly property double floorDb: -60
+    function toDb(v) { return v > 0 ? dbPerDecade * Math.log10(v) : floorDb }
+    function fromDb(db) { return db <= floorDb ? 0 : Math.pow(10, db / dbPerDecade) }
+    function stepDb(db) {
+        const next = Math.max(floorDb, Math.min(0, toDb(value) + db))
+        value = fromDb(next)
+        moved()
+    }
+    Keys.priority: Keys.BeforeItem   // Slider handles PageUp/Down/Home/End itself with linear steps — ours come first
+    Keys.onPressed: (event) => {
+        const big = event.modifiers & Qt.ShiftModifier
+        switch (event.key) {
+        case Qt.Key_Left: case Qt.Key_Down: stepDb(big ? -3 : -1); event.accepted = true; break
+        case Qt.Key_Right: case Qt.Key_Up: stepDb(big ? 3 : 1); event.accepted = true; break
+        case Qt.Key_PageDown: stepDb(-6); event.accepted = true; break
+        case Qt.Key_PageUp: stepDb(6); event.accepted = true; break
+        case Qt.Key_Home: value = 0; moved(); event.accepted = true; break
+        case Qt.Key_End: value = 1; moved(); event.accepted = true; break
+        case Qt.Key_0: value = 1; reset(); event.accepted = true; break   // like double-click: back to unity
+        }
+    }
     implicitHeight: Kirigami.Units.gridUnit * 1.6
     implicitWidth: Kirigami.Units.gridUnit * 6
     leftPadding: knobD / 2; rightPadding: knobD / 2
@@ -61,6 +92,11 @@ QQC2.Slider {
         width: fader.knobD; height: fader.knobD; radius: width / 2
         color: fader.pressed ? Qt.lighter(Kirigami.Theme.highlightColor, 1.2) : Kirigami.Theme.highlightColor
         border.width: 2; border.color: Kirigami.Theme.backgroundColor
+        Rectangle {   // UX-4 keyboard focus: a ring OUTSIDE the knob in the text colour — focusColor is the knob's own blue in Breeze, invisible on it
+            visible: fader.activeFocus
+            anchors.centerIn: parent; width: parent.width + 8; height: width; radius: width / 2
+            color: "transparent"; border.width: 2; border.color: Kirigami.Theme.textColor; opacity: 0.85
+        }
         scale: fader.hovered || fader.pressed ? 1.1 : 1
         Behavior on scale { NumberAnimation { duration: 80 } }
     }

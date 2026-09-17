@@ -23,12 +23,20 @@
 #include "frontend/kdeintegration.h"
 #include "qmltypes.h"
 #include <QQuickWindow>
+#include <QQuickItem>
+#include <QKeyEvent>
+#include <QKeySequence>
+#include <QAccessible>
+#include <QMetaEnum>
 
 int main(int argc, char *argv[])
 {
     KIconTheme::initTheme();
     QApplication app(argc, argv);
     KLocalizedString::setApplicationDomain(QByteArrayLiteral("kmixdeck"));
+    // UX-5: catalogs come from <prefix>/share/locale via KI18n's normal lookup. For running out of the build tree
+    // (tests, developers) KMIXDECK_LOCALE_DIR points at build/locale; it is not read in a packaged install.
+    if (const QByteArray dir = qgetenv("KMIXDECK_LOCALE_DIR"); !dir.isEmpty()) KLocalizedString::addDomainLocaleDir(QByteArrayLiteral("kmixdeck"), QString::fromLocal8Bit(dir));
     QApplication::setOrganizationName(QStringLiteral("kmixdeck"));
     QApplication::setOrganizationDomain(QStringLiteral("kmixdeck.org"));
     QApplication::setApplicationName(QStringLiteral("kmixdeck-kde"));
@@ -76,7 +84,9 @@ int main(int argc, char *argv[])
     int qmlWarnings = 0;
     // Only OUR files count (org/kmixdeck/); Kirigami's own binding-loop notices are not ours to fix.
     QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [&qmlWarnings](const QList<QQmlError> &w) { for (const auto &e : w) { qWarning().noquote() << "QML:" << e.toString(); if (e.url().toString().contains(QLatin1String("/org/kmixdeck/"))) ++qmlWarnings; } });
-    engine.rootContext()->setContextObject(new KLocalizedContext(&engine));
+    auto *l10n = new KLocalizedContext(&engine);
+    l10n->setTranslationDomain(QStringLiteral("kmixdeck"));   // UX-5: without this the QML i18n() calls look in the empty default domain
+    engine.rootContext()->setContextObject(l10n);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.loadFromModule("org.kmixdeck", "Main");
     if (!engine.rootObjects().isEmpty()) kde.setMainWindow(qobject_cast<QQuickWindow *>(engine.rootObjects().first()));
@@ -117,6 +127,33 @@ int main(int argc, char *argv[])
                 else if (op == QLatin1String("mute") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureMute", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
                 // CT-7: the file dialogs are native and cannot be scripted offscreen — the gesture takes the path the
                 // dialog would have returned and runs the SAME onAccepted handler (root.exportTo / root.importFrom)
+                else if (op == QLatin1String("key") && a.size() >= 1) {   // UX-4: a real key press on the focused item, e.g. key:Tab|Tab|Right|Right
+                    for (const QString &k : a) {
+                        const QKeySequence seq(k); if (seq.isEmpty()) { ret = QStringLiteral("<unknown key %1>").arg(k); break; }
+                        const int key = seq[0].key(); const Qt::KeyboardModifiers mods = seq[0].keyboardModifiers();
+                        QKeyEvent press(QEvent::KeyPress, key, mods, QKeySequence(seq[0]).toString()), release(QEvent::KeyRelease, key, mods);
+                        QCoreApplication::sendEvent(win, &press); QCoreApplication::sendEvent(win, &release);
+                        QCoreApplication::processEvents();
+                    }
+                    if (ret.isNull()) {
+                        QQuickItem *f = win->activeFocusItem();
+                        if (!f) ret = QStringLiteral("<no focus>");
+                        else if (!f->objectName().isEmpty()) ret = f->objectName();
+                        else ret = QStringLiteral("<%1 text=%2 parent=%3>").arg(QString::fromLatin1(f->metaObject()->className()), f->property("text").toString(), f->parentItem() ? f->parentItem()->objectName() : QString());
+                    }
+                }
+                else if (op == QLatin1String("a11y") && a.size() == 1) {   // UX-4: what a screen reader would announce for an item
+                    QQuickItem *item = nullptr;
+                    if (a[0] == QLatin1String("focus")) item = win->activeFocusItem();
+                    else { QVariant v; QMetaObject::invokeMethod(win, "itemByName", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, a[0])); item = qobject_cast<QQuickItem *>(v.value<QObject *>()); }
+                    if (!item) ret = QStringLiteral("<no item %1>").arg(a[0]);
+                    else if (QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(item)) {
+                        static const QMetaEnum roles = QMetaEnum::fromType<QAccessible::Role>();
+                        ret = QStringLiteral("%1|%2|%3").arg(QString::fromLatin1(roles.valueToKey(iface->role())), iface->text(QAccessible::Name), iface->text(QAccessible::Description));
+                    } else ret = QStringLiteral("<no accessible interface on %1>").arg(a[0]);
+                }
+                else if (op == QLatin1String("shot") && a.size() == 1) { QCoreApplication::processEvents(); ret = win->grabWindow().save(a[0]) ? QString() : QStringLiteral("<save failed>"); }
+                else if (op == QLatin1String("focus") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureFocus", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 else if (op == QLatin1String("hide") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureHide", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
                 else if (op == QLatin1String("duplicate") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureDuplicate", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
                 else if (op == QLatin1String("export") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureExport", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));

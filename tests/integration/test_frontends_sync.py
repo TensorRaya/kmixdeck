@@ -5,6 +5,7 @@ back through (a) the CLI itself, (b) the KDE window (`--probe`), (c) the tray po
 --probe`). Adding a core feature = adding a row here; tools/sot-audit.py requires this file for every ✅ core row.
 """
 import json, math, subprocess, time
+from pathlib import Path
 import pytest
 from test_service_cli import BIN, Stack, make_fake_sink  # noqa: F401
 from test_presentation import kde, stack  # noqa: F401
@@ -369,3 +370,29 @@ def test_ch11_hidden_device_leaves_every_picker_stays_routable_and_comes_back(st
     finally:
         stack.cli("devices", "unhide", "fake.hide.out", check=False); stack.cli("devices", "unhide", "fake.hide.in", check=False)
         stack.cli("mix", "output-remove", "stream", "fake.hide.out", check=False)
+
+
+def test_ux5_german_catalog_covers_every_string_and_window_speaks_it(stack):
+    """UX-5: English is the source language, German is the second — via KDE's i18n (KI18n): po/kmixdeck.pot is
+    extracted from every i18n*() call, po/de/kmixdeck.po translates all of them (no fuzzy, no empty), the catalog is
+    built and installed by `ki18n_install(po)`, and the window shows German text when the user's language is German.
+    The CLI stays untranslated on purpose (it is scripting surface; its output is parsed)."""
+    import re
+    root = Path(__file__).resolve().parents[2]
+    pot = (root / "po/kmixdeck.pot").read_text(); po = (root / "po/de/kmixdeck.po").read_text()
+    # extract fresh and compare: a string added to the QML without running tools/extract-messages.sh is a red test
+    fresh = subprocess.run(["sh", str(root / "tools/extract-messages.sh")], capture_output=True, text=True, cwd=root)
+    assert fresh.returncode == 0, fresh.stderr
+    assert (root / "po/kmixdeck.pot").read_text().count("\nmsgid ") == pot.count("\nmsgid "), "po/kmixdeck.pot is stale — run tools/extract-messages.sh and translate the new strings"
+    stats = subprocess.run(["msgfmt", "--check", "--statistics", "-o", "/dev/null", str(root / "po/de/kmixdeck.po")], capture_output=True, text=True)
+    assert stats.returncode == 0, stats.stderr
+    assert "untranslated" not in stats.stderr and "fuzzy" not in stats.stderr, f"German catalog incomplete: {stats.stderr.strip()}"
+    assert (BIN.parent / "locale/de/LC_MESSAGES/kmixdeck.mo").exists(), "ki18n_install(po) did not build the catalog"
+    # every %1-style placeholder of the source survives in the translation (a dropped %1 is a broken UI string)
+    for m in re.finditer(r'msgid "(.*)"\nmsgstr "(.+)"', po):
+        src, dst = m.group(1), m.group(2)
+        assert set(re.findall(r"%\d", src)) == set(re.findall(r"%\d", dst)), f"placeholder mismatch: {src!r} → {dst!r}"
+    en = kde(stack, "--probe", "hearingBar.hearLabelText", "--probe", "channelHeader/voice.inputDeviceNames", open_page="mixer", lang="en")
+    de = kde(stack, "--probe", "hearingBar.hearLabelText", open_page="mixer", lang="de")
+    assert en["hearingBar.hearLabelText"] == "I hear:", en
+    assert de["hearingBar.hearLabelText"] == "Ich höre:", f"window did not switch to German: {de}"

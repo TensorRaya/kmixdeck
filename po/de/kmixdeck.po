@@ -1,0 +1,1339 @@
+# German translation of kmixdeck.
+# Copyright (C) 2026 Raya Elena Solano
+# This file is distributed under the same license as the kmixdeck package.
+# Raya Elena Solano, 2026.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: kmixdeck\n"
+"Report-Msgid-Bugs-To: https://github.com/TensorRaya/kmixdeck/issues\n"
+"POT-Creation-Date: 2026-09-17 15:06+0200\n"
+"PO-Revision-Date: 2026-09-17 14:00+0200\n"
+"Last-Translator: Raya Elena Solano\n"
+"Language-Team: German\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/frontend/iconpicker.cpp:35
+#, kde-format
+msgid "Choose an image"
+msgstr "Bild auswählen"
+
+#: src/frontend/iconpicker.cpp:37
+#, kde-format
+msgid "Images (*.png *.svg *.svgz *.jpg *.jpeg *.webp)"
+msgstr "Bilder (*.png *.svg *.svgz *.jpg *.jpeg *.webp)"
+
+#: src/frontend/kdeintegration.cpp:21 src/frontend/kdeintegration.cpp:70
+#: src/frontend/kdeintegration.cpp:190 src/frontend/kdeintegration.cpp:195
+#: src/frontend/kdeintegration.cpp:202 src/main.cpp:49 src/qml/Main.qml:12
+#: src/qml/Main.qml:19
+#, kde-format
+msgid "kmixdeck"
+msgstr "kmixdeck"
+
+#: src/frontend/kdeintegration.cpp:67 src/frontend/kdeintegration.cpp:68
+#, kde-format
+msgid "Mute channel: %1"
+msgstr "Kanal stummschalten: %1"
+
+#: src/frontend/kdeintegration.cpp:83
+#, kde-format
+msgid "Mute all in mix: %1"
+msgstr "Alle im Mix stummschalten: %1"
+
+#: src/frontend/kdeintegration.cpp:84
+#, kde-format
+msgid "Mute mix: %1"
+msgstr "Mix stummschalten: %1"
+
+#: src/frontend/kdeintegration.cpp:89
+#, kde-format
+msgid "mix %1"
+msgstr "Mix %1"
+
+#: src/frontend/kdeintegration.cpp:99
+#, kde-format
+msgid "Mix %1: volume up"
+msgstr "Mix %1: lauter"
+
+#: src/frontend/kdeintegration.cpp:104
+#, kde-format
+msgid "Mix %1: volume down"
+msgstr "Mix %1: leiser"
+
+#: src/frontend/kdeintegration.cpp:116
+#, kde-format
+msgid "Listen to next mix"
+msgstr "Nächsten Mix anhören"
+
+#: src/frontend/kdeintegration.cpp:141
+#, kde-format
+msgid "Now listening to: %1"
+msgstr "Ich höre: %1"
+
+#: src/frontend/kdeintegration.cpp:149 src/qml/PatchBayPage.qml:186
+#: src/qml/RoutingPage.qml:97 src/qml/TrayOverview.qml:97
+#, kde-format
+msgid "Channels"
+msgstr "Kanäle"
+
+#: src/frontend/kdeintegration.cpp:154
+#, kde-format
+msgid "Toggle mute for %1 in every mix"
+msgstr "%1 in jedem Mix stumm/hörbar schalten"
+
+#: src/frontend/kdeintegration.cpp:157 src/qml/MixerPage.qml:12
+#: src/qml/PatchBayPage.qml:209 src/qml/RoutingPage.qml:124
+#: src/qml/TrayOverview.qml:57
+#, kde-format
+msgid "Mixes"
+msgstr "Mixe"
+
+#: src/frontend/kdeintegration.cpp:168
+#, kde-format
+msgid "Listening to"
+msgstr "Ich höre"
+
+#: src/frontend/kdeintegration.cpp:181
+#, kde-format
+msgid "Configure Shortcuts…"
+msgstr "Tastenkürzel einrichten …"
+
+#: src/frontend/kdeintegration.cpp:190 src/qml/TrayOverview.qml:47
+#, kde-format
+msgid "Service not running"
+msgstr "Dienst läuft nicht"
+
+#: src/frontend/kdeintegration.cpp:196
+#, kde-format
+msgid "%1 channels, %2 mixes"
+msgstr "%1 Kanäle, %2 Mixe"
+
+#: src/frontend/kdeintegration.cpp:196
+#, kde-format
+msgid "%1 channel muted"
+msgid_plural "%1 channels muted"
+msgstr[0] "%1 Kanal stumm"
+msgstr[1] "%1 Kanäle stumm"
+
+#: src/frontend/kdeintegration.cpp:203
+#, kde-format
+msgid "%1 muted"
+msgstr "%1 stumm"
+
+#: src/frontend/kdeintegration.cpp:203
+#, kde-format
+msgid "%1 unmuted"
+msgstr "%1 hörbar"
+
+#: src/frontend/mixerclient.cpp:277
+#, kde-format
+msgctxt "@label ref bound to the left side only"
+msgid " → L"
+msgstr " → L"
+
+#: src/frontend/mixerclient.cpp:278
+#, kde-format
+msgctxt "@label ref bound to the right side only"
+msgid " → R"
+msgstr " → R"
+
+#: src/frontend/mixerclient.cpp:302
+#, kde-format
+msgid ""
+"Connect a source to a channel, a channel to a mix, or a mix to an output."
+msgstr ""
+"Eine Quelle mit einem Kanal verbinden, einen Kanal mit einem Mix oder einen "
+"Mix mit einem Ausgang."
+
+#: src/frontend/mixerclient.cpp:317
+#, kde-format
+msgid "The capture device of a mix is always connected."
+msgstr "Das Aufnahmegerät eines Mixes ist immer verbunden."
+
+#: src/frontend/mixerclient.cpp:318
+#, kde-format
+msgid "A device feeds a channel, not a mix — add a channel first."
+msgstr "Ein Gerät speist einen Kanal, keinen Mix — zuerst einen Kanal anlegen."
+
+#: src/frontend/mixerclient.cpp:319
+#, kde-format
+msgid "These two cannot be wired."
+msgstr "Diese beiden lassen sich nicht verbinden."
+
+#: src/frontend/mixerclient.cpp:378
+#, kde-format
+msgctxt "@label stereo row"
+msgid "1 (L)"
+msgstr "1 (L)"
+
+#: src/frontend/mixerclient.cpp:378
+#, kde-format
+msgctxt "@label stereo row"
+msgid "2 (R)"
+msgstr "2 (R)"
+
+#: src/frontend/mixerclient.cpp:437 src/qml/RoutingPage.qml:161
+#, kde-format
+msgid "Capture: %1"
+msgstr "Aufnahme: %1"
+
+#: src/main.cpp:50
+#, kde-format
+msgid "A streamer's audio mixer for KDE Plasma on PipeWire"
+msgstr "Der Audio-Mixer für Streaming auf KDE Plasma mit PipeWire"
+
+#: src/main.cpp:51
+#, kde-format
+msgid "© 2026 kmixdeck contributors"
+msgstr "© 2026 die kmixdeck-Mitwirkenden"
+
+#: src/main.cpp:54
+#, kde-format
+msgid "Raya Elena Solano"
+msgstr "Raya Elena Solano"
+
+#: src/main.cpp:54
+#, kde-format
+msgid "Maintainer"
+msgstr "Betreuung"
+
+#: src/qml/AddDialog.qml:18 src/qml/MixerPage.qml:16 src/qml/MixerPage.qml:38
+#, kde-format
+msgid "Add channel"
+msgstr "Kanal hinzufügen"
+
+#: src/qml/AddDialog.qml:18 src/qml/MixerPage.qml:17 src/qml/MixerPage.qml:206
+#, kde-format
+msgid "Add mix"
+msgstr "Mix hinzufügen"
+
+#: src/qml/AddDialog.qml:39
+#, kde-format
+msgid ""
+"Pick what plays into the new channel — a running application, a microphone "
+"or line input — or leave it empty for apps you route later."
+msgstr ""
+"Wähle, was in den neuen Kanal spielt — eine laufende Anwendung, ein Mikrofon "
+"oder Line-Eingang — oder lass ihn leer für Apps, die du später routest."
+
+#: src/qml/AddDialog.qml:40
+#, kde-format
+msgid ""
+"A mix is an output: your headphones, or a capture device for OBS. Add as "
+"many as you need."
+msgstr ""
+"Ein Mix ist ein Ausgang: dein Kopfhörer oder ein Aufnahmegerät für OBS. Leg "
+"so viele an, wie du brauchst."
+
+#: src/qml/AddDialog.qml:47
+#, kde-format
+msgid "Name — e.g. Game, Voice, Music"
+msgstr "Name — z. B. Game, Voice, Musik"
+
+#: src/qml/AddDialog.qml:47
+#, kde-format
+msgid "Name — e.g. Monitor, Stream, Recording"
+msgstr "Name — z. B. Monitor, Stream, Aufnahme"
+
+#: src/qml/AddDialog.qml:64
+#, kde-format
+msgid "Applications playing right now"
+msgstr "Anwendungen, die gerade spielen"
+
+#: src/qml/AddDialog.qml:66
+#, kde-format
+msgid "No application is playing audio."
+msgstr "Keine Anwendung spielt Audio."
+
+#: src/qml/AddDialog.qml:70
+#, kde-format
+msgid "Microphones and inputs"
+msgstr "Mikrofone und Eingänge"
+
+#: src/qml/AddDialog.qml:72
+#, kde-format
+msgid "No input device found."
+msgstr "Kein Eingabegerät gefunden."
+
+#: src/qml/AddDialog.qml:74
+#, kde-format
+msgid "Or start empty"
+msgstr "Oder leer beginnen"
+
+#: src/qml/AddDialog.qml:75
+#, kde-format
+msgid "Empty channel (apps only)"
+msgstr "Leerer Kanal (nur Apps)"
+
+#: src/qml/AddDialog.qml:75
+#, kde-format
+msgid ""
+"Route applications to it later, by drag & drop or from the Applications page."
+msgstr ""
+"Anwendungen später per Drag & Drop oder von der Anwendungsseite hierher "
+"routen."
+
+#: src/qml/AddDialog.qml:117
+#, kde-format
+msgid "%1 · currently on %2"
+msgstr "%1 · zurzeit auf %2"
+
+#: src/qml/AppsPage.qml:14 src/qml/Main.qml:41
+#, kde-format
+msgid "Applications"
+msgstr "Anwendungen"
+
+#: src/qml/AppsPage.qml:21
+#, kde-format
+msgid "No application is playing audio"
+msgstr "Keine Anwendung spielt Audio"
+
+#: src/qml/AppsPage.qml:22
+#, kde-format
+msgid ""
+"Start a game, a browser tab or a call; it will appear here and you can pick "
+"the channel it plays into."
+msgstr ""
+"Starte ein Spiel, einen Browser-Tab oder einen Anruf; es erscheint hier und "
+"du wählst den Kanal, in den es spielt."
+
+#: src/qml/AppsPage.qml:51
+#, kde-format
+msgid "%1 · %2"
+msgstr "%1 · %2"
+
+#: src/qml/AppsPage.qml:63
+#, kde-format
+msgid "Also playing into %1 — click to remove"
+msgstr "Spielt auch in %1 — klicken zum Entfernen"
+
+#: src/qml/AppsPage.qml:79
+#, kde-format
+msgid "Playing"
+msgstr "Aktiv"
+
+#: src/qml/AppsPage.qml:79
+#, kde-format
+msgid "Silent"
+msgstr "Still"
+
+#: src/qml/AppsPage.qml:87
+#, kde-format
+msgctxt "@item app is not routed to any kmixdeck channel"
+msgid "— not in mixer —"
+msgstr "— nicht im Mixer —"
+
+#: src/qml/CellFader.qml:52
+#, kde-format
+msgid "Unmute"
+msgstr "Stummschaltung aufheben"
+
+#: src/qml/CellFader.qml:52 src/qml/PatchBayPage.qml:552
+#, kde-format
+msgid "Mute"
+msgstr "Stumm"
+
+#: src/qml/CellFader.qml:53
+#, kde-format
+msgctxt "@label mute button of channel %1 in mix %2"
+msgid "Mute %1 in %2"
+msgstr "%1 in %2 stumm"
+
+#: src/qml/CellFader.qml:61
+#, kde-format
+msgctxt "@label fader of channel %1 in mix %2"
+msgid "%1 in %2"
+msgstr "%1 in %2"
+
+#: src/qml/CellFader.qml:71 src/qml/Fader.qml:22
+#, kde-format
+msgid "%1 dB"
+msgstr "%1 dB"
+
+#: src/qml/CellFader.qml:71 src/qml/Fader.qml:22
+#, kde-format
+msgid "−∞ dB"
+msgstr "−∞ dB"
+
+#: src/qml/CellFader.qml:80 src/qml/CellFader.qml:85
+#, kde-format
+msgid "Follows %1 — click to unlink"
+msgstr "Folgt %1 — klicken zum Entkoppeln"
+
+#: src/qml/CellFader.qml:80
+#, kde-format
+msgctxt "@label link button of channel %1 in mix %2"
+msgid "Link %1 in %2 to another mix"
+msgstr "%1 in %2 an anderen Mix koppeln"
+
+#: src/qml/CellFader.qml:85
+#, kde-format
+msgid "Follow another mix…"
+msgstr "Anderem Mix folgen …"
+
+#: src/qml/CellFader.qml:99
+#, kde-format
+msgid "Follow %1"
+msgstr "%1 folgen"
+
+#: src/qml/ChannelHeader.qml:39
+#, kde-format
+msgid ""
+"Hardware input feeding this channel — click the input line to change it. "
+"Applications can be routed here regardless."
+msgstr ""
+"Hardware-Eingang, der diesen Kanal speist — auf die Eingangszeile klicken, "
+"um ihn zu ändern. Anwendungen lassen sich unabhängig davon hierher routen."
+
+#: src/qml/ChannelHeader.qml:88 src/qml/MixHeader.qml:91
+#, kde-format
+msgid "Change icon"
+msgstr "Symbol ändern"
+
+#: src/qml/ChannelHeader.qml:113
+#, kde-format
+msgctxt "@label channel has no hardware input, apps only"
+msgid "Apps only"
+msgstr "Nur Apps"
+
+#: src/qml/ChannelHeader.qml:115
+#, kde-format
+msgctxt "@label %1 device name, device is unplugged"
+msgid "%1 (unplugged)"
+msgstr "%1 (nicht verbunden)"
+
+#: src/qml/ChannelHeader.qml:129
+#, kde-format
+msgid "Unmute channel"
+msgstr "Kanal hörbar"
+
+#: src/qml/ChannelHeader.qml:129
+#, kde-format
+msgid "Mute channel"
+msgstr "Kanal stumm"
+
+#: src/qml/ChannelHeader.qml:142
+#, kde-format
+msgctxt "@label trim dial of channel %1"
+msgid "Trim of %1"
+msgstr "Trim von %1"
+
+#: src/qml/ChannelHeader.qml:151
+#, kde-format
+msgid "Trim — double-click for 0 dB"
+msgstr "Trim — Doppelklick für 0 dB"
+
+#: src/qml/ChannelHeader.qml:171
+#, kde-format
+msgctxt "@label pan dial of channel %1"
+msgid "Pan of %1"
+msgstr "Pan von %1"
+
+#: src/qml/ChannelHeader.qml:180
+#, kde-format
+msgid "Pan — double-click for centre"
+msgstr "Pan — Doppelklick für Mitte"
+
+#: src/qml/ChannelHeader.qml:189
+#, kde-format
+msgctxt "@label pan centre"
+msgid "C"
+msgstr "M"
+
+#: src/qml/ChannelHeader.qml:189
+#, kde-format
+msgctxt "@label pan left %1 percent"
+msgid "L%1"
+msgstr "L%1"
+
+#: src/qml/ChannelHeader.qml:189
+#, kde-format
+msgctxt "@label pan right %1 percent"
+msgid "R%1"
+msgstr "R%1"
+
+#: src/qml/ChannelHeader.qml:204
+#, kde-format
+msgid "Channel level (what every mix receives)"
+msgstr "Kanalpegel (was jeder Mix bekommt)"
+
+#: src/qml/ChannelHeader.qml:216
+#, kde-format
+msgid "Listen to this channel"
+msgstr "Diesen Kanal anhören"
+
+#: src/qml/ChannelHeader.qml:230 src/qml/MixHeader.qml:181
+#, kde-format
+msgid "Effects (active)…"
+msgstr "Effekte (aktiv) …"
+
+#: src/qml/ChannelHeader.qml:230 src/qml/ChannelHeader.qml:261
+#: src/qml/MixHeader.qml:181 src/qml/MixHeader.qml:214
+#, kde-format
+msgid "Effects…"
+msgstr "Effekte …"
+
+#: src/qml/ChannelHeader.qml:238
+#, kde-format
+msgid "Channel actions"
+msgstr "Kanalaktionen"
+
+#: src/qml/ChannelHeader.qml:247 src/qml/MixHeader.qml:199
+#, kde-format
+msgid "Rename…"
+msgstr "Umbenennen …"
+
+#: src/qml/ChannelHeader.qml:248 src/qml/MixHeader.qml:200
+#, kde-format
+msgid "Icon…"
+msgstr "Symbol …"
+
+#: src/qml/ChannelHeader.qml:252
+#, kde-format
+msgid "Move up"
+msgstr "Nach oben"
+
+#: src/qml/ChannelHeader.qml:257
+#, kde-format
+msgid "Move down"
+msgstr "Nach unten"
+
+#: src/qml/ChannelHeader.qml:260
+#, kde-format
+msgid "Hardware input…"
+msgstr "Hardware-Eingang …"
+
+#: src/qml/ChannelHeader.qml:263
+#, kde-format
+msgid "New applications start here"
+msgstr "Neue Anwendungen starten hier"
+
+#: src/qml/ChannelHeader.qml:270
+#, kde-format
+msgid "Remove channel"
+msgstr "Kanal entfernen"
+
+#: src/qml/ChannelHeader.qml:275
+#, kde-format
+msgctxt "@item channel input"
+msgid "No hardware input"
+msgstr "Kein Hardware-Eingang"
+
+#: src/qml/ChannelHeader.qml:295
+#, kde-format
+msgctxt "@item pick single ports of a multichannel input"
+msgid "%1 · ports…"
+msgstr "%1 · Ports …"
+
+#: src/qml/ChannelHeader.qml:309
+#, kde-format
+msgctxt "@item unplugged device kept as selection"
+msgid "%1 (unplugged)"
+msgstr "%1 (nicht verbunden)"
+
+#: src/qml/ColorMenu.qml:12
+#, kde-format
+msgid "Colour"
+msgstr "Farbe"
+
+#: src/qml/ColorMenu.qml:19
+#, kde-format
+msgid "None (theme)"
+msgstr "Keine (Design)"
+
+#: src/qml/FxPanel.qml:35
+#, kde-format
+msgid "Effects on %1"
+msgstr "Effekte auf %1"
+
+#: src/qml/FxPanel.qml:37
+#, kde-format
+msgctxt "@action enable/disable whole effect chain"
+msgid "Enabled"
+msgstr "Aktiv"
+
+#: src/qml/FxPanel.qml:57
+#, kde-format
+msgctxt "@action bypass one effect"
+msgid "On"
+msgstr "An"
+
+#: src/qml/FxPanel.qml:113
+#, kde-format
+msgctxt "@label"
+msgid "Preset:"
+msgstr "Vorgabe:"
+
+#: src/qml/IconDialog.qml:15
+#, kde-format
+msgid "Channel icon"
+msgstr "Kanalsymbol"
+
+#: src/qml/IconDialog.qml:15
+#, kde-format
+msgid "Mix icon"
+msgstr "Mix-Symbol"
+
+#: src/qml/IconDialog.qml:83
+#, kde-format
+msgid "More icons…"
+msgstr "Mehr Symbole …"
+
+#: src/qml/IconDialog.qml:88
+#, kde-format
+msgid "Image file…"
+msgstr "Bilddatei …"
+
+#: src/qml/IconDialog.qml:94
+#, kde-format
+msgid "Default"
+msgstr "Standard"
+
+#: src/qml/Main.qml:24
+#, kde-format
+msgid "Add channel…"
+msgstr "Kanal hinzufügen …"
+
+#: src/qml/Main.qml:29
+#, kde-format
+msgid "Add mix…"
+msgstr "Mix hinzufügen …"
+
+#: src/qml/Main.qml:35
+#, kde-format
+msgid "Mixer"
+msgstr "Mixer"
+
+#: src/qml/Main.qml:47 src/qml/RoutingPage.qml:14
+#, kde-format
+msgid "Routing"
+msgstr "Routing"
+
+#: src/qml/Main.qml:53 src/qml/PatchBayPage.qml:15
+#, kde-format
+msgid "Patchbay"
+msgstr "Patchbay"
+
+#: src/qml/Main.qml:61
+#, kde-format
+msgid "Hidden device… (%1)"
+msgid_plural "Hidden devices… (%1)"
+msgstr[0] "Ausgeblendetes Gerät … (%1)"
+msgstr[1] "Ausgeblendete Geräte … (%1)"
+
+#: src/qml/Main.qml:68
+#, kde-format
+msgid "Export settings…"
+msgstr "Einstellungen exportieren …"
+
+#: src/qml/Main.qml:74
+#, kde-format
+msgid "Import settings…"
+msgstr "Einstellungen importieren …"
+
+#: src/qml/Main.qml:80
+#, kde-format
+msgid "About kmixdeck"
+msgstr "Über kmixdeck"
+
+#: src/qml/Main.qml:211
+#, kde-format
+msgid "Output ports for %1"
+msgstr "Ausgänge für %1"
+
+#: src/qml/Main.qml:211
+#, kde-format
+msgid "Input ports for %1"
+msgstr "Eingänge für %1"
+
+#: src/qml/Main.qml:237
+#, kde-format
+msgid "Removed %1"
+msgstr "%1 entfernt"
+
+#: src/qml/Main.qml:237
+#, kde-format
+msgid "Undo"
+msgstr "Rückgängig"
+
+#: src/qml/Main.qml:246
+#, kde-format
+msgid "Hidden devices"
+msgstr "Ausgeblendete Geräte"
+
+#: src/qml/Main.qml:251
+#, kde-format
+msgid ""
+"These devices are left out of the pickers. Routing that uses them is "
+"untouched."
+msgstr ""
+"Diese Geräte fehlen in den Auswahllisten. Routing, das sie benutzt, bleibt "
+"unberührt."
+
+#: src/qml/Main.qml:258
+#, kde-format
+msgid " (not connected)"
+msgstr " (nicht verbunden)"
+
+#: src/qml/Main.qml:259
+#, kde-format
+msgid "Show again"
+msgstr "Wieder zeigen"
+
+#: src/qml/Main.qml:269
+#, kde-format
+msgid "Export kmixdeck settings"
+msgstr "kmixdeck-Einstellungen exportieren"
+
+#: src/qml/Main.qml:271
+#, kde-format
+msgid "kmixdeck settings (*.kmixdeck.json)"
+msgstr "kmixdeck-Einstellungen (*.kmixdeck.json)"
+
+#: src/qml/Main.qml:271
+#, kde-format
+msgid "JSON (*.json)"
+msgstr "JSON (*.json)"
+
+#: src/qml/Main.qml:278
+#, kde-format
+msgid "Import kmixdeck settings"
+msgstr "kmixdeck-Einstellungen importieren"
+
+#: src/qml/Main.qml:280
+#, kde-format
+msgid "kmixdeck settings (*.kmixdeck.json *.json)"
+msgstr "kmixdeck-Einstellungen (*.kmixdeck.json *.json)"
+
+#: src/qml/Main.qml:285
+#, kde-format
+msgid "Settings exported to %1"
+msgstr "Einstellungen nach %1 geschrieben"
+
+#: src/qml/Main.qml:285
+#, kde-format
+msgid "Export failed: %1"
+msgstr "Export fehlgeschlagen: %1"
+
+#: src/qml/Main.qml:289
+#, kde-format
+msgid "Settings imported from %1"
+msgstr "Einstellungen aus %1 geladen"
+
+#: src/qml/Main.qml:289
+#, kde-format
+msgid "Import failed: %1"
+msgstr "Import fehlgeschlagen: %1"
+
+#: src/qml/Main.qml:316
+#, kde-format
+msgid "The kmixdeck service (kmixdeckd) is not running."
+msgstr "Der kmixdeck-Dienst (kmixdeckd) läuft nicht."
+
+#: src/qml/Main.qml:317
+#, kde-format
+msgid "kmixdeckd has no connection to PipeWire."
+msgstr "kmixdeckd hat keine Verbindung zu PipeWire."
+
+#: src/qml/MixHeader.qml:104
+#, kde-format
+msgctxt "@title mix header while muted, %1 mix name"
+msgid "%1 — muted"
+msgstr "%1 — stumm"
+
+#: src/qml/MixHeader.qml:120
+#, kde-format
+msgctxt "@label mix is not routed to a hardware output"
+msgid "Capture only"
+msgstr "Nur Aufnahme"
+
+#: src/qml/MixHeader.qml:122
+#, kde-format
+msgctxt "@label number of hardware outputs of a mix"
+msgid "%1 output"
+msgid_plural "%1 outputs"
+msgstr[0] "%1 Ausgang"
+msgstr[1] "%1 Ausgänge"
+
+#: src/qml/MixHeader.qml:123
+#, kde-format
+msgctxt "@label %1 device name(s), unplugged"
+msgid "%1 — unplugged"
+msgstr "%1 — nicht verbunden"
+
+#: src/qml/MixHeader.qml:129
+#, kde-format
+msgid ""
+"Where this mix plays — click to change. It is also available to OBS/Discord "
+"as the input “%1”."
+msgstr ""
+"Wo dieser Mix spielt — klicken zum Ändern. Für OBS/Discord steht er außerdem "
+"als Eingang „%1“ bereit."
+
+#: src/qml/MixHeader.qml:130
+#, kde-format
+msgid ""
+"The device is unplugged. The mix is parked silently and resumes on this "
+"device as soon as it is back."
+msgstr ""
+"Das Gerät ist nicht verbunden. Der Mix wartet still und läuft auf diesem "
+"Gerät weiter, sobald es zurück ist."
+
+#: src/qml/MixHeader.qml:142
+#, kde-format
+msgid "Unmute mix"
+msgstr "Mix hörbar"
+
+#: src/qml/MixHeader.qml:142
+#, kde-format
+msgid "Mute mix"
+msgstr "Mix stumm"
+
+#: src/qml/MixHeader.qml:144
+#, kde-format
+msgid "Mute the whole mix (all outputs and the capture source)"
+msgstr "Ganzen Mix stummschalten (alle Ausgänge und die Aufnahme)"
+
+#: src/qml/MixHeader.qml:146
+#, kde-format
+msgid "Mute mix %1"
+msgstr "Mix %1 stumm"
+
+#: src/qml/MixHeader.qml:151 src/qml/MixHeader.qml:161
+#, kde-format
+msgid "Master volume of mix %1"
+msgstr "Master-Lautstärke von Mix %1"
+
+#: src/qml/MixHeader.qml:169
+#, kde-format
+msgid "Listen to this mix"
+msgstr "Diesen Mix anhören"
+
+#: src/qml/MixHeader.qml:189
+#, kde-format
+msgid "Mix actions"
+msgstr "Mix-Aktionen"
+
+#: src/qml/MixHeader.qml:202
+#, kde-format
+msgid "Duplicate…"
+msgstr "Duplizieren …"
+
+#: src/qml/MixHeader.qml:205
+#, kde-format
+msgid "Move left"
+msgstr "Nach links"
+
+#: src/qml/MixHeader.qml:210
+#, kde-format
+msgid "Move right"
+msgstr "Nach rechts"
+
+#: src/qml/MixHeader.qml:213
+#, kde-format
+msgid "Outputs…"
+msgstr "Ausgänge …"
+
+#: src/qml/MixHeader.qml:216
+#, kde-format
+msgid "Remove mix"
+msgstr "Mix entfernen"
+
+#: src/qml/MixHeader.qml:225
+#, kde-format
+msgctxt "@item mix output"
+msgid "No output (capture only)"
+msgstr "Kein Ausgang (nur Aufnahme)"
+
+#: src/qml/MixHeader.qml:246
+#, kde-format
+msgctxt "@item pick single ports of a multichannel output"
+msgid "%1 · ports…"
+msgstr "%1 · Ports …"
+
+#: src/qml/MixHeader.qml:266
+#, kde-format
+msgctxt "@item unplugged output kept as selection"
+msgid "%1 (unplugged)"
+msgstr "%1 (nicht verbunden)"
+
+#: src/qml/MixHeader.qml:274
+#, kde-format
+msgid "Fallback: silence"
+msgstr "Ausweichend: Stille"
+
+#: src/qml/MixHeader.qml:275
+#, kde-format
+msgid "Fallback: %1"
+msgstr "Ausweichend: %1"
+
+#: src/qml/MixHeader.qml:277
+#, kde-format
+msgctxt "@item no fallback output"
+msgid "Silence (never the system default)"
+msgstr "Stille (niemals die Systemstandard-Ausgabe)"
+
+#: src/qml/MixerPage.qml:36
+#, kde-format
+msgid "No channels or mixes yet"
+msgstr "Noch keine Kanäle oder Mixe"
+
+#: src/qml/MixerPage.qml:37
+#, kde-format
+msgid ""
+"A channel is where applications play into (Game, Voice, Music …). A mix is "
+"what you or your stream hear. Add one of each to start."
+msgstr ""
+"In einen Kanal spielen Anwendungen hinein (Game, Voice, Musik …). Ein Mix "
+"ist, was du oder dein Stream hört. Leg je einen an, um zu beginnen."
+
+#: src/qml/MixerPage.qml:67
+#, kde-format
+msgctxt "@label what am I hearing"
+msgid "I hear:"
+msgstr "Ich höre:"
+
+#: src/qml/MixerPage.qml:74 src/qml/MixerPage.qml:80
+#, kde-format
+msgid "Listen to %1 on %2"
+msgstr "%1 auf %2 anhören"
+
+#: src/qml/MixerPage.qml:79
+#, kde-format
+msgid "%1 plays on %2"
+msgstr "%1 läuft auf %2"
+
+#: src/qml/MixerPage.qml:92
+#, kde-format
+msgctxt "@label"
+msgid "on"
+msgstr "an"
+
+#: src/qml/MixerPage.qml:96
+#, kde-format
+msgctxt "@label the device I listen on"
+msgid "Listening device"
+msgstr "Hörgerät"
+
+#: src/qml/MixerPage.qml:101
+#, kde-format
+msgctxt "@item no listening device chosen"
+msgid "Choose your headphones…"
+msgstr "Kopfhörer wählen …"
+
+#: src/qml/MixerPage.qml:109
+#, kde-format
+msgid ""
+"The device you listen on. Mixes are sent to it from here; the same choice "
+"appears in each mix's Outputs menu."
+msgstr ""
+"Das Gerät, auf dem du hörst. Mixe werden von hier dorthin geschickt; "
+"dieselbe Wahl steht im Ausgänge-Menü jedes Mixes."
+
+#: src/qml/MixerPage.qml:130
+#, kde-format
+msgid "%1 channel"
+msgid_plural "%1 channels"
+msgstr[0] "%1 Kanal"
+msgstr[1] "%1 Kanäle"
+
+#: src/qml/PatchBayPage.qml:31
+#, kde-format
+msgid "Hide Monitors"
+msgstr "Monitors ausblenden"
+
+#: src/qml/PatchBayPage.qml:31
+#, kde-format
+msgid "Show Monitors"
+msgstr "Monitors zeigen"
+
+#: src/qml/PatchBayPage.qml:109
+#, kde-format
+msgid "No devices or channels yet"
+msgstr "Noch keine Geräte oder Kanäle"
+
+#: src/qml/PatchBayPage.qml:110
+#, kde-format
+msgid ""
+"Add channels and wire them to devices on the Mixer page; they appear here as "
+"cards with connectors."
+msgstr ""
+"Lege auf der Mixer-Seite Kanäle an und verbinde sie mit Geräten; hier "
+"erscheinen sie als Karten mit Buchsen."
+
+#: src/qml/PatchBayPage.qml:154 src/qml/RoutingPage.qml:59
+#, kde-format
+msgid "Sources"
+msgstr "Quellen"
+
+#: src/qml/PatchBayPage.qml:232 src/qml/RoutingPage.qml:147
+#, kde-format
+msgid "Outputs"
+msgstr "Ausgänge"
+
+#: src/qml/PatchBayPage.qml:250
+#, kde-format
+msgid "Monitors"
+msgstr "Monitors"
+
+#: src/qml/PatchBayPage.qml:267
+#, kde-format
+msgid "No listening device"
+msgstr "Kein Hörgerät"
+
+#: src/qml/PatchBayPage.qml:273
+#, kde-format
+msgid ""
+"Choose it in the mixer's \"I hear\" bar. Mixes routed there appear here with "
+"their level."
+msgstr ""
+"Wähle es in der „Ich höre“-Leiste des Mixers. Dorthin geroutete Mixe "
+"erscheinen hier mit ihrem Pegel."
+
+#: src/qml/PatchBayPage.qml:283
+#, kde-format
+msgid "%1 (muted)"
+msgstr "%1 (stumm)"
+
+#: src/qml/PatchBayPage.qml:302
+#, kde-format
+msgid "No mix is routed to this device — drag a wire from a mix to it."
+msgstr ""
+"Kein Mix liegt auf diesem Gerät — ein Kabel von einem Mix hierher ziehen."
+
+#: src/qml/PatchBayPage.qml:345
+#, kde-format
+msgid "Show all %1 connectors"
+msgstr "Alle %1 Buchsen zeigen"
+
+#: src/qml/PatchBayPage.qml:345
+#, kde-format
+msgid "Show wired connectors only"
+msgstr "Nur belegte Buchsen zeigen"
+
+#: src/qml/PatchBayPage.qml:353 src/qml/RoutingPage.qml:249
+#, kde-format
+msgid "Listen (hold)"
+msgstr "Anhören (halten)"
+
+#: src/qml/PatchBayPage.qml:388
+#, kde-format
+msgid "%1 → %2"
+msgstr "%1 → %2"
+
+#: src/qml/PatchBayPage.qml:419
+#, kde-format
+msgid "Hide from pickers (in use — stays visible here)"
+msgstr "In Auswahllisten ausblenden (in Gebrauch — bleibt hier sichtbar)"
+
+#: src/qml/PatchBayPage.qml:419
+#, kde-format
+msgid "Hide from pickers"
+msgstr "In Auswahllisten ausblenden"
+
+#: src/qml/PatchBayPage.qml:437
+#, kde-format
+msgid "%1 — drag to another jack to wire"
+msgstr "%1 — auf eine andere Buchse ziehen, um zu verbinden"
+
+#: src/qml/PatchBayPage.qml:508
+#, kde-format
+msgid "Click: mute this send"
+msgstr "Klicken: diesen Send stummschalten"
+
+#: src/qml/PatchBayPage.qml:509
+#, kde-format
+msgid "Click: trim, mute or remove this wire"
+msgstr "Klicken: Trim, Stumm oder Kabel entfernen"
+
+#: src/qml/PatchBayPage.qml:510
+#, kde-format
+msgid "Click: remove this wire"
+msgstr "Klicken: Kabel entfernen"
+
+#: src/qml/PatchBayPage.qml:535
+#, kde-format
+msgid "Trim"
+msgstr "Trim"
+
+#: src/qml/PatchBayPage.qml:552
+#, kde-format
+msgid "Muted"
+msgstr "Stumm"
+
+#: src/qml/PatchBayPage.qml:558
+#, kde-format
+msgid "Remove wire"
+msgstr "Kabel entfernen"
+
+#: src/qml/PortPicker.qml:57 src/qml/PortPicker.qml:58
+#, kde-format
+msgid "whole device · %1 port"
+msgid_plural "whole device · %1 ports — or pick single ports below"
+msgstr[0] "ganzes Gerät · %1 Port"
+msgstr[1] "ganzes Gerät · %1 Ports — oder unten einzelne Ports wählen"
+
+#: src/qml/PortPicker.qml:59
+#, kde-format
+msgid "whole device"
+msgstr "ganzes Gerät"
+
+#: src/qml/PortPicker.qml:66
+#, kde-format
+msgid "Hide ports"
+msgstr "Ports ausblenden"
+
+#: src/qml/PortPicker.qml:66
+#, kde-format
+msgid "Ports"
+msgstr "Ports"
+
+#: src/qml/PortPicker.qml:88
+#, kde-format
+msgid "L · %1"
+msgstr "L · %1"
+
+#: src/qml/PortPicker.qml:89
+#, kde-format
+msgid "R · %1"
+msgstr "R · %1"
+
+#: src/qml/PortPicker.qml:92
+#, kde-format
+msgid "%1 — in use by %2"
+msgstr "%1 — belegt von %2"
+
+#: src/qml/PortPicker.qml:93
+#, kde-format
+msgid "%1 — free. One port = mono (both sides), two = stereo (first is left)."
+msgstr ""
+"%1 — frei. Ein Port = mono (beide Seiten), zwei = stereo (erster ist links)."
+
+#: src/qml/PortPicker.qml:105
+#, kde-format
+msgctxt "@label which side of the mix goes into this port"
+msgid "From the mix:"
+msgstr "Aus dem Mix:"
+
+#: src/qml/PortPicker.qml:105
+#, kde-format
+msgctxt "@label where a single port lands in the channel"
+msgid "Into the channel:"
+msgstr "In den Kanal:"
+
+#: src/qml/PortPicker.qml:106
+#, kde-format
+msgctxt "@option whole mix folded into one port"
+msgid "Both (folded)"
+msgstr "Beide (zusammengefasst)"
+
+#: src/qml/PortPicker.qml:106
+#, kde-format
+msgctxt "@option mono port on both sides"
+msgid "Centre (both sides)"
+msgstr "Mitte (beide Seiten)"
+
+#: src/qml/PortPicker.qml:107
+#, kde-format
+msgctxt "@option left side only"
+msgid "Left only"
+msgstr "Nur links"
+
+#: src/qml/PortPicker.qml:108
+#, kde-format
+msgctxt "@option right side only"
+msgid "Right only"
+msgstr "Nur rechts"
+
+#: src/qml/PortPicker.qml:115
+#, kde-format
+msgid "Stereo — %1 left, %2 right."
+msgstr "Stereo — %1 links, %2 rechts."
+
+#: src/qml/PortPicker.qml:116
+#, kde-format
+msgid "%1 plays on the left side only."
+msgstr "%1 läuft nur links."
+
+#: src/qml/PortPicker.qml:117
+#, kde-format
+msgid "%1 plays on the right side only."
+msgstr "%1 läuft nur rechts."
+
+#: src/qml/PortPicker.qml:118
+#, kde-format
+msgid "The whole mix (left + right) goes into %1."
+msgstr "Der ganze Mix (links + rechts) geht in %1."
+
+#: src/qml/PortPicker.qml:119
+#, kde-format
+msgid "Mono — %1 plays on both sides, centred."
+msgstr "Mono — %1 läuft auf beiden Seiten, in der Mitte."
+
+#: src/qml/RenameDialog.qml:14
+#, kde-format
+msgid "Duplicate mix"
+msgstr "Mix duplizieren"
+
+#: src/qml/RenameDialog.qml:14
+#, kde-format
+msgid "Rename channel"
+msgstr "Kanal umbenennen"
+
+#: src/qml/RenameDialog.qml:14
+#, kde-format
+msgid "Rename mix"
+msgstr "Mix umbenennen"
+
+#: src/qml/RenameDialog.qml:21
+#, kde-format
+msgctxt "default name for a duplicated mix: <name> copy"
+msgid "%1 copy"
+msgstr "%1 Kopie"
+
+#: src/qml/RoutingPage.qml:45
+#, kde-format
+msgid "Nothing to route yet"
+msgstr "Noch nichts zu routen"
+
+#: src/qml/RoutingPage.qml:46
+#, kde-format
+msgid ""
+"Add a channel and a mix on the Mixer page; this view then shows the whole "
+"signal path."
+msgstr ""
+"Lege auf der Mixer-Seite einen Kanal und einen Mix an; diese Ansicht zeigt "
+"dann den ganzen Signalweg."
+
+#: src/qml/RoutingPage.qml:67 src/qml/RoutingPage.qml:82
+#, kde-format
+msgid "→ %1"
+msgstr "→ %1"
+
+#: src/qml/RoutingPage.qml:67
+#, kde-format
+msgid "not in mixer"
+msgstr "nicht im Mixer"
+
+#: src/qml/RoutingPage.qml:82
+#, kde-format
+msgid "→ %1 (left only)"
+msgstr "→ %1 (nur links)"
+
+#: src/qml/RoutingPage.qml:82
+#, kde-format
+msgid "→ %1 (right only)"
+msgstr "→ %1 (nur rechts)"
+
+#: src/qml/RoutingPage.qml:83 src/qml/RoutingPage.qml:165
+#, kde-format
+msgid "unplugged"
+msgstr "nicht verbunden"
+
+#: src/qml/RoutingPage.qml:105 src/qml/RoutingPage.qml:132
+#, kde-format
+msgid "muted"
+msgstr "stumm"
+
+#: src/qml/RoutingPage.qml:105 src/qml/RoutingPage.qml:132
+#, kde-format
+msgid "effects on"
+msgstr "Effekte an"
+
+#: src/qml/RoutingPage.qml:163
+#, kde-format
+msgid "for OBS / Discord"
+msgstr "für OBS / Discord"
+
+#: src/qml/RoutingPage.qml:164
+#, kde-format
+msgid "what I hear"
+msgstr "was ich höre"
+
+#: src/qml/RoutingPage.qml:167
+#, kde-format
+msgid "left of %1 only"
+msgstr "nur links von %1"
+
+#: src/qml/RoutingPage.qml:167
+#, kde-format
+msgid "right of %1 only"
+msgstr "nur rechts von %1"
+
+#: src/qml/RoutingPage.qml:229 src/qml/RoutingPage.qml:230
+#, kde-format
+msgid "left"
+msgstr "links"
+
+#: src/qml/RoutingPage.qml:229 src/qml/RoutingPage.qml:230
+#, kde-format
+msgid "right"
+msgstr "rechts"
+
+#: src/qml/RoutingPage.qml:229
+#, kde-format
+msgid "Only the %1 side of the mix into this port (click again: whole mix)"
+msgstr ""
+"Nur die Seite %1 des Mixes in diesen Port (nochmal klicken: ganzer Mix)"
+
+#: src/qml/RoutingPage.qml:230
+#, kde-format
+msgid "Put the input on the %1 side only (click again: both sides)"
+msgstr "Eingang nur auf die Seite %1 legen (nochmal klicken: beide Seiten)"
+
+#: src/qml/TrayOverview.qml:48
+#, kde-format
+msgid "Not listening on any device"
+msgstr "Kein Hörgerät gewählt"
+
+#: src/qml/TrayOverview.qml:49
+#, kde-format
+msgid " (unplugged)"
+msgstr " (nicht verbunden)"
+
+#: src/qml/TrayOverview.qml:49
+#, kde-format
+msgid "Listening on %1%2"
+msgstr "Ich höre auf %1%2"
+
+#: src/qml/TrayOverview.qml:52
+#, kde-format
+msgid "%1 app playing"
+msgid_plural "%1 apps playing"
+msgstr[0] "%1 App aktiv"
+msgstr[1] "%1 Apps aktiv"
+
+#: src/qml/TrayOverview.qml:75
+#, kde-format
+msgid "Master: %1"
+msgstr "Master: %1"
+
+#: src/qml/TrayOverview.qml:83 src/qml/TrayOverview.qml:123
+#, kde-format
+msgid "Unmute %1"
+msgstr "%1 hörbar"
+
+#: src/qml/TrayOverview.qml:83 src/qml/TrayOverview.qml:123
+#, kde-format
+msgid "Mute %1"
+msgstr "%1 stumm"
+
+#: src/qml/TrayOverview.qml:115
+#, kde-format
+msgid "Input unplugged"
+msgstr "Eingang getrennt"
+
+#: src/qml/TrayOverview.qml:115
+#, kde-format
+msgid "Trim: %1"
+msgstr "Trim: %1"
+
+#: src/qml/TrayOverview.qml:135
+#, kde-format
+msgid "Open mixer"
+msgstr "Mixer öffnen"
