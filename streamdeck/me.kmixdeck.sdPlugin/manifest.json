@@ -1,0 +1,102 @@
+{
+  "Name": "kmixdeck",
+  "Author": "kmixdeck contributors",
+  "Version": "0.1.0",
+  "Description": "Mute, fader and listening-device actions for the kmixdeck audio mixer (PipeWire, KDE). Talks to the kmixdeck daemon over its public D-Bus API via the kmixdeck CLI.",
+  "Icon": "icon",
+  "Category": "kmixdeck",
+  "CategoryIcon": "icon",
+  "URL": "https://github.com/TensorRaya/kmixdeck",
+  "PropertyInspectorPath": "pi/index.html",
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "6.0"
+  },
+  "OS": [
+    {
+      "Platform": "linux",
+      "MinimumVersion": "*"
+    }
+  ],
+  "CodePath": "run.sh",
+  "CodePaths": {
+    "x86_64-unknown-linux-gnu": "run.sh",
+    "aarch64-unknown-linux-gnu": "run.sh"
+  },
+  "CodePathLin": "run.sh",
+  "Actions": [
+    {
+      "Name": "Mute",
+      "UUID": "me.kmixdeck.mute",
+      "Tooltip": "Toggle mute of a channel, a mix or one cell (channel in mix)",
+      "Icon": "actions/mute",
+      "Controllers": [
+        "Keypad"
+      ],
+      "DisableAutomaticStates": true,
+      "States": [
+        {
+          "Image": "actions/unmuted",
+          "Name": "Open",
+          "TitleAlignment": "bottom",
+          "FontSize": "11"
+        },
+        {
+          "Image": "actions/muted",
+          "Name": "Muted",
+          "TitleAlignment": "bottom",
+          "FontSize": "11"
+        }
+      ]
+    },
+    {
+      "Name": "Fader",
+      "UUID": "me.kmixdeck.fader",
+      "Tooltip": "Key: raise or lower by a dB step. Dial: rotate = fader, press = mute",
+      "Icon": "actions/fader",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "DisableAutomaticStates": true,
+      "States": [
+        {
+          "Image": "actions/fader",
+          "Name": "Open",
+          "TitleAlignment": "bottom",
+          "FontSize": "11"
+        },
+        {
+          "Image": "actions/muted",
+          "Name": "Muted",
+          "TitleAlignment": "bottom",
+          "FontSize": "11"
+        }
+      ]
+    },
+    {
+      "Name": "Listen on",
+      "UUID": "me.kmixdeck.listen",
+      "Tooltip": "Hear the monitor mixes on this output device (headphones, speakers)",
+      "Icon": "actions/listen",
+      "Controllers": [
+        "Keypad"
+      ],
+      "DisableAutomaticStates": true,
+      "States": [
+        {
+          "Image": "actions/listen",
+          "Name": "Not listening here",
+          "TitleAlignment": "bottom",
+          "FontSize": "11"
+        },
+        {
+          "Image": "actions/listen-active",
+          "Name": "Listening here",
+          "TitleAlignment": "bottom",
+          "FontSize": "11"
+        }
+      ]
+    }
+  ]
+}

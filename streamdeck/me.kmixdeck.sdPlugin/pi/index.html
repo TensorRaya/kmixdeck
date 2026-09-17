@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+     Property inspector for the kmixdeck OpenAction plugin. No mixer logic: the list of channels, mixes and devices
+     comes from the plugin (sendToPropertyInspector), which reads it from the daemon. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kmixdeck</title>
+<style>
+  body { font: 13px system-ui, sans-serif; color: #ddd; background: #2d2d2d; margin: 0; padding: 10px; }
+  label { display: block; margin: 10px 0 4px; color: #aaa; }
+  select, input { width: 100%; box-sizing: border-box; padding: 6px; background: #3d3d3d; color: #eee; border: 1px solid #555; border-radius: 4px; }
+  .row { display: flex; gap: 8px; } .row > * { flex: 1; }
+  .hint { color: #888; font-size: 11px; margin-top: 8px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <div id="target-block">
+    <label for="target">Control</label>
+    <select id="target"><option value="">loading from kmixdeck…</option></select>
+  </div>
+  <div id="fader-block" class="hidden">
+    <div class="row">
+      <div><label for="step">Step (dB)</label><input id="step" type="number" min="0.5" max="12" step="0.5" value="3"></div>
+      <div><label for="direction">Key direction</label><select id="direction"><option value="up">louder (+)</option><option value="down">quieter (−)</option></select></div>
+    </div>
+    <div class="hint">On a dial: rotate = one third of the step per detent, press = mute.</div>
+  </div>
+  <div id="device-block" class="hidden">
+    <label for="device">Output device</label>
+    <select id="device"><option value="">loading from kmixdeck…</option></select>
+  </div>
+  <div class="hint" id="status"></div>
+
+<script>
+let ws, uuid, action, settings = {};
+const $ = (id) => document.getElementById(id);
+
+function fill(select, items, current) {
+  select.innerHTML = "";
+  if (!items.length) { select.add(new Option("nothing found — is kmixdeckd running?", "")); return; }
+  select.add(new Option("— choose —", ""));
+  for (const it of items) select.add(new Option(it.label, it.value));
+  select.value = current || "";
+}
+function save() {
+  settings.target = $("target").value; settings.step_db = parseFloat($("step").value) || 3;
+  settings.direction = $("direction").value; settings.device = $("device").value;
+  ws.send(JSON.stringify({ event: "setSettings", context: uuid, payload: settings }));
+}
+for (const id of ["target", "step", "direction", "device"]) $(id).addEventListener("change", save);
+
+function connectOpenActionSocket(port, inUUID, registerEvent, info, actionInfo) {
+  uuid = inUUID;
+  const ai = typeof actionInfo === "string" ? JSON.parse(actionInfo) : actionInfo;
+  action = ai.action; settings = (ai.payload && ai.payload.settings) || {};
+  $("fader-block").classList.toggle("hidden", action !== "me.kmixdeck.fader");
+  $("device-block").classList.toggle("hidden", action !== "me.kmixdeck.listen");
+  $("target-block").classList.toggle("hidden", action === "me.kmixdeck.listen");
+  $("step").value = settings.step_db || 3; $("direction").value = settings.direction || "up";
+  ws = new WebSocket("ws://localhost:" + port);
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ event: registerEvent, uuid }));
+    ws.send(JSON.stringify({ event: "sendToPlugin", action, context: uuid, payload: { request: "choices" } }));
+  };
+  ws.onmessage = (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.event === "sendToPropertyInspector" && msg.payload) {
+      fill($("target"), msg.payload.targets || [], settings.target);
+      fill($("device"), msg.payload.devices || [], settings.device);
+      const nt = (msg.payload.targets || []).length, nd = (msg.payload.devices || []).length;
+      $("status").textContent = `${nt} control${nt === 1 ? "" : "s"}, ${nd} output device${nd === 1 ? "" : "s"} — live from kmixdeck`;
+    } else if (msg.event === "didReceiveSettings") {
+      settings = msg.payload.settings || {};
+    }
+  };
+}
+const connectElgatoStreamDeckSocket = connectOpenActionSocket;   // Stream Deck compatibility
+</script>
+</body>
+</html>

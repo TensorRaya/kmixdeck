@@ -9,6 +9,9 @@
 #include <QDBusObjectPath>
 #include <QDBusArgument>
 #include <QFile>
+#include <QStandardPaths>
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -164,6 +167,7 @@ int main(int argc, char *argv[]) {
         "  setup [--apply]                         first-run wizard: show (or do) default routing — Monitor -> default output,\n"
         "                                          Voice <- default mic, running apps -> channels by role (UX-3)\n"
         "  export [file]                           backup: layout + every fader/trim/mute as JSON (CT-7)\n"
+        "  streamdeck install|uninstall|path       hook the OpenAction plugin (streamdeck/) into OpenDeck's plugins folder (CT-3)\n"
         "  import <file>                           restore such a backup (replaces the running layout)\n"
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
         "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
@@ -200,7 +204,8 @@ int main(int argc, char *argv[]) {
     if (!QDBusConnection::sessionBus().isConnected()) return fail(NoService, "no session bus");
 
     Objects o; QString e;
-    if (!fetch(o, &e)) return fail(NoService, "service not reachable: " + e);
+    const bool offline = a[0] == QLatin1String("streamdeck");   // CT-3: file-system only, works without the daemon
+    if (!offline && !fetch(o, &e)) return fail(NoService, "service not reachable: " + e);
     const QString cmd = a[0], sub = a.value(1);
     auto need = [&](int n) { if (a.size() < n) { fail(Usage, "missing arguments; see --help"); return false; } return true; };
     auto printPath = [&](const QDBusReply<QDBusObjectPath> &r) -> int {
@@ -213,6 +218,31 @@ int main(int argc, char *argv[]) {
     QDBusInterface mixer(BUS, ROOT, "org.kmixdeck1.Mixer", QDBusConnection::sessionBus());
 
     if (cmd == "status") return cmdStatus(o);
+    if (cmd == "streamdeck") {   // CT-3: kmixdeck streamdeck install|uninstall|path — hook the OpenAction plugin into OpenDeck
+        const QString sub = a.size() > 1 ? a[1] : QStringLiteral("path");
+        // where the plugin lives: next to this binary in a build tree, else the installed data dir
+        QStringList candidates{QCoreApplication::applicationDirPath() + QStringLiteral("/../../streamdeck/me.kmixdeck.sdPlugin")};
+        for (const QString &d : QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation)) candidates << d + QStringLiteral("/kmixdeck/streamdeck/me.kmixdeck.sdPlugin");
+        QString src; for (const QString &c : candidates) if (QFileInfo::exists(c + QStringLiteral("/manifest.json"))) { src = QDir(c).canonicalPath(); break; }
+        if (src.isEmpty()) return fail(Rejected, "plugin directory not found (looked in " + candidates.join(", ") + ")");
+        // OpenDeck: <app_config_dir>/plugins, identifier "opendeck" → ~/.config/opendeck/plugins (Flatpak: ~/.var/app/me.amankhanna.opendeck/config/opendeck/plugins)
+        const QString home = QDir::homePath();
+        QStringList targets{QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/opendeck/plugins")};
+        if (QFileInfo::exists(home + QStringLiteral("/.var/app/me.amankhanna.opendeck"))) targets << home + QStringLiteral("/.var/app/me.amankhanna.opendeck/config/opendeck/plugins");
+        if (sub == "path") { out << src << "\n"; return Ok; }
+        if (sub == "install") {
+            for (const QString &t : targets) {
+                QDir().mkpath(t);
+                const QString link = t + QStringLiteral("/me.kmixdeck.sdPlugin");
+                if (QFileInfo(link).isSymLink() || QFileInfo::exists(link)) { QFile::remove(link); QDir(link).removeRecursively(); }
+                if (!QFile::link(src, link)) return fail(Rejected, "cannot link " + link);
+                out << "linked " << link << " -> " << src << "\n";
+            }
+            out << "restart OpenDeck, then add 'kmixdeck' actions from its action list\n"; return Ok;
+        }
+        if (sub == "uninstall") { for (const QString &t : targets) { const QString link = t + QStringLiteral("/me.kmixdeck.sdPlugin"); if (QFile::remove(link)) out << "removed " << link << "\n"; } return Ok; }
+        return fail(Usage, "streamdeck install|uninstall|path");
+    }
     if (cmd == "setup") {   // UX-3: kmixdeck setup [--plan|--apply]  — the first-run wizard's brain, on the command line
         const bool apply = a.size() > 1 && a[1] == "--apply";
         const QDBusReply<QString> r = mixer.call(apply ? "FirstRunApply" : "FirstRunPlan");

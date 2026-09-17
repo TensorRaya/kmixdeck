@@ -110,3 +110,7 @@ $EDITOR po/de/kmixdeck.po         # translate what msgmerge marked fuzzy/empty
 
 `ctest` fails on a stale `.pot` or an incomplete German catalog (`test_ux5_*`). Running from the build tree:
 `KMIXDECK_LOCALE_DIR=build/locale LANGUAGE=de build/bin/kmixdeck-kde`.
+
+## Stream Deck
+
+`kmixdeck streamdeck install` hooks the OpenAction plugin into OpenDeck; see [streamdeck/README.md](streamdeck/README.md).

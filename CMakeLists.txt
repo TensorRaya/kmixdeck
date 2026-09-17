@@ -34,6 +34,11 @@ pkg_check_modules(PipeWire REQUIRED IMPORTED_TARGET libpipewire-0.3>=1.0)
 # UX-5: catalogs in po/<lang>/kmixdeck.po → <KDE_INSTALL_LOCALEDIR>/kmixdeck/<lang>/LC_MESSAGES/kmixdeck.mo
 ki18n_install(po)
 
+# CT-3: OpenAction / Stream Deck plugin. Installed where OpenDeck looks for system-wide plugins is not standardised, so
+# it goes to the data dir; `kmixdeck streamdeck install` (or a symlink) puts it into the user's OpenDeck plugins folder.
+install(DIRECTORY streamdeck/me.kmixdeck.sdPlugin DESTINATION ${KDE_INSTALL_DATADIR}/kmixdeck/streamdeck
+        USE_SOURCE_PERMISSIONS PATTERN "plugin.log" EXCLUDE PATTERN "__pycache__" EXCLUDE)
+
 add_subdirectory(src)
 add_subdirectory(data)
 
