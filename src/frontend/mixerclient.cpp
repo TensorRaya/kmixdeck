@@ -76,6 +76,11 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
             const QString d = props.value(QStringLiteral("ListeningDevice")).toString();
             if (d != m_listeningDevice) { m_listeningDevice = d; Q_EMIT listeningDeviceChanged(); }
         }
+        if (props.contains(QStringLiteral("FirstRun"))) { const bool f = props.value(QStringLiteral("FirstRun")).toBool(); if (f != m_firstRun) { m_firstRun = f; Q_EMIT firstRunChanged(); } }   // UX-3
+        if (props.contains(QStringLiteral("DefaultSink")) || props.contains(QStringLiteral("DefaultSource"))) {
+            const QString sk = props.value(QStringLiteral("DefaultSink"), m_defaultSink).toString(), sr = props.value(QStringLiteral("DefaultSource"), m_defaultSource).toString();
+            if (sk != m_defaultSink || sr != m_defaultSource) { m_defaultSink = sk; m_defaultSource = sr; Q_EMIT defaultDevicesChanged(); }
+        }
         if (props.contains(QStringLiteral("HiddenDevices"))) {   // CH-11
             const QStringList h = props.value(QStringLiteral("HiddenDevices")).toStringList();
             if (h != m_hiddenDevices) { m_hiddenDevices = h; Q_EMIT hiddenDevicesChanged(); Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged(); }
@@ -518,6 +523,19 @@ void MixerClient::setMixOutputDevice(const QString &slug, const QString &nodeNam
     setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("OutputDevice"), nodeName);
 }
 void MixerClient::undo() { callReportingErrors(QStringLiteral("Undo"), QVariant()); }
+QVariantMap MixerClient::firstRunPlan() const {
+    QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
+    const QDBusReply<QString> r = iface.call(QStringLiteral("FirstRunPlan"));
+    return r.isValid() ? QJsonDocument::fromJson(r.value().toUtf8()).object().toVariantMap() : QVariantMap{};
+}
+QVariantMap MixerClient::firstRunApply() {
+    QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
+    const QDBusMessage r = iface.call(QStringLiteral("FirstRunApply"));
+    if (r.type() == QDBusMessage::ErrorMessage) { m_lastError = r.errorMessage(); Q_EMIT lastErrorChanged(); Q_EMIT errorOccurred(m_lastError); return {}; }
+    m_lastError.clear(); Q_EMIT lastErrorChanged();
+    if (m_firstRun) { m_firstRun = false; Q_EMIT firstRunChanged(); }
+    return QJsonDocument::fromJson(r.arguments().value(0).toString().toUtf8()).object().toVariantMap();
+}
 bool MixerClient::exportToFile(const QUrl &url) {
     const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
     QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());

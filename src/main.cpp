@@ -153,6 +153,7 @@ int main(int argc, char *argv[])
                     } else ret = QStringLiteral("<no accessible interface on %1>").arg(a[0]);
                 }
                 else if (op == QLatin1String("shot") && a.size() == 1) { QCoreApplication::processEvents(); ret = win->grabWindow().save(a[0]) ? QString() : QStringLiteral("<save failed>"); }
+                else if (op == QLatin1String("firstrun") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureFirstRun", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 else if (op == QLatin1String("focus") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureFocus", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 else if (op == QLatin1String("hide") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureHide", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
                 else if (op == QLatin1String("duplicate") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureDuplicate", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));

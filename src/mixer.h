@@ -224,6 +224,14 @@ public:
     Q_INVOKABLE bool   undo();
     // CT-7 backup/restore: the whole layout PLUS every fader, trim and mute as one JSON document. import() replaces the
     // layout, rebuilds the graph and applies the levels as each node comes up (same pending mechanism as undo()).
+    // UX-3 first run: what the wizard would do, as one daemon call. `plan` only describes, `apply` does it.
+    // {defaultSink, defaultSource, sinkKnown, sourceKnown, runningApps:[{id,name,channel}], firstRun}
+    QJsonObject firstRunPlan() const;
+    // Applies the plan: Monitor mix → default sink, listening device = default sink, Voice channel ← default source
+    // (mono), every running app without a channel → Game (media.role music → System, communication → Voice).
+    // Returns what was actually done, error on a missing default sink (nothing sensible to route to).
+    QJsonObject firstRunApply(QString *error = nullptr);
+    bool firstRun() const { return m_firstRun; }
     // MX-8: new mix from an existing one — name, icon, colour, FX chain, master level/mute and every cell fader/mute
     // are copied; outputs are NOT (two mixes on one device = the same audio twice) and MX-7 links are not either.
     QString duplicateMix(const QString &from, const QString &displayName, QString *error = nullptr);
@@ -252,6 +260,7 @@ Q_SIGNALS:
     void inputsChanged();                       // list of inputs changed
     void defaultChannelChanged();
     void listeningDeviceChanged();
+    void defaultDevicesChanged();   // UX-3
     void undoChanged();
     void hiddenDevicesChanged();
 
@@ -303,6 +312,8 @@ private:
     QTimer m_reconnect;
     int m_reconnectMs = 500;      // channel + mix null sinks, key: node name
     QHash<uint32_t, QString> m_idToName;
+    bool m_firstRun = false;              // no layout.json existed when we started (UX-3)
+    QString m_defaultSink, m_defaultSource;
 };
 
 } // namespace kmixdeck

@@ -35,6 +35,9 @@ class MixerClient : public QObject {
     Q_PROPERTY(QVariantList outputDevices READ outputDevices NOTIFY outputDevicesChanged)   // [{nodeName, description}]
     Q_PROPERTY(QVariantList inputDevices READ inputDevices NOTIFY inputDevicesChanged)   // hardware sources a channel can be fed by
     Q_PROPERTY(QVariantList hiddenDevices READ hiddenDevices NOTIFY hiddenDevicesChanged)  // CH-11: [{nodeName, description, present}]
+    Q_PROPERTY(bool firstRun READ firstRun NOTIFY firstRunChanged)                          // UX-3: daemon started without a layout
+    Q_PROPERTY(QString defaultSink READ defaultSink NOTIFY defaultDevicesChanged)           // UX-3
+    Q_PROPERTY(QString defaultSource READ defaultSource NOTIFY defaultDevicesChanged)
     Q_PROPERTY(int devicePortsVersion READ devicePortsVersion NOTIFY devicePortsChanged)   // bump → QML re-asks devicePorts()
     Q_PROPERTY(bool metersEnabled READ metersEnabled WRITE setMetersEnabled NOTIFY metersEnabledChanged)   // Levels.Subscribe while true
     Q_PROPERTY(QString defaultChannel READ defaultChannel WRITE setDefaultChannel NOTIFY defaultChannelChanged)   // CH-5, slug or ""
@@ -95,6 +98,12 @@ public:
     QVariantList outputDevices() const;
     QVariantList inputDevices() const;
     QVariantList hiddenDevices() const;
+    bool firstRun() const { return m_firstRun; }
+    QString defaultSink() const { return m_defaultSink; }
+    QString defaultSource() const { return m_defaultSource; }
+    Q_INVOKABLE QVariantMap firstRunPlan() const;     // UX-3: the daemon's plan, for the wizard to show
+    Q_INVOKABLE QVariantMap firstRunApply();          // UX-3: do it; {} + lastError on failure
+    Q_INVOKABLE void dismissFirstRun() { if (m_firstRun) { m_firstRun = false; Q_EMIT firstRunChanged(); } }   // "I'll set it up myself" — window-local, the daemon keeps FirstRun until something is saved
     Q_INVOKABLE bool deviceInUse(const QString &node) const;
     Q_INVOKABLE void setDeviceHidden(const QString &node, bool hidden);   // CH-11
     /// ADR 0009 / DV-20: [{position, port, label, usedBy:[names]}] for one device; empty until the daemon told us.
@@ -215,6 +224,8 @@ Q_SIGNALS:
     void peaksChanged();                                        // once per tick
     void lastErrorChanged();
     void hiddenDevicesChanged();
+    void firstRunChanged();
+    void defaultDevicesChanged();
     void mixChanged(const QString &slug);
 
 private Q_SLOTS:
@@ -245,6 +256,7 @@ private:
     QStringList m_channelOrder, m_mixOrder;
     QString m_lastError;
     QStringList m_hiddenDevices;
+    bool m_firstRun = false; QString m_defaultSink, m_defaultSource;
 };
 
 } // namespace kmixdeck::frontend

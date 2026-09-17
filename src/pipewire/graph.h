@@ -103,6 +103,9 @@ public:
     void clearStreamTarget(uint32_t streamId);
     /// Link a stream to a sink by name (looks up serial). Returns false if either is unknown.
     bool moveStream(uint32_t streamId, const QString &sinkNodeName);
+    /// Session defaults as WirePlumber publishes them (default.audio.sink / default.audio.source), empty when unknown.
+    QString defaultSink() const;
+    QString defaultSource() const;
 
 Q_SIGNALS:
     void connected();
@@ -112,6 +115,8 @@ Q_SIGNALS:
     void nodeRemoved(uint32_t id);
     /// A stream's output is now linked to a different node (or none = 0).
     void streamRouted(uint32_t streamId, uint32_t sinkId);
+    /// The session's default sink / source node name changed (WirePlumber's "default" metadata; UX-3 first run).
+    void defaultDevicesChanged(const QString &sinkNodeName, const QString &sourceNodeName);
 
 public:
     struct Impl;   // public for the C callback trampolines

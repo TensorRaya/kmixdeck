@@ -310,6 +310,12 @@ void MixerAdaptor::Audition(const QDBusObjectPath &p) {
 void MixerAdaptor::Undo() {
     if (!m_mixer->undo()) static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.Failed"), QStringLiteral("nothing to undo"));
 }
+QString MixerAdaptor::FirstRunPlan() { return QString::fromUtf8(QJsonDocument(m_mixer->firstRunPlan()).toJson(QJsonDocument::Compact)); }
+QString MixerAdaptor::FirstRunApply() {
+    QString why; const QJsonObject done = m_mixer->firstRunApply(&why);
+    if (!why.isEmpty()) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.Failed"), why); return {}; }
+    return QString::fromUtf8(QJsonDocument(done).toJson(QJsonDocument::Compact));
+}
 QString MixerAdaptor::Export() {
     return QString::fromUtf8(QJsonDocument(m_mixer->exportSettings()).toJson(QJsonDocument::Indented));
 }
@@ -420,6 +426,10 @@ Service::Service(QObject *parent) : QObject(parent) {
     connect(&m_mixer, &Mixer::undoChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("UndoDescription"), m_mixer.undoDescription()}});
     });
+    connect(&m_mixer, &Mixer::defaultDevicesChanged, this, [this] {   // UX-3
+        const QJsonObject p = m_mixer.firstRunPlan();
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("DefaultSink"), p.value(QStringLiteral("defaultSink")).toString()}, {QStringLiteral("DefaultSource"), p.value(QStringLiteral("defaultSource")).toString()}});
+    });
     connect(&m_mixer, &Mixer::hiddenDevicesChanged, this, [this] {   // CH-11
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("HiddenDevices"), m_mixer.hiddenDevices()}});
     });
@@ -486,7 +496,7 @@ ManagedObjects Service::managedObjects() const {
     out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
         {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()},
          {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())},
-         {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor->devicePorts())}, {QStringLiteral("VirtualDevices"), m_mixerAdaptor->virtualDevices()}, {QStringLiteral("HiddenDevices"), m_mixerAdaptor->hiddenDevices()},
+         {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor->devicePorts())}, {QStringLiteral("VirtualDevices"), m_mixerAdaptor->virtualDevices()}, {QStringLiteral("HiddenDevices"), m_mixerAdaptor->hiddenDevices()}, {QStringLiteral("FirstRun"), m_mixerAdaptor->firstRun()}, {QStringLiteral("DefaultSink"), m_mixerAdaptor->defaultSink()}, {QStringLiteral("DefaultSource"), m_mixerAdaptor->defaultSource()},
          {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("ListeningDevice"), m_mixer.listeningDevice()}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}, {QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()},
          {QStringLiteral("FxTypes"), m_mixerAdaptor->fxTypes()}, {QStringLiteral("FxPresets"), m_mixerAdaptor->fxPresets()}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)

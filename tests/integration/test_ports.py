@@ -571,6 +571,14 @@ def test_dv28_ui24r_scale_32_in_32_out_every_port_routable_and_fast(stack):
     assert set(stack.cli("channel", "inputs", "in_21").stdout.split()) == {f"{din}:AUX21", f"{din}:AUX22>R"}
     layout = json.loads(open(os.path.join(stack.env["XDG_CONFIG_HOME"], "kmixdeck", "layout.json")).read())
     assert len([i for i in layout["inputs"] if i["channel"].startswith("in_")]) == 33
+    # leave the module-wide stack as we found it: 32 channels + 64 loopbacks + a 32×32 device made every later test
+    # in this file run in a ~150-node graph — DV-6 went red only in that state (ports-full2, 2026-09-17)
+    for i in range(1, 33): stack.cli("channel", "remove", f"in_{i}", check=False)
+    stack.cli("mix", "output", "stream", "none"); stack.cli("mix", "output", "monitor", "none")
+    stack.cli("devices", "virtual", "remove", "ui24r", check=False)
+    for _ in range(100):
+        if not any(n.startswith("kmixdeck.in.in_") for n in stack.pw.node_names()): break
+        time.sleep(0.1)
 
 
 def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(stack):
@@ -587,6 +595,9 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
     for _ in range(50):   # node first, its ports a moment later (ctest25 under load: "has no port 'AUX3'")
         if "AUX3" in stack.cli("devices", "ports", iface, check=False).stdout: break
         time.sleep(0.1)
+    # this test owns the mixes' outputs: the module-wide stack may still carry an output from an earlier test
+    # (fake.rode.out from DV-17 — present, so OutputPresent stayed True and this test went red under ctest30 only)
+    stack.cli("mix", "output", "stream", "none"); stack.cli("mix", "output", "monitor", "none")
     stack.cli("mix", "output-add", "monitor", "fake.cans"); stack.cli("listen", "fake.cans"); stack.cli("mix", "output-add", "stream", "fake.speakers")
     stack.cli("channel", "add", "Mic"); stack.cli("channel", "input-add", "mic", f"{iface}:AUX3")
     stack.cli("cell", "set", "mic", "stream", "-6dB"); stack.cli("channel", "mute", "game", "on")
@@ -617,8 +628,11 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
         assert stack.cli("listen").stdout.strip().startswith("fake.cans"), "listening device must be remembered while it is gone"
         assert "fake.speakers" in next(m for m in st["mixes"] if m["Slug"] == "stream")["Outputs"], "mix output must be remembered while it is gone"
         assert stack.cli("channel", "inputs", "mic", json_out=True) == [f"{iface}:AUX3"], "input wire must be remembered"
-        assert next(c for c in st["channels"] if c["Slug"] == "mic")["InputPresent"] is False
-        assert next(m for m in st["mixes"] if m["Slug"] == "stream")["OutputPresent"] is False
+        if next(c for c in st["channels"] if c["Slug"] == "mic")["InputPresent"] is not False or next(m for m in st["mixes"] if m["Slug"] == "stream")["OutputPresent"] is not False:
+            live = [n for n in stack.pw.node_names() if n in ("fake.speakers", "fake.cans", iface)]
+            devs = stack.cli("devices", check=False).stdout.replace("\n", " | ")[:400]
+            log = subprocess.run(["tail", "-c", "1500", stack.daemon_log_path], capture_output=True, text=True).stdout
+            raise AssertionError(f"daemon still sees a removed device after 10 s: mic InputPresent={next(c for c in st['channels'] if c['Slug'] == 'mic')['InputPresent']} stream OutputPresent={next(m for m in st['mixes'] if m['Slug'] == 'stream')['OutputPresent']}\n graph still has: {live}\n devices: {devs}\n daemon log: {log}")
         # --- wake: everything re-enumerates (new ids), in a different order than it left
         stack.cli("devices", "virtual", "add", "Interface", "--in", "4", "--out", "2")
         make_fake_sink(stack, "fake.cans", "Headphones"); make_fake_sink(stack, "fake.speakers", "Laptop Speakers")
@@ -627,7 +641,15 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
         tone = stack.pw.play_into_port(iface, "input_AUX3")
         t0 = time.time()
         after = wait_level(lambda: stack.pw.level_at("fake.speakers"), lambda v: v > SILENT + 10, tries=25)
-        assert after > SILENT + 10, f"after wake the mic tone does not reach the speakers again ({after:.1f} dB)"
+        if not after > SILENT + 10:
+            st2 = stack.cli("status", json_out=True)
+            chain = {n: round(stack.pw.level_at(n), 1) for n in ("kmixdeck.channel.mic", "kmixdeck.mix.stream")}
+            chain[iface + " AUX3"] = round(stack.pw.rms_db(stack.pw.record_port(iface, "capture_AUX3")), 1)
+            links = {k: subprocess.run(["pw-link", "-l", k], env=stack.env, capture_output=True, text=True).stdout.replace("\n", " | ")[:300]
+                     for k in ("kmixdeck.in.mic.in:input_AUX3", "kmixdeck.in.mic:output_FL", "kmixdeck.out.stream:output_FL", "fake.speakers:playback_FL")}
+            edges = sorted(n for n in stack.pw.node_names() if n.startswith(("kmixdeck.in.", "kmixdeck.out.")))
+            log = subprocess.run(["tail", "-c", "2000", stack.daemon_log_path], capture_output=True, text=True).stdout
+            raise AssertionError(f"after wake the mic tone does not reach the speakers again ({after:.1f} dB)\n chain: {chain}\n mixes: {[(m['Slug'], m['Outputs'], m['OutputPresent']) for m in st2['mixes']]}\n mic inputs: {stack.cli('channel', 'inputs', 'mic', json_out=True)} present={next(c for c in st2['channels'] if c['Slug'] == 'mic')['InputPresent']}\n edges: {edges}\n links: {links}\n daemon log: {log}")
         took = time.time() - t0
         after = settled_level(lambda: stack.pw.level_at("fake.speakers"), lambda v: v > SILENT + 10, tries=15)
         if abs(after - before) >= 3:

@@ -240,6 +240,9 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_PROPERTY(PortMap DevicePorts READ devicePorts)     // ADR 0009 D4: node → ["POS|port.name|port.alias", …]
     Q_PROPERTY(QStringList VirtualDevices READ virtualDevices)   // DV-23: node.names (input side) of our virtual devices
     Q_PROPERTY(QStringList HiddenDevices READ hiddenDevices)     // CH-11: node.names every picker leaves out
+    Q_PROPERTY(bool FirstRun READ firstRun)                      // UX-3: no layout on disk when the daemon started
+    Q_PROPERTY(QString DefaultSink READ defaultSink)             // UX-3: session default output (node.name)
+    Q_PROPERTY(QString DefaultSource READ defaultSource)         // UX-3: session default input (node.name)
     Q_PROPERTY(QDBusObjectPath DefaultChannel READ defaultChannel WRITE setDefaultChannel)   // CH-5; "/" = off
     Q_PROPERTY(QString ListeningDevice READ listeningDevice WRITE setListeningDevice)         // UX-2; node.name or ""
     Q_PROPERTY(QString UndoDescription READ undoDescription)   // CH-9: "" = nothing to undo, else e.g. channel “Music”
@@ -256,6 +259,9 @@ public:
     PortMap devicePorts() const;
     QStringList virtualDevices() const;
     QStringList hiddenDevices() const { return m_mixer->hiddenDevices(); }
+    bool firstRun() const { return m_mixer->firstRun(); }
+    QString defaultSink() const { return m_mixer->firstRunPlan().value(QStringLiteral("defaultSink")).toString(); }
+    QString defaultSource() const { return m_mixer->firstRunPlan().value(QStringLiteral("defaultSource")).toString(); }
     QDBusObjectPath defaultChannel() const;
     void setDefaultChannel(const QDBusObjectPath &p);
     QString listeningDevice() const { return m_mixer->listeningDevice(); }
@@ -268,6 +274,8 @@ public:
 public Q_SLOTS:
     void Undo();                                      // CH-9: restore the last removed channel/mix
     QString Export();                                 // CT-7
+    QString FirstRunPlan();                           // UX-3: JSON of what FirstRunApply would do
+    QString FirstRunApply();                          // UX-3: does it, returns JSON of what was done
     QDBusObjectPath DuplicateMix(const QDBusObjectPath &source, const QString &name);   // MX-8
     void SetDeviceHidden(const QString &node, bool hidden);                              // CH-11
     void Import(const QString &json);                 // CT-7

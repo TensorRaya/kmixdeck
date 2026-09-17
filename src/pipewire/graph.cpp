@@ -5,6 +5,8 @@
 #include <pipewire/pipewire.h>
 #include <pipewire/impl.h>
 #include <pipewire/extensions/metadata.h>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <spa/param/props.h>
 #include <spa/pod/builder.h>
 #include <spa/pod/parser.h>
@@ -44,6 +46,8 @@ struct Graph::Impl {
     pw_core *core = nullptr;
     pw_registry *registry = nullptr;
     pw_metadata *metadata = nullptr;      // "default" metadata object, for target.object
+    spa_hook metadataListener{};
+    QString defaultSink, defaultSource;   // guarded by snapshotMutex (UX-3)
     spa_hook registryListener{};
     spa_hook coreListener{};
     QHash<uint32_t, NodeProxy *> nodes;           // loop thread only
@@ -156,12 +160,36 @@ struct Graph::Impl {
     }
     static const pw_proxy_events proxyEvents;
 
+    // --- "default" metadata: default.audio.sink / default.audio.source are JSON {"name":"<node.name>"} (UX-3)
+    static int onMetadataProperty(void *data, uint32_t /*subject*/, const char *key, const char *type, const char *value) {
+        auto *impl = static_cast<Impl *>(data);
+        if (!key) return 0;
+        const bool sink = strcmp(key, "default.audio.sink") == 0, source = strcmp(key, "default.audio.source") == 0;
+        if (!sink && !source) return 0;
+        QString name;
+        if (value && type && strcmp(type, "Spa:String:JSON") == 0) {
+            const QJsonDocument doc = QJsonDocument::fromJson(QByteArray(value));
+            name = doc.object().value(QStringLiteral("name")).toString();
+        }
+        QString s, src;
+        {
+            std::lock_guard<std::mutex> g(impl->snapshotMutex);
+            if (sink) impl->defaultSink = name; else impl->defaultSource = name;
+            s = impl->defaultSink; src = impl->defaultSource;
+        }
+        QMetaObject::invokeMethod(impl->q, [q = impl->q, s, src] { Q_EMIT q->defaultDevicesChanged(s, src); }, Qt::QueuedConnection);
+        return 0;
+    }
+
     // --- registry
     static void onGlobal(void *data, uint32_t id, uint32_t /*permissions*/, const char *type, uint32_t /*version*/, const spa_dict *props) {
         auto *impl = static_cast<Impl *>(data);
         if (type && strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0) {
-            if (prop(props, PW_KEY_METADATA_NAME) == QLatin1String("default") && !impl->metadata)
+            if (prop(props, PW_KEY_METADATA_NAME) == QLatin1String("default") && !impl->metadata) {
                 impl->metadata = static_cast<pw_metadata *>(pw_registry_bind(impl->registry, id, type, PW_VERSION_METADATA, 0));
+                static const pw_metadata_events metadataEvents = { PW_VERSION_METADATA_EVENTS, &Impl::onMetadataProperty };
+                pw_metadata_add_listener(impl->metadata, &impl->metadataListener, &metadataEvents, impl);
+            }
             return;
         }
         if (type && strcmp(type, PW_TYPE_INTERFACE_Link) == 0) {
@@ -443,6 +471,9 @@ void Graph::clearStreamTarget(uint32_t streamId) {
     if (d->metadata) pw_metadata_set_property(d->metadata, streamId, "target.object", nullptr, nullptr);
     pw_thread_loop_unlock(d->loop);
 }
+
+QString Graph::defaultSink() const { std::lock_guard<std::mutex> g(d->snapshotMutex); return d->defaultSink; }
+QString Graph::defaultSource() const { std::lock_guard<std::mutex> g(d->snapshotMutex); return d->defaultSource; }
 
 bool Graph::moveStream(uint32_t streamId, const QString &sinkNodeName) {
     const auto sink = node(sinkNodeName);

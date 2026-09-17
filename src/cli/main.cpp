@@ -161,6 +161,8 @@ int main(int argc, char *argv[]) {
         "Commands:\n"
         "  status                                     matrix overview\n"
         "  undo                                    restore the last removed channel or mix (CH-9)\n"
+        "  setup [--apply]                         first-run wizard: show (or do) default routing — Monitor -> default output,\n"
+        "                                          Voice <- default mic, running apps -> channels by role (UX-3)\n"
         "  export [file]                           backup: layout + every fader/trim/mute as JSON (CT-7)\n"
         "  import <file>                           restore such a backup (replaces the running layout)\n"
         "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
@@ -211,6 +213,28 @@ int main(int argc, char *argv[]) {
     QDBusInterface mixer(BUS, ROOT, "org.kmixdeck1.Mixer", QDBusConnection::sessionBus());
 
     if (cmd == "status") return cmdStatus(o);
+    if (cmd == "setup") {   // UX-3: kmixdeck setup [--plan|--apply]  — the first-run wizard's brain, on the command line
+        const bool apply = a.size() > 1 && a[1] == "--apply";
+        const QDBusReply<QString> r = mixer.call(apply ? "FirstRunApply" : "FirstRunPlan");
+        if (!r.isValid()) return fail(Rejected, r.error().message());
+        const QJsonObject o = QJsonDocument::fromJson(r.value().toUtf8()).object();
+        if (g_json) { out << r.value() << "\n"; return Ok; }
+        if (!apply) {
+            out << (o.value("firstRun").toBool() ? "first run: no layout on disk yet\n" : "layout exists (setup would only fill gaps)\n");
+            const QString sink = o.value("defaultSink").toString(), src = o.value("defaultSource").toString();
+            out << "default output: " << (sink.isEmpty() ? QStringLiteral("(none)") : sink + "  " + o.value("sinkDescription").toString()) << (o.value("sinkKnown").toBool() || sink.isEmpty() ? "" : "  [not seen yet]") << "\n";
+            out << "default input:  " << (src.isEmpty() ? QStringLiteral("(none)") : src + "  " + o.value("sourceDescription").toString()) << (o.value("sourceKnown").toBool() || src.isEmpty() ? "" : "  [not seen yet]") << "\n";
+            out << "would: Monitor -> default output, listen on it, Voice <- default input\n";
+            for (const auto &av : o.value("apps").toArray()) { const auto ap = av.toObject(); out << "  app " << ap.value("name").toString() << (ap.value("assigned").toBool() ? "  (already on " : "  -> ") << ap.value("channel").toString() << (ap.value("assigned").toBool() ? ")" : "") << "\n"; }
+            out << "run `kmixdeck setup --apply` to do it\n";
+            return Ok;
+        }
+        if (o.contains("monitorOutput")) out << "Monitor mix -> " << o.value("monitorOutput").toString() << "\n";
+        if (o.contains("listeningDevice")) out << "listening on " << o.value("listeningDevice").toString() << "\n";
+        if (o.contains("voiceInput")) out << "Voice <- " << o.value("voiceInput").toString() << "\n";
+        for (const auto &av : o.value("apps").toArray()) { const auto ap = av.toObject(); out << "app " << ap.value("name").toString() << " -> " << ap.value("channel").toString() << "\n"; }
+        return Ok;
+    }
     if (cmd == "export") {   // CT-7: kmixdeck export [file]  — stdout when no file
         const QDBusReply<QString> r = mixer.call("Export");
         if (!r.isValid()) return fail(Rejected, r.error().message());

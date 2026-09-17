@@ -396,3 +396,69 @@ def test_ux5_german_catalog_covers_every_string_and_window_speaks_it(stack):
     de = kde(stack, "--probe", "hearingBar.hearLabelText", open_page="mixer", lang="de")
     assert en["hearingBar.hearLabelText"] == "I hear:", en
     assert de["hearingBar.hearLabelText"] == "Ich höre:", f"window did not switch to German: {de}"
+
+
+def test_ux3_first_run_wizard_wires_defaults_from_cli_and_window(stack):
+    """UX-3: the daemon owns the first-run logic (FirstRunPlan/FirstRunApply). Fresh config dir → FirstRun is true;
+    the plan names the session's default sink/source (WirePlumber's "default" metadata) and where each running app
+    would go (by media.role); Apply routes Monitor → default sink, listens there, Voice ← default mic, apps → channels;
+    CLI `kmixdeck setup` prints the same plan, the window's dialog opens on first run and reads the same fields."""
+    from test_service_cli import make_fake_sink, make_fake_source, start_fake_app
+    def prop(name): return stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", name).stdout.strip()
+    assert prop("FirstRun") == "b true", "a sandbox has no layout.json → the daemon must report FirstRun"
+    make_fake_sink(stack, "fake.desk", "Desk Speakers"); make_fake_source(stack, "fake.usbmic", "USB Microphone"); time.sleep(0.8)
+    subprocess.run(["pw-metadata", "0", "default.audio.sink", '{"name":"fake.desk"}', "Spa:String:JSON"], env=stack.env, capture_output=True)
+    subprocess.run(["pw-metadata", "0", "default.audio.source", '{"name":"fake.usbmic"}', "Spa:String:JSON"], env=stack.env, capture_output=True)
+    for _ in range(50):
+        plan = stack.cli("setup", json_out=True)
+        if plan.get("defaultSink") == "fake.desk" and plan.get("defaultSource") == "fake.usbmic": break
+        time.sleep(0.1)
+    assert plan["defaultSink"] == "fake.desk" and plan["sinkKnown"] is True and plan["sinkDescription"] == "Desk Speakers", plan
+    assert plan["defaultSource"] == "fake.usbmic" and plan["sourceKnown"] is True, plan
+    p, app = start_fake_app(stack)
+    try:
+        for _ in range(50):
+            plan = stack.cli("setup", json_out=True)
+            if any(a["name"] == "FakeGame" for a in plan["apps"]): break
+            time.sleep(0.1)
+        # CH-4 auto-route may already have parked the new stream on the default channel — the plan must say so
+        # (assigned=True, channel=where it is) instead of proposing to move it. Unassigned → by role → game.
+        fg = next(a for a in plan["apps"] if a["name"] == "FakeGame")
+        if fg["assigned"]:
+            assert fg["channel"] in stack.cli("app", "list", json_out=True)[0]["Channels"] or fg["channel"] in ("system", "game", "voice"), fg
+        else:
+            assert fg["channel"] == "game", fg
+        human = stack.cli("setup").stdout
+        assert "first run" in human and "fake.desk" in human and "Desk Speakers" in human and "FakeGame" in human, human
+        assert ("-> game" in human) or ("already on" in human), human
+        # the window opens the wizard by itself on first run and shows the very same plan
+        g = kde(stack, "--probe", "firstRunBody.dialogVisible", "--probe", "firstRunBody.summary", "--probe", "firstRunSink.text", "--probe", "firstRunSource.text", "--probe", "firstRunApps.text", open_page="mixer")
+        assert g["firstRunBody.dialogVisible"] == "true", g
+        assert g["firstRunBody.summary"].startswith("plan:fake.desk|fake.usbmic|apps=1"), g
+        assert "Desk Speakers" in g["firstRunSink.text"] and "USB Microphone" in g["firstRunSource.text"] and "FakeGame" in g["firstRunApps.text"], g
+        # apply through the window's handler (what the "Set up" button calls)
+        r = kde(stack, "--gesture", "firstrun:apply", "--probe", "firstRunBody.summary", open_page="mixer")
+        assert r["firstRunBody.summary"].startswith("done:") and "monitorOutput" in r["firstRunBody.summary"] and "voiceInput" in r["firstRunBody.summary"], r
+        for _ in range(50):
+            if prop("FirstRun") == "b false" and prop("ListeningDevice") == 's "fake.desk"': break
+            time.sleep(0.1)
+        assert prop("FirstRun") == "b false"
+        st = stack.cli("status", json_out=True)
+        assert stack.cli("listen").stdout.strip().startswith("fake.desk")
+        assert next(m for m in st["mixes"] if m["Slug"] == "monitor")["Outputs"] == ["fake.desk"]
+        assert stack.cli("channel", "inputs", "voice", json_out=True) in (["fake.usbmic"], ["fake.usbmic:FL"], ["fake.usbmic:FR"]), "the default mic feeds Voice"
+        assert next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")["Channels"], "the running app must be in some channel after setup"
+        # and the tone really reaches the desk speakers via Monitor
+        assert wait_level(lambda: stack.pw.level_at("fake.desk"), lambda v: v > -50, tries=12) > -50
+        # second run: no wizard (layout exists), setup is idempotent (fills gaps only, changes nothing here)
+        again = stack.cli("setup", "--apply", json_out=True)
+        assert again.get("monitorOutput") is None and again.get("voiceInput") is None and again.get("apps") == [], again
+        g2 = kde(stack, "--probe", "firstRunBody.dialogVisible", "--probe", "hearingBar.deviceNames", open_page="mixer")
+        assert g2["firstRunBody.dialogVisible"] in ("false", "<not found: firstRunBody>"), "the wizard must not come back once a layout exists"
+        # no default sink → Apply refuses with a reason instead of doing half a job
+        subprocess.run(["pw-metadata", "0", "default.audio.sink", '{"name":"does.not.exist"}', "Spa:String:JSON"], env=stack.env, capture_output=True); time.sleep(0.5)
+        rej = stack.cli("setup", "--apply", check=False)
+        assert rej.returncode != 0 and "default output" in rej.stderr, rej
+    finally:
+        p.kill(); p.wait()
+        subprocess.run(["pw-metadata", "0", "default.audio.sink", '{"name":"fake.desk"}', "Spa:String:JSON"], env=stack.env, capture_output=True)

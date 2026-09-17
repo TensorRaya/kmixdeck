@@ -29,6 +29,10 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     QObject::connect(&m_graph, &pw::Graph::nodeChanged, this, &Mixer::onNode);
     QObject::connect(&m_graph, &pw::Graph::nodeRemoved, this, &Mixer::onNodeRemoved);
     QObject::connect(&m_graph, &pw::Graph::streamRouted, this, &Mixer::onStreamRouted);
+    QObject::connect(&m_graph, &pw::Graph::defaultDevicesChanged, this, [this](const QString &sink, const QString &source) {
+        if (sink == m_defaultSink && source == m_defaultSource) return;
+        m_defaultSink = sink; m_defaultSource = source; Q_EMIT defaultDevicesChanged();
+    });
     QObject::connect(&m_graph, &pw::Graph::connected, this, [this] {
         m_connected = true; m_reconnectMs = 500; Q_EMIT connectedChanged();
         QTimer::singleShot(400, this, [this] { reconcile(); });   // registry replay first, then fill the gaps
@@ -58,6 +62,7 @@ bool Mixer::loadLayout() {
     Layout l;
     const bool ok = !m_layoutPath.isEmpty() && l.load(m_layoutPath);
     if (ok) m_layout = l;
+    m_firstRun = !ok;   // UX-3: nothing on disk → the starter layout is in use and the wizard is worth showing
     // The layout IS the list of channels and mixes — publish them now, not when PipeWire happens to confirm their
     // nodes. Before this, `channel list` right after the bus name came up could miss channels whose null-sink had
     // not been replayed yet (ctest15/16, and the hotplug test on 2026-09-16: "no channel 'hot'" after a restart).
@@ -965,6 +970,59 @@ QString Mixer::addMix(const QString &displayName, QString *error) {
     saveLayout(); reconcile();
     return slug;
 }
+// ---- UX-3 first run -----------------------------------------------------------------------------------------
+QJsonObject Mixer::firstRunPlan() const {
+    QJsonObject o;
+    o.insert(QStringLiteral("firstRun"), m_firstRun);
+    o.insert(QStringLiteral("defaultSink"), m_defaultSink); o.insert(QStringLiteral("defaultSource"), m_defaultSource);
+    o.insert(QStringLiteral("sinkKnown"), m_devices.contains(m_defaultSink)); o.insert(QStringLiteral("sourceKnown"), m_devices.contains(m_defaultSource));
+    o.insert(QStringLiteral("sinkDescription"), m_devices.value(m_defaultSink).description); o.insert(QStringLiteral("sourceDescription"), m_devices.value(m_defaultSource).description);
+    QJsonArray apps;
+    for (const auto &a : m_apps) {
+        if (!a.running) continue;
+        const QString role = a.mediaRole.toLower();
+        const QString target = a.channels.isEmpty() ? (role == QLatin1String("communication") ? QStringLiteral("voice") : role == QLatin1String("music") ? QStringLiteral("system") : QStringLiteral("game")) : a.channels.first();
+        apps.append(QJsonObject{{QStringLiteral("id"), int(a.id)}, {QStringLiteral("name"), a.name}, {QStringLiteral("role"), a.mediaRole}, {QStringLiteral("channel"), target}, {QStringLiteral("assigned"), !a.channels.isEmpty()}});
+    }
+    o.insert(QStringLiteral("apps"), apps);
+    o.insert(QStringLiteral("monitorMix"), m_layout.mix(QStringLiteral("monitor")) != nullptr);
+    o.insert(QStringLiteral("voiceChannel"), m_layout.channel(QStringLiteral("voice")) != nullptr);
+    return o;
+}
+
+QJsonObject Mixer::firstRunApply(QString *error) {
+    const QJsonObject plan = firstRunPlan();
+    if (m_defaultSink.isEmpty() || !m_devices.contains(m_defaultSink)) { if (error) *error = QStringLiteral("no default output device known — is WirePlumber running?"); return {}; }
+    QJsonObject done;
+    // 1. the Monitor mix plays on what the desktop plays on, and that is what I hear
+    if (m_layout.mix(QStringLiteral("monitor"))) {
+        if (mixOutputs(QStringLiteral("monitor")).isEmpty()) { setMixOutputs(QStringLiteral("monitor"), {deviceRef(m_defaultSink)}); done.insert(QStringLiteral("monitorOutput"), m_defaultSink); }
+        if (m_layout.listeningDevice.isEmpty()) { setListeningDevice(m_defaultSink); done.insert(QStringLiteral("listeningDevice"), m_defaultSink); }
+    }
+    // 2. the microphone feeds Voice — as one mono port if the source has several (a mic is one capsule)
+    if (m_layout.channel(QStringLiteral("voice")) && !m_defaultSource.isEmpty() && m_devices.contains(m_defaultSource) && !hasAnyInputFor(QStringLiteral("voice"))) {
+        // the ports PipeWire actually exposes, not the node's declared layout (a null-sink source declared [FL FR]
+        // showed only capture_FR — the declared list would have produced an input the daemon then refuses)
+        QStringList ports; for (const QString &p : devicePorts(m_defaultSource)) ports << p.section(QLatin1Char('|'), 0, 0);
+        ports.removeAll(QString());
+        const QString ref = ports.size() > 1 ? m_defaultSource + QLatin1Char(':') + ports.first() : m_defaultSource;
+        if (!addChannelInput(QStringLiteral("voice"), ref).isEmpty()) done.insert(QStringLiteral("voiceInput"), ref);
+        else if (!ports.isEmpty() && !addChannelInput(QStringLiteral("voice"), m_defaultSource).isEmpty()) done.insert(QStringLiteral("voiceInput"), m_defaultSource);
+    }
+    // 3. every running app that has no channel yet gets one by role
+    QJsonArray assigned;
+    for (const auto &av : plan.value(QStringLiteral("apps")).toArray()) {
+        const QJsonObject a = av.toObject();
+        if (a.value(QStringLiteral("assigned")).toBool()) continue;
+        const QString ch = a.value(QStringLiteral("channel")).toString();
+        if (!m_layout.channel(ch)) continue;
+        if (assignApp(uint32_t(a.value(QStringLiteral("id")).toInt()), {ch}, false)) assigned.append(QJsonObject{{QStringLiteral("name"), a.value(QStringLiteral("name"))}, {QStringLiteral("channel"), ch}});
+    }
+    done.insert(QStringLiteral("apps"), assigned);
+    m_firstRun = false; saveLayout();
+    return done;
+}
+
 QString Mixer::duplicateMix(const QString &from, const QString &displayName, QString *error) {
     const LayoutMix *srcPtr = m_layout.mix(from);
     if (!srcPtr) { if (error) *error = QStringLiteral("no mix '%1'").arg(from); return {}; }

@@ -56,6 +56,12 @@ Kirigami.ApplicationWindow {
                 onTriggered: { root.pageStack.clear(); root.pageStack.push(patchBayPage) }
             },
             Kirigami.Action { separator: true },
+            Kirigami.Action {   // UX-3
+                objectName: "firstRunAction"
+                text: i18n("Set up defaults…")
+                icon.name: "tools-wizard"
+                onTriggered: { firstRunDialog.done = null; firstRunDialog.open() }
+            },
             Kirigami.Action {   // CH-11
                 objectName: "hiddenDevicesAction"
                 text: i18np("Hidden device… (%1)", "Hidden devices… (%1)", Mixer.hiddenDevices.length)
@@ -197,7 +203,7 @@ Kirigami.ApplicationWindow {
 
     // Meters cost CPU in the daemon (ADR 0006): only while the window is actually shown.
     onVisibleChanged: Mixer.metersEnabled = visible
-    Component.onCompleted: Mixer.metersEnabled = visible
+    Component.onCompleted: { Mixer.metersEnabled = visible; if (Mixer.firstRun && Mixer.connected) firstRunDialog.open() }
 
     AddDialog { id: addDialog }
     // ADR 0009 / DV-18: pick a port subset of a multichannel device as a mix output (or a channel input)
@@ -238,6 +244,20 @@ Kirigami.ApplicationWindow {
         }
     }
     Shortcut { sequences: [StandardKey.Undo]; enabled: Mixer.undoDescription.length > 0; onActivated: Mixer.undo() }
+
+    // UX-3: first run — opens once when the daemon reports no layout on disk (and can be reopened from the menu)
+    FirstRunDialog { id: firstRunDialog }
+    Connections {
+        target: Mixer
+        function onFirstRunChanged() { if (Mixer.firstRun && Mixer.connected) firstRunDialog.open() }
+        function onConnectedChanged() { if (Mixer.firstRun && Mixer.connected) firstRunDialog.open() }
+    }
+    function gestureFirstRun(what) {
+        if (what === "open") { firstRunDialog.open(); return "" }
+        if (what === "apply") { firstRunDialog.open(); firstRunDialog.refresh(); const r = Mixer.firstRunApply(); if (Object.keys(r).length > 0 || Mixer.lastError === "") firstRunDialog.done = r; return Mixer.lastError }
+        if (what === "skip") { Mixer.dismissFirstRun(); firstRunDialog.close(); return "" }
+        return "<unknown " + what + ">"
+    }
 
     // CH-11: bring hidden devices back
     Kirigami.PromptDialog {

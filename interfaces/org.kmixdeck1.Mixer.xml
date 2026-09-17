@@ -45,6 +45,14 @@
          layout.json holds, plus "levels"). Import: replaces the layout with the document, rebuilds the graph, applies
          the levels; rejects anything that is not a kmixdeck export and leaves the running config untouched then. -->
     <method name="Export"><arg name="json" type="s" direction="out"/></method>
+    <!-- UX-3 first run: Plan describes (default sink/source, running apps and where they would go), Apply does it:
+         Monitor mix -> default sink, listening device = default sink, Voice <- default source, unassigned running
+         apps -> Game/System/Voice by media.role. Frontends show the plan and call Apply; no logic in the wizard. -->
+    <method name="FirstRunPlan"><arg name="json" type="s" direction="out"/></method>
+    <method name="FirstRunApply"><arg name="json" type="s" direction="out"/></method>
+    <property name="FirstRun" type="b" access="read"/>
+    <property name="DefaultSink" type="s" access="read"/>
+    <property name="DefaultSource" type="s" access="read"/>
     <method name="Import"><arg name="json" type="s" direction="in"/></method>
     <!-- UX-12 solo audition: pass a channel/mix path to hold exactly that entity on the main output,
          "/" to stop and restore the previous state. Hold semantics = the frontend calls this on
