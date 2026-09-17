@@ -73,6 +73,7 @@ class ChannelObject : public ExportedObject {
     Q_PROPERTY(QString Slug READ slug CONSTANT)
     Q_PROPERTY(QString Name READ name WRITE setName)
     Q_PROPERTY(QString Icon READ icon WRITE setIcon)
+    Q_PROPERTY(QString Color READ color WRITE setColor)   // MX-5: "#rrggbb" or "" = theme
     Q_PROPERTY(double Trim READ trim WRITE setTrim)
     Q_PROPERTY(double Pan READ pan WRITE setPan)     // DV-22: −1..+1
     Q_PROPERTY(bool Muted READ muted WRITE setMuted)
@@ -88,6 +89,7 @@ public:
     QString slug() const { return m_slug; }
     QString name() const; void setName(const QString &);
     QString icon() const; void setIcon(const QString &i);
+    QString color() const; void setColor(const QString &c);
     double trim() const; void setTrim(double);
     double pan() const; void setPan(double);
     bool muted() const; void setMuted(bool);
@@ -116,6 +118,7 @@ class MixObject : public ExportedObject {
     Q_PROPERTY(QString Slug READ slug CONSTANT)
     Q_PROPERTY(QString Name READ name WRITE setName)
     Q_PROPERTY(QString Icon READ icon WRITE setIcon)
+    Q_PROPERTY(QString Color READ color WRITE setColor)   // MX-5: "#rrggbb" or "" = theme
     Q_PROPERTY(QString OutputDevice READ outputDevice WRITE setOutputDevice)
     Q_PROPERTY(QStringList Outputs READ outputs)                       // MX-9: all hardware outputs, node.name each
     Q_PROPERTY(QStringList OutputDescriptions READ outputDescriptions) // parallel to Outputs: last seen node.description (DV-9: name an unplugged device)
@@ -133,6 +136,7 @@ public:
     QString slug() const { return m_slug; }
     QString name() const; void setName(const QString &);
     QString icon() const; void setIcon(const QString &i);
+    QString color() const; void setColor(const QString &c);
     QString outputDevice() const; void setOutputDevice(const QString &);
     QString captureSource() const;
     QString nodeName() const { return Names::mixNode(m_slug); }

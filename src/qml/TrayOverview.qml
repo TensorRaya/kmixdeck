@@ -63,6 +63,7 @@ Kirigami.AbstractApplicationWindow {
                     objectName: "trayMix/" + modelData.slug
                     RowLayout {
                         Layout.fillWidth: true
+                        Rectangle { objectName: "trayMixColor/" + modelData.slug; visible: modelData.color.length > 0; color: modelData.color.length > 0 ? modelData.color : "transparent"; Layout.preferredWidth: Kirigami.Units.smallSpacing; Layout.fillHeight: true; radius: width / 2 }   // MX-5
                         Kirigami.Icon { objectName: "trayMixIcon/" + modelData.slug; source: modelData.icon; Layout.preferredWidth: Kirigami.Units.iconSizes.small; Layout.preferredHeight: width; opacity: modelData.present ? 1 : 0.4 }
                         QQC2.Label { text: modelData.name; Layout.preferredWidth: pop.nameWidth; elide: Text.ElideRight; color: modelData.muted ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor }
                         QQC2.Slider {
@@ -102,6 +103,7 @@ Kirigami.AbstractApplicationWindow {
                     objectName: "trayChannel/" + modelData.slug
                     RowLayout {
                         Layout.fillWidth: true
+                        Rectangle { objectName: "trayChannelColor/" + modelData.slug; visible: modelData.color.length > 0; color: modelData.color.length > 0 ? modelData.color : "transparent"; Layout.preferredWidth: Kirigami.Units.smallSpacing; Layout.fillHeight: true; radius: width / 2 }   // MX-5
                         Kirigami.Icon { source: modelData.icon; Layout.preferredWidth: Kirigami.Units.iconSizes.small; Layout.preferredHeight: width; opacity: modelData.inputPresent ? 1 : 0.4 }
                         QQC2.Label { text: modelData.name; Layout.preferredWidth: pop.nameWidth; elide: Text.ElideRight; color: modelData.muted ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor }
                         QQC2.Slider {   // CH-7 trim — same column and width as the mix masters so the grid stays one grid

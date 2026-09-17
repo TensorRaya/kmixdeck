@@ -34,6 +34,7 @@ QQC2.Control {
             header.outputPresent = Mixer.mixOutputPresent(slug)
             header.masterValue = Mixer.mixVolume(slug)
             header.masterMuted = Mixer.mixMuted(slug)
+            header.colorCode = Mixer.mixColor(slug)
             header.outputs = Mixer.mixOutputs(slug)
             header.fallbackOutput = Mixer.mixFallbackOutput(slug)
             header.hasFx = Mixer.fxEnabled("mix", slug)
@@ -42,10 +43,19 @@ QQC2.Control {
     }
 
     // header card: darker than the panel, red tint while muted (MX-10); the mix meter is the card's bottom edge
+    property string colorCode: Mixer.mixColor(header.mix)   // MX-5
     background: Rectangle {
         objectName: "mixHeaderBg/" + header.mix     // MX-10 probe
         radius: Kirigami.Units.smallSpacing * 1.5
         color: header.masterMuted ? Kirigami.Theme.negativeBackgroundColor : Qt.darker(Kirigami.Theme.alternateBackgroundColor, 1.25)
+        Rectangle {   // MX-5 colour stripe along the left edge — the card stays theme-coloured, the code is the accent
+            objectName: "mixColorStripe/" + header.mix
+            visible: header.colorCode.length > 0
+            color: header.colorCode.length > 0 ? header.colorCode : "transparent"
+            width: Kirigami.Units.smallSpacing
+            anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+            radius: parent.radius
+        }
         LevelMeter {
             id: mixMeter
             horizontal: true
@@ -183,6 +193,7 @@ QQC2.Control {
         id: mixCtxMenu
         QQC2.MenuItem { text: i18n("Rename…"); icon.name: "edit-rename"; onTriggered: applicationWindow().renameDialogOpen("mix", header.mix) }
         QQC2.MenuItem { text: i18n("Icon…"); icon.name: "preferences-desktop-icons"; onTriggered: applicationWindow().iconDialogOpen("mix", header.mix) }
+        ColorMenu { id: mixColorMenu; kind: "mix"; slug: header.mix }   // MX-5
         QQC2.MenuItem {   // UX-9
             readonly property int idx: Mixer.mixSlugs.indexOf(header.mix)
             text: i18n("Move left"); icon.name: "go-previous"; enabled: idx > 0

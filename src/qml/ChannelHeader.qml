@@ -17,6 +17,7 @@ Item {
     property bool muted: Mixer.channelMuted(channel)
     property bool hasFx: Mixer.fxEnabled("channel", channel)
     property string iconName: Mixer.channelIcon(channel)
+    property string colorCode: Mixer.channelColor(channel)   // MX-5
     readonly property bool compact: width < Kirigami.Units.gridUnit * 21   // only the FX button folds into ⋮; listen stays
     property bool dropActive: false           // UX-11: a drag hovers this row
 
@@ -29,6 +30,7 @@ Item {
             header.muted = Mixer.channelMuted(slug)
             header.hasFx = Mixer.fxEnabled("channel", slug)
             header.iconName = Mixer.channelIcon(slug)
+            header.colorCode = Mixer.channelColor(slug)
         }
     }
 
@@ -48,6 +50,14 @@ Item {
         onEntered: header.dropActive = true
         onExited: header.dropActive = false
         onDropped: (drop) => { Mixer.assignApp(drop.text, [header.channel], true); header.dropActive = false }
+    }
+    Rectangle {   // MX-5 colour stripe along the row's left edge
+        objectName: "channelColorStripe/" + header.channel
+        visible: header.colorCode.length > 0
+        color: header.colorCode.length > 0 ? header.colorCode : "transparent"
+        width: Kirigami.Units.smallSpacing
+        anchors { left: parent.left; top: parent.top; bottom: parent.bottom; topMargin: Kirigami.Units.smallSpacing; bottomMargin: Kirigami.Units.smallSpacing }
+        radius: width / 2
     }
     // faint highlight while a drag hovers the row
     Rectangle {
@@ -228,6 +238,7 @@ Item {
         id: ctxMenu
         QQC2.MenuItem { text: i18n("Rename…"); icon.name: "edit-rename"; onTriggered: applicationWindow().renameDialogOpen("channel", header.channel) }
         QQC2.MenuItem { text: i18n("Icon…"); icon.name: "preferences-desktop-icons"; onTriggered: applicationWindow().iconDialogOpen("channel", header.channel) }
+        ColorMenu { kind: "channel"; slug: header.channel }   // MX-5
         QQC2.MenuItem {   // UX-9
             readonly property int idx: Mixer.channelSlugs.indexOf(header.channel)
             text: i18n("Move up"); icon.name: "go-up"; enabled: idx > 0

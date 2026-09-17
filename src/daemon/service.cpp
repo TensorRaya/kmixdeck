@@ -61,6 +61,8 @@ QString ChannelObject::name() const { return m_mixer->channelName(m_slug); }
 void ChannelObject::setName(const QString &n) { m_mixer->renameChannel(m_slug, n); }
 QString ChannelObject::icon() const { return m_mixer->channelIcon(m_slug); }
 void ChannelObject::setIcon(const QString &i) { m_mixer->setChannelIcon(m_slug, i); }
+QString ChannelObject::color() const { return m_mixer->channelColor(m_slug); }
+void ChannelObject::setColor(const QString &c) { if (!m_mixer->setChannelColor(m_slug, c)) rejectProperty(QStringLiteral("Color"), QStringLiteral("colour must be #rrggbb or empty")); }
 double ChannelObject::trim() const { return m_mixer->channelTrim(m_slug); }
 double ChannelObject::pan() const { return m_mixer->channelPan(m_slug); }
 void ChannelObject::setPan(double v) { if (v < -1 || v > 1) { rejectProperty(QStringLiteral("Pan"), QStringLiteral("must be -1..1")); return; } m_mixer->setChannelPan(m_slug, v); }
@@ -92,7 +94,7 @@ bool ChannelObject::SetFxControl(const QString &control, double value) {
     return true;
 }
 QVariantMap ChannelObject::properties() const {
-    return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), icon()},
+    return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), icon()}, {QStringLiteral("Color"), color()},
             {QStringLiteral("Trim"), trim()}, {QStringLiteral("Pan"), pan()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("NodeName"), nodeName()},
             {QStringLiteral("InputDevice"), inputDevice()}, {QStringLiteral("InputPresent"), inputPresent()},
             {QStringLiteral("Inputs"), inputs()}, {QStringLiteral("FxChain"), fxChainJson()}};
@@ -104,6 +106,8 @@ QString MixObject::name() const { return m_mixer->mixName(m_slug); }
 void MixObject::setName(const QString &n) { m_mixer->renameMix(m_slug, n); }
 QString MixObject::icon() const { return m_mixer->mixIcon(m_slug); }
 void MixObject::setIcon(const QString &i) { m_mixer->setMixIcon(m_slug, i); }
+QString MixObject::color() const { return m_mixer->mixColor(m_slug); }
+void MixObject::setColor(const QString &c) { if (!m_mixer->setMixColor(m_slug, c)) rejectProperty(QStringLiteral("Color"), QStringLiteral("colour must be #rrggbb or empty")); }
 QString MixObject::outputDevice() const { return m_mixer->mixOutputDevice(m_slug); }
 void MixObject::setOutputDevice(const QString &d) {
     if (!d.isEmpty()) if (const QString err = m_mixer->validateDeviceRef(m_mixer->deviceRef(d), false); !err.isEmpty()) { rejectProperty(QStringLiteral("OutputDevice"), err); return; }
@@ -155,7 +159,7 @@ void MixObject::RemoveOutput(const QString &n) {
 }
 void MixObject::ToggleMute() { m_mixer->setMixMuted(m_slug, !m_mixer->mixMuted(m_slug)); }
 QVariantMap MixObject::properties() const {
-    return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), icon()},
+    return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), icon()}, {QStringLiteral("Color"), color()},
             {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("Outputs"), outputs()}, {QStringLiteral("OutputDescriptions"), outputDescriptions()}, {QStringLiteral("FallbackOutput"), fallbackOutput()},
             {QStringLiteral("CaptureSource"), captureSource()}, {QStringLiteral("NodeName"), nodeName()},
             {QStringLiteral("OutputPresent"), outputPresent()}, {QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()},

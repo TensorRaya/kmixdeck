@@ -366,6 +366,15 @@ void Mixer::renameChannel(const QString &slug, const QString &name) { for (auto 
 void Mixer::renameMix(const QString &slug, const QString &name)     { for (auto &m : m_mixes) if (m.slug == slug) { m.name = name; Q_EMIT mixChanged(slug); } if (auto *l = m_layout.mix(slug)) { l->name = name; saveLayout(); } }
 void Mixer::setChannelIcon(const QString &slug, const QString &icon) { for (auto &c : m_channels) if (c.slug == slug) { c.icon = icon; Q_EMIT channelChanged(slug); } if (auto *l = m_layout.channel(slug)) { l->icon = icon; saveLayout(); } }
 void Mixer::setMixIcon(const QString &slug, const QString &icon)     { for (auto &m : m_mixes) if (m.slug == slug) { m.icon = icon; Q_EMIT mixChanged(slug); } if (auto *l = m_layout.mix(slug)) { l->icon = icon; saveLayout(); } }
+static bool validColor(const QString &c) { static const QRegularExpression re(QStringLiteral("^#[0-9a-fA-F]{6}$")); return c.isEmpty() || re.match(c).hasMatch(); }
+bool Mixer::setChannelColor(const QString &slug, const QString &color) {
+    auto *l = m_layout.channel(slug); if (!l || !validColor(color)) return false;
+    l->color = color.toLower(); saveLayout(); Q_EMIT channelChanged(slug); return true;
+}
+bool Mixer::setMixColor(const QString &slug, const QString &color) {
+    auto *l = m_layout.mix(slug); if (!l || !validColor(color)) return false;
+    l->color = color.toLower(); saveLayout(); Q_EMIT mixChanged(slug); return true;
+}
 QString Mixer::channelIcon(const QString &slug) const { for (const auto &c : m_channels) if (c.slug == slug) return c.icon; return {}; }
 QString Mixer::mixIcon(const QString &slug) const     { for (const auto &m : m_mixes) if (m.slug == slug) return m.icon; return {}; }
 

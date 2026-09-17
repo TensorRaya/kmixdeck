@@ -57,11 +57,12 @@ struct DeviceRef {
     }
 };
 
-struct LayoutChannel { QString slug, name, icon; fx::Chain fx; double pan = 0.0; };   // DV-22: −1 = left … 0 = centre … +1 = right
+struct LayoutChannel { QString slug, name, icon; fx::Chain fx; double pan = 0.0; QString color; };   // MX-5: color = "#rrggbb" or empty (theme)   // DV-22: −1 = left … 0 = centre … +1 = right
 /// A physical input feeding a channel (mic, capture card, BT headset mic) — ADR 0007 D2.
 struct LayoutInput   { QString slug, name; DeviceRef device; QString channel; };
 struct LayoutMix     {
     QString slug, name, icon;
+    QString color;                // MX-5: "#rrggbb" or empty = theme default
     QVector<DeviceRef> outputs;   // MX-9: several hardware outputs at once
     DeviceRef fallbackOutput;     // DV-15: used while outputs[0] is absent; empty node = none
     fx::Chain fx;                 // FX-6: same chain model on the output side

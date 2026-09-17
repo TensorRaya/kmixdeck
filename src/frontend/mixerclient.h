@@ -174,6 +174,13 @@ public:
     Q_INVOKABLE QString channelIcon(const QString &slug) const { const auto i = m_channels.value(slug).value(QStringLiteral("Icon")).toString(); return i.isEmpty() ? QStringLiteral("audio-card") : i; }
     Q_INVOKABLE QString channelIconRaw(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Icon")).toString(); }   // "" = default
     Q_INVOKABLE QString mixIconRaw(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("Icon")).toString(); }
+    // MX-5 colour code, "" = theme. One accessor for every frontend (window header, tray row, patchbay card).
+    Q_INVOKABLE QString channelColor(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Color")).toString(); }
+    Q_INVOKABLE QString mixColor(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("Color")).toString(); }
+    Q_INVOKABLE void setChannelColor(const QString &slug, const QString &color);
+    Q_INVOKABLE void setMixColor(const QString &slug, const QString &color);
+    // the palette every colour picker offers — same eight everywhere
+    Q_INVOKABLE QStringList colorPalette() const { return {QStringLiteral("#e93d58"), QStringLiteral("#ef973c"), QStringLiteral("#e8cb2d"), QStringLiteral("#3dd425"), QStringLiteral("#00d3b8"), QStringLiteral("#3daee9"), QStringLiteral("#b875dc"), QStringLiteral("#926ee4")}; }
     Q_INVOKABLE QString mixIcon(const QString &slug) const { const auto i = m_mixes.value(slug).value(QStringLiteral("Icon")).toString(); return i.isEmpty() ? QStringLiteral("audio-headphones") : i; }
     /// True when a non-empty, enabled effect chain sits on that channel/mix (ADR 0008) — for the highlighted FX button.
     Q_INVOKABLE bool    fxEnabled(const QString &kind, const QString &slug) const;

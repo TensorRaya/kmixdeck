@@ -163,11 +163,11 @@ int main(int argc, char *argv[]) {
         "  undo                                    restore the last removed channel or mix (CH-9)\n"
         "  export [file]                           backup: layout + every fader/trim/mute as JSON (CT-7)\n"
         "  import <file>                           restore such a backup (replaces the running layout)\n"
-        "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
+        "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
         "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
         "  channel inputs <slug>                 all wires into a channel (ADR 0009 B1); input-add|input-remove <slug> <ref>\n"
         "  channel pan <slug> [<-1..1>|L|C|R]    stereo position of the channel (DV-22)\n"
-        "  mix     list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|move <slug> <index|up|down|top|bottom>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
+        "  mix     list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
         "  mix     outputs <slug>                 list all hardware outputs of a mix (MX-9)\n"
         "  mix     output-add|output-remove <slug> <node.name>\n"
         "  mix     fallback <slug> <node.name|none>   played while every output is unplugged (DV-15)\n"
@@ -315,6 +315,14 @@ int main(int argc, char *argv[]) {
         if (sub == "remove") { QDBusMessage r = mixer.call(ch ? "RemoveChannel" : "RemoveMix", QVariant::fromValue(QDBusObjectPath(pathOf(a[2])))); return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok; }
         if (sub == "rename") { if (!need(4)) return Usage; return setProp(pathOf(a[2]), iface, "Name", a[3], &e) ? Ok : fail(Rejected, e); }
         if (sub == "icon") { if (!need(4)) return Usage; return setProp(pathOf(a[2]), iface, "Icon", a[3] == "none" ? QString() : a[3], &e) ? Ok : fail(Rejected, e); }   // UX-8
+        if (sub == "color" || sub == "colour") {   // MX-5: channel|mix color <slug> <#rrggbb|none>
+            if (!need(4)) return Usage;
+            const QString want = a[3] == "none" ? QString() : a[3];
+            if (!setProp(pathOf(a[2]), iface, "Color", want, &e)) return fail(Rejected, e);
+            const QString got = unwrap(QDBusInterface(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus()).property("Color")).toString();
+            if (got != want.toLower()) return fail(Rejected, "colour must be #rrggbb or none");
+            return Ok;
+        }
         if (sub == "move") {   // UX-9: channel|mix move <slug> <index|up|down|top|bottom>
             if (!need(4)) return Usage;
             const QStringList order = unwrap(o.mixer.value(ch ? "ChannelOrder" : "MixOrder")).toStringList();

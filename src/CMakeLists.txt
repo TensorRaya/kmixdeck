@@ -55,6 +55,7 @@ ecm_add_qml_module(kmixdeck-kde
         qml/Fader.qml
         qml/LevelMeter.qml
         qml/TrayOverview.qml
+        qml/ColorMenu.qml
 )
 target_include_directories(kmixdeck-kde PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/.. frontend)
 target_link_libraries(kmixdeck-kde PRIVATE

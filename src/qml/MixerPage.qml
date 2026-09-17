@@ -26,7 +26,7 @@ Kirigami.ScrollablePage {
     readonly property int rowH: Kirigami.Units.gridUnit * 3.6          // ≈ 66 px @ 18 px gridUnit, like Wave Link
     readonly property int gap: Kirigami.Units.smallSpacing * 2
     readonly property int channelColW: Kirigami.Units.gridUnit * 19
-    readonly property int mixColW: Kirigami.Units.gridUnit * 12
+    readonly property int mixColW: Kirigami.Units.gridUnit * 17     // MX-5: the header (icon, name, mute, master, listen, ⋮) needs this much; below it the master handle left the card (2026-09-17 render)
 
     Kirigami.PlaceholderMessage {
         anchors.centerIn: parent
@@ -140,7 +140,26 @@ Kirigami.ScrollablePage {
                 }
         }
 
-        // ---- one panel per mix: header card on top, then one crosspoint per channel, rows aligned 1:1
+        // ---- one panel per mix: header card on top, then one crosspoint per channel, rows aligned 1:1.
+        // MX-5 ≥ 8 mixes: the channel panel stays put, the mix strip scrolls horizontally (console layout) — every
+        // fader keeps its full size, nothing is squeezed or hidden; the strip fills the width when there is room.
+        QQC2.ScrollView {
+            id: mixStrip
+            objectName: "mixStrip"
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignTop
+            // each mix panel is mixColW wide at least; with room to spare they share the width (fillWidth)
+            readonly property int needed: page.mixes.length * (page.mixColW + page.gap) - page.gap
+            Layout.preferredHeight: mixRow.implicitHeight + (needed > availableWidth ? QQC2.ScrollBar.horizontal.height : 0)
+            contentWidth: Math.max(availableWidth, needed)
+            contentHeight: mixRow.implicitHeight
+            QQC2.ScrollBar.vertical.policy: QQC2.ScrollBar.AlwaysOff
+            QQC2.ScrollBar.horizontal.policy: needed > availableWidth ? QQC2.ScrollBar.AlwaysOn : QQC2.ScrollBar.AlwaysOff
+            clip: true
+            RowLayout {
+                id: mixRow
+                width: Math.max(mixStrip.availableWidth, mixStrip.needed)
+                spacing: page.gap
         Repeater {
             model: page.mixes
             delegate: Panel {
@@ -148,6 +167,7 @@ Kirigami.ScrollablePage {
                 required property string modelData
                 Layout.fillWidth: true
                 Layout.minimumWidth: page.mixColW
+                Layout.preferredWidth: page.mixColW
                 Layout.alignment: Qt.AlignTop
                     MixHeader {
                         Layout.fillWidth: true
@@ -169,6 +189,8 @@ Kirigami.ScrollablePage {
                     }
             }
         }
+            }   // mixRow
+        }   // mixStrip
 
         // ---- add-mix, square, aligned with the header row
         QQC2.ToolButton {

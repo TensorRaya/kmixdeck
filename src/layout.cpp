@@ -69,6 +69,7 @@ QJsonObject Layout::toJson() const {
     QJsonArray ch, mx, in;
     for (const auto &c : channels) {
         QJsonObject o{{QStringLiteral("slug"), c.slug}, {QStringLiteral("name"), c.name}, {QStringLiteral("icon"), c.icon}};
+        if (!c.color.isEmpty()) o.insert(QStringLiteral("color"), c.color);
         if (c.pan != 0.0) o.insert(QStringLiteral("pan"), c.pan);   // DV-22
         if (!c.fx.effects.isEmpty() || !c.fx.enabled) o.insert(QStringLiteral("fx"), QJsonObject{{QStringLiteral("enabled"), c.fx.enabled}, {QStringLiteral("chain"), fxChainArray(c.fx)}});
         ch.append(o);
@@ -76,6 +77,7 @@ QJsonObject Layout::toJson() const {
     for (const auto &m : mixes) {
         QJsonArray outs; for (const auto &d : m.outputs) outs.append(d.toJson());
         QJsonObject o{{QStringLiteral("slug"), m.slug}, {QStringLiteral("name"), m.name}, {QStringLiteral("icon"), m.icon}, {QStringLiteral("outputs"), outs}};
+        if (!m.color.isEmpty()) o.insert(QStringLiteral("color"), m.color);
         if (!outs.isEmpty()) o.insert(QStringLiteral("outputDevice"), m.outputs.first().node);   // v1-compatible view: first entry
         if (!m.fallbackOutput.node.isEmpty()) o.insert(QStringLiteral("fallbackOutput"), m.fallbackOutput.toJson());
         if (!m.fx.effects.isEmpty() || !m.fx.enabled) o.insert(QStringLiteral("fx"), QJsonObject{{QStringLiteral("enabled"), m.fx.enabled}, {QStringLiteral("chain"), fxChainArray(m.fx)}});
@@ -98,10 +100,11 @@ Layout Layout::fromJson(const QJsonObject &o) {
     l.listeningDevice = o.value(QStringLiteral("listeningDevice")).toString();
     for (const auto &v : o.value(QStringLiteral("knownApps")).toArray()) l.knownApps << v.toString();
     for (const auto &v : o.value(QStringLiteral("links")).toArray()) { const auto j = v.toObject(); l.links.push_back({j.value(QStringLiteral("channel")).toString(), j.value(QStringLiteral("mix")).toString(), j.value(QStringLiteral("follows")).toString()}); }
-    for (const auto &v : o.value(QStringLiteral("channels")).toArray()) { const auto c = v.toObject(); l.channels.push_back({c.value(QStringLiteral("slug")).toString(), c.value(QStringLiteral("name")).toString(), c.value(QStringLiteral("icon")).toString(), readFx(c), std::clamp(c.value(QStringLiteral("pan")).toDouble(0.0), -1.0, 1.0)}); }
+    for (const auto &v : o.value(QStringLiteral("channels")).toArray()) { const auto c = v.toObject(); l.channels.push_back({c.value(QStringLiteral("slug")).toString(), c.value(QStringLiteral("name")).toString(), c.value(QStringLiteral("icon")).toString(), readFx(c), std::clamp(c.value(QStringLiteral("pan")).toDouble(0.0), -1.0, 1.0), c.value(QStringLiteral("color")).toString()}); }
     for (const auto &v : o.value(QStringLiteral("mixes")).toArray()) {
         const auto m = v.toObject(); LayoutMix lm;
         lm.slug = m.value(QStringLiteral("slug")).toString(); lm.name = m.value(QStringLiteral("name")).toString(); lm.icon = m.value(QStringLiteral("icon")).toString();
+        lm.color = m.value(QStringLiteral("color")).toString();
         for (const auto &d : m.value(QStringLiteral("outputs")).toArray()) lm.outputs.push_back(DeviceRef::fromJson(d.toObject()));
         // version 1 files had a single "outputDevice" string
         const QString legacy = m.value(QStringLiteral("outputDevice")).toString();

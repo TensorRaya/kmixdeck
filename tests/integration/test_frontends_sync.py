@@ -49,6 +49,14 @@ CORE = [
      lambda s: s.cli("listen").stdout.strip().split()[0] == "fake.ears",
      ["listeningDeviceBox.displayText"], lambda g: "My Ears" in g["listeningDeviceBox.displayText"],
      ["trayListening.text"], lambda g: "My Ears" in g["trayListening.text"]),
+    ("MX-5 colour code",
+     lambda s: (s.cli("mix", "color", "stream", "#3daee9"), s.cli("channel", "color", "voice", "#E93D58")),
+     lambda s: next(m for m in s.cli("status", json_out=True)["mixes"] if m["Slug"] == "stream")["Color"] == "#3daee9"
+               and next(c for c in s.cli("status", json_out=True)["channels"] if c["Slug"] == "voice")["Color"] == "#e93d58",
+     ["mixColorStripe/stream.color", "mixColorStripe/stream.visible", "channelColorStripe/voice.color"],
+     lambda g: g["mixColorStripe/stream.color"] == "#3daee9" and g["mixColorStripe/stream.visible"] == "true" and g["channelColorStripe/voice.color"] == "#e93d58",
+     ["trayMixColor/stream.color", "trayChannelColor/voice.color", "trayMixColor/monitor.visible"],
+     lambda g: g["trayMixColor/stream.color"] == "#3daee9" and g["trayChannelColor/voice.color"] == "#e93d58" and g["trayMixColor/monitor.visible"] == "false"),
     ("DV-11 unplugged device is visible as such",
      lambda s: (make_fake_sink(s, "fake.gone", "Gone Sink"), time.sleep(0.5), s.cli("mix", "output-add", "monitor", "fake.gone"), time.sleep(0.5),
                 __import__("test_service_cli").destroy_node(s, "fake.gone"), time.sleep(0.8)),
@@ -220,3 +228,33 @@ def test_ct7_export_import_round_trip_cli_and_window_and_garbage_is_refused(stac
         p.kill(); p.wait()
         stack.cli("channel", "remove", "music", check=False); stack.cli("mix", "mute", "monitor", "off", check=False)
         stack.cli("mix", "output-remove", "stream", "fake.spk", check=False); stack.cli("channel", "trim", "voice", "0dB", check=False); stack.cli("listen", "none", check=False)
+
+
+def test_mx5_eight_mixes_all_faders_visible_and_bad_colour_refused(stack):
+    """MX-5: eight mixes at once — every master fader and every cell fader of a channel is on screen (no hidden
+    faders); the window's own scroll area may scroll, but each fader item has a size and is on the page. A colour
+    that is not #rrggbb is refused by the daemon, the previous colour stays."""
+    slugs = []
+    try:
+        for i in range(6):   # + monitor + stream = 8
+            stack.cli("mix", "add", f"Mix {i + 3}")
+        mixes = [m["Slug"] for m in stack.cli("status", json_out=True)["mixes"]]
+        slugs = [m for m in mixes if m not in ("monitor", "stream")]
+        stack.pw.wait_nodes([f"kmixdeck.mix.{sl}" for sl in slugs]); time.sleep(0.8)
+        assert len(mixes) >= 8, mixes
+        probes = []
+        for m in mixes: probes += [f"mixFader/{m}.visible", f"mixFader/{m}.width", f"cell/voice/{m}.visible", f"cell/voice/{m}.height"]
+        g = kde(stack, *sum((["--probe", p] for p in probes), []))
+        hidden = [p for p in probes if p.endswith(".visible") and g.get(p) != "true"]
+        flat = [p for p in probes if (p.endswith(".width") or p.endswith(".height")) and float(g.get(p, "0") or 0) < 8]
+        assert not hidden and not flat, f"hidden: {hidden} flat: {flat}"
+        # bad colour
+        stack.cli("mix", "color", "stream", "#3daee9")
+        r = stack.cli("mix", "color", "stream", "blue", check=False); assert r.returncode != 0, r
+        r = stack.cli("mix", "color", "stream", "#12345", check=False); assert r.returncode != 0, r
+        assert next(m for m in stack.cli("status", json_out=True)["mixes"] if m["Slug"] == "stream")["Color"] == "#3daee9"
+        stack.cli("mix", "color", "stream", "none")
+        assert next(m for m in stack.cli("status", json_out=True)["mixes"] if m["Slug"] == "stream")["Color"] == ""
+    finally:
+        for sl in slugs: stack.cli("mix", "remove", sl, check=False)
+        stack.cli("mix", "color", "stream", "none", check=False); stack.cli("channel", "color", "voice", "none", check=False)

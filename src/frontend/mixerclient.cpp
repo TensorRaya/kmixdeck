@@ -463,11 +463,11 @@ QVariantMap MixerClient::patchbay() const {
 QVariantMap MixerClient::overview() const {
     QVariantList mixes, channels;
     for (const QString &m : m_mixOrder)
-        mixes.push_back(QVariantMap{{QStringLiteral("slug"), m}, {QStringLiteral("name"), mixName(m)}, {QStringLiteral("icon"), mixIcon(m)},
+        mixes.push_back(QVariantMap{{QStringLiteral("slug"), m}, {QStringLiteral("name"), mixName(m)}, {QStringLiteral("icon"), mixIcon(m)}, {QStringLiteral("color"), mixColor(m)},
                                     {QStringLiteral("volume"), mixVolume(m)}, {QStringLiteral("muted"), mixMuted(m)}, {QStringLiteral("present"), mixOutputPresent(m)},
                                     {QStringLiteral("outputs"), mixOutputs(m)}, {QStringLiteral("meterKey"), QStringLiteral("mix/") + m}});
     for (const QString &c : m_channelOrder)
-        channels.push_back(QVariantMap{{QStringLiteral("slug"), c}, {QStringLiteral("name"), channelName(c)}, {QStringLiteral("icon"), channelIcon(c)},
+        channels.push_back(QVariantMap{{QStringLiteral("slug"), c}, {QStringLiteral("name"), channelName(c)}, {QStringLiteral("icon"), channelIcon(c)}, {QStringLiteral("color"), channelColor(c)},
                                        {QStringLiteral("muted"), channelMuted(c)}, {QStringLiteral("trim"), channelTrim(c)}, {QStringLiteral("inputPresent"), m_channels.value(c).value(QStringLiteral("InputPresent"), true).toBool()},
                                        {QStringLiteral("inputs"), channelInputs(c)}, {QStringLiteral("meterKey"), QStringLiteral("channel/") + c}});
     int running = 0; for (const auto &a : m_apps) if (a.value(QStringLiteral("Running"), true).toBool()) ++running;
@@ -555,6 +555,8 @@ void MixerClient::toggleMixMute(const QString &slug) {
     QDBusInterface(BUS, QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QDBusConnection::sessionBus()).asyncCall(QStringLiteral("ToggleMute"));
 }
 void MixerClient::setChannelIcon(const QString &slug, const QString &icon) { setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Icon"), icon); }
+void MixerClient::setChannelColor(const QString &slug, const QString &color) { setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Color"), color); }
+void MixerClient::setMixColor(const QString &slug, const QString &color) { setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Color"), color); }
 void MixerClient::setMixIcon(const QString &slug, const QString &icon) { setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Icon"), icon); }
 void MixerClient::moveChannel(const QString &slug, int index) { callReportingErrors(QStringLiteral("MoveChannel"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/channel/%2").arg(ROOT, slug))), index); }
 void MixerClient::moveMix(const QString &slug, int index) { callReportingErrors(QStringLiteral("MoveMix"), QVariant::fromValue(QDBusObjectPath(QStringLiteral("%1/mix/%2").arg(ROOT, slug))), index); }

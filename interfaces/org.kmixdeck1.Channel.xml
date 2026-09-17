@@ -7,6 +7,8 @@
     <property name="Name" type="s" access="readwrite"/>
     <!-- UX-8: freedesktop icon name (theme lookup) or an absolute file path; persisted in the layout. "" = frontend default -->
     <property name="Icon" type="s" access="readwrite"/>
+    <!-- MX-5 colour code: "#rrggbb", or "" for the theme default. Rejected otherwise. -->
+    <property name="Color" type="s" access="readwrite"/>
     <!-- channel-wide trim before all mixes, linear 0..1 (CH-7); NOT the per-mix fader -->
     <property name="Trim" type="d" access="readwrite"/>
     <!-- DV-22: stereo position of the channel, -1 (left) … 0 (centre) … +1 (right); constant-power law on the channel sink; persisted -->

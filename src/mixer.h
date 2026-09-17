@@ -88,6 +88,11 @@ public:
     Q_INVOKABLE bool   moveChannel(const QString &slug, int index);               // UX-9: reorder, index clamped
     Q_INVOKABLE bool   moveMix(const QString &slug, int index);
     QString channelIcon(const QString &slug) const;
+    // MX-5 colour code: "#rrggbb" or "" (theme). Validated here so every frontend sees the same value.
+    Q_INVOKABLE bool   setChannelColor(const QString &slug, const QString &color);
+    Q_INVOKABLE bool   setMixColor(const QString &slug, const QString &color);
+    QString channelColor(const QString &slug) const { const auto *c = m_layout.channel(slug); return c ? c->color : QString(); }
+    QString mixColor(const QString &slug) const     { const auto *m = m_layout.mix(slug);     return m ? m->color : QString(); }
     QString mixIcon(const QString &slug) const;
     Q_INVOKABLE QString mixCaptureSource(const QString &slug) const;
     // ---- effects per channel/mix (ADR 0008) --------------------------------------------------------
