@@ -86,6 +86,7 @@ Kirigami.ScrollablePage {
             QQC2.Label { text: i18nc("@label", "on"); opacity: 0.7 }
             QQC2.ComboBox {
                 id: devBox
+                objectName: "listeningDeviceBox"   // AR-12 probe: displayText names the listening device
                 Layout.preferredWidth: Kirigami.Units.gridUnit * 16
                 model: Mixer.outputDevices
                 textRole: "description"

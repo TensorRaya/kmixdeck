@@ -5,6 +5,8 @@
 // (KStatusNotifierItem), notifications (KNotification). Everything here is a thin client of MixerClient —
 // the daemon does the work, this maps KDE events onto D-Bus calls (CT-1, CT-4).
 #include <QObject>
+#include <QTimer>
+#include <QPoint>
 #include <QHash>
 #include <QPointer>
 #include <QAction>
@@ -21,6 +23,7 @@ class KdeIntegration : public QObject {
 public:
     explicit KdeIntegration(MixerClient *client, QObject *parent = nullptr);
     void setMainWindow(QQuickWindow *w);
+    void trayClick(const QPoint &pos);   // simulates a tray click (tests: one = popover, two within the interval = window)
 
 private:
     void rebuildActions();              // one global-shortcut action per channel + per mix, kept in sync with the layout
@@ -36,7 +39,8 @@ private:
     QHash<QString, QAction *> m_mixUpActions, m_mixDownActions;   // mix slug → master ±3 dB (CT-1 "volume up/down")
     QAction *m_listenNextAction = nullptr;            // UX-2/CT-1 "switch monitoring mix": the headphones follow
     void listenNext();
-    QString listeningMix() const;                     // the mix currently on the user's headphones (first with a present output), "" if none
+    QString listeningMix() const;
+    QTimer m_clickTimer; QPoint m_clickPos;                     // the mix currently on the user's headphones (first with a present output), "" if none
     QPointer<QQuickWindow> m_window;
 };
 

@@ -160,6 +160,10 @@ void MixerClient::onNameOwnerChanged(const QString &name, const QString &, const
 void MixerClient::setChannelPan(const QString &slug, double pan) {   // DV-22
     setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Pan"), std::clamp(pan, -1.0, 1.0));
 }
+void MixerClient::setChannelTrim(const QString &slug, double cubic) {   // CH-7
+    const double c = std::clamp(cubic, 0.0, 1.0);
+    setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Trim"), c * c * c);
+}
 void MixerClient::setProperty(const QString &path, const QString &iface, const QString &name, const QVariant &v) {
     QDBusInterface props(BUS, path, QStringLiteral("org.freedesktop.DBus.Properties"), QDBusConnection::sessionBus());
     props.asyncCall(QStringLiteral("Set"), iface, name, QVariant::fromValue(QDBusVariant(v)));
@@ -454,6 +458,22 @@ QVariantMap MixerClient::patchbay() const {
     return {{QStringLiteral("cards"), cards}, {QStringLiteral("wires"), wires},
             {QStringLiteral("monitors"), QVariantMap{{QStringLiteral("device"), m_listeningDevice}, {QStringLiteral("description"), m_listeningDevice.isEmpty() ? QString() : deviceDescription(m_listeningDevice)},
                                                      {QStringLiteral("present"), m_outputDevices.contains(m_listeningDevice)}, {QStringLiteral("mixes"), monitors}}}};
+}
+QVariantMap MixerClient::overview() const {
+    QVariantList mixes, channels;
+    for (const QString &m : m_mixOrder)
+        mixes.push_back(QVariantMap{{QStringLiteral("slug"), m}, {QStringLiteral("name"), mixName(m)}, {QStringLiteral("icon"), mixIcon(m)},
+                                    {QStringLiteral("volume"), mixVolume(m)}, {QStringLiteral("muted"), mixMuted(m)}, {QStringLiteral("present"), mixOutputPresent(m)},
+                                    {QStringLiteral("outputs"), mixOutputs(m)}, {QStringLiteral("meterKey"), QStringLiteral("mix/") + m}});
+    for (const QString &c : m_channelOrder)
+        channels.push_back(QVariantMap{{QStringLiteral("slug"), c}, {QStringLiteral("name"), channelName(c)}, {QStringLiteral("icon"), channelIcon(c)},
+                                       {QStringLiteral("muted"), channelMuted(c)}, {QStringLiteral("trim"), channelTrim(c)}, {QStringLiteral("inputPresent"), m_channels.value(c).value(QStringLiteral("InputPresent"), true).toBool()},
+                                       {QStringLiteral("inputs"), channelInputs(c)}, {QStringLiteral("meterKey"), QStringLiteral("channel/") + c}});
+    int running = 0; for (const auto &a : m_apps) if (a.value(QStringLiteral("Running"), true).toBool()) ++running;
+    return {{QStringLiteral("serviceAvailable"), serviceAvailable()}, {QStringLiteral("connected"), connected()},
+            {QStringLiteral("listeningDevice"), m_listeningDevice}, {QStringLiteral("listeningDescription"), m_listeningDevice.isEmpty() ? QString() : deviceDescription(m_listeningDevice)},
+            {QStringLiteral("listeningPresent"), m_outputDevices.contains(m_listeningDevice)},
+            {QStringLiteral("mixes"), mixes}, {QStringLiteral("channels"), channels}, {QStringLiteral("runningApps"), running}};
 }
 QVariantList MixerClient::inputDevices() const {
     QVariantList out;

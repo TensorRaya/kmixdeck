@@ -6,6 +6,8 @@
 #include <KNotification>
 #include <QQuickWindow>
 #include <QGuiApplication>
+#include <QStyleHints>
+#include <QTimer>
 #include <QProcess>
 #include <algorithm>
 #include <cmath>
@@ -30,7 +32,24 @@ KdeIntegration::KdeIntegration(MixerClient *client, QObject *parent)
     rebuildActions(); rebuildTrayMenu(); updateTrayIcon();
 }
 
-void KdeIntegration::setMainWindow(QQuickWindow *w) { m_window = w; m_tray->setAssociatedWindow(w); }
+// UX-17 (ADR 0010 D4): left click → the overview popover, double-click → the full window. KStatusNotifierItem has no
+// double-click signal: activateRequested fires per click, so a click starts a short timer; a second click inside the
+// double-click interval cancels it and raises the window instead. The associated-window toggle is disabled on purpose
+// — it would hide the window on the very click that should open the popover.
+void KdeIntegration::setMainWindow(QQuickWindow *w) {
+    m_window = w;
+    m_tray->setAssociatedWindow(nullptr);
+    m_clickTimer.setSingleShot(true); m_clickTimer.setInterval(QGuiApplication::styleHints()->mouseDoubleClickInterval());
+    connect(&m_clickTimer, &QTimer::timeout, this, [this] { if (m_window) QMetaObject::invokeMethod(m_window, "showTrayOverview", Q_ARG(QVariant, m_clickPos.x()), Q_ARG(QVariant, m_clickPos.y())); });
+    connect(m_tray, &KStatusNotifierItem::activateRequested, this, [this](bool, const QPoint &pos) {
+        if (m_clickTimer.isActive()) { m_clickTimer.stop(); if (m_window) QMetaObject::invokeMethod(m_window, "raiseFromTray"); return; }
+        m_clickPos = pos; m_clickTimer.start();
+    });
+    connect(m_tray, &KStatusNotifierItem::secondaryActivateRequested, this, [this](const QPoint &) {   // middle click: mute/unmute the listening mix
+        const QString cur = listeningMix(); if (!cur.isEmpty()) m_client->toggleMixMute(cur);
+    });
+}
+void KdeIntegration::trayClick(const QPoint &pos) { m_tray->activate(pos); }   // test hook (--gesture trayclick)
 
 void KdeIntegration::rebuildActions() {
     // Global shortcuts are identified by (component = app name, action objectName). Keep names stable per slug so

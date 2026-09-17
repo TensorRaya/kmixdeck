@@ -1,5 +1,13 @@
 # Contributing to kmixdeck
 
+## The two rules (Michel, 2026-09-17 — ADR 0010)
+
+1. **Backend and API first.** A feature exists when it is on the D-Bus tree with its interface XML and the CLI can
+   drive it. UI work starts after that, never instead of it.
+2. **A feature is done only when every frontend we develop has it** — CLI, the KDE window, the tray (and the web UI
+   once it ships), according to the row's tier (core / full / api). One view model in `MixerClient`, N renderers;
+   `tools/sot-audit.py` refuses a ✅ that lacks a proof per frontend.
+
 ## The golden rule (AR-10)
 
 A feature or setting is **done** when one integration test drives it through its whole life cycle:

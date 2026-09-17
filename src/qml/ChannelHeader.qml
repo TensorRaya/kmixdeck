@@ -109,6 +109,7 @@ Item {
 
         // mute + the channel's own fader (what all mixes receive)
         QQC2.ToolButton {
+            objectName: "channelMute/" + header.channel   // AR-12 probe
             icon.name: header.muted ? "audio-volume-muted" : "audio-volume-high"
             icon.color: header.muted ? Kirigami.Theme.negativeTextColor : undefined
             checkable: true; checked: header.muted
@@ -116,6 +117,33 @@ Item {
             text: header.muted ? i18n("Unmute channel") : i18n("Mute channel")
             onToggled: { checked = Qt.binding(() => header.muted); Mixer.toggleChannelMute(header.channel) }
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+        }
+        // CH-7 trim: input gain before every mix, same dial idiom as pan; double-click = unity. Shown for every channel
+        // (apps have a trim too — it is the channel's gain, not the device's).
+        ColumnLayout {
+            spacing: 0
+            Layout.alignment: Qt.AlignVCenter
+            QQC2.Dial {
+                id: trimDial
+                objectName: "channelTrim/" + header.channel
+                from: 0; to: 1; stepSize: 0.01
+                value: Mixer.channelTrim(header.channel)
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 1.6
+                Layout.preferredHeight: width
+                wheelEnabled: true
+                onMoved: Mixer.setChannelTrim(header.channel, value)
+                Connections { target: Mixer; function onChannelChanged(slug) { if (slug === header.channel && !trimDial.pressed) trimDial.value = Mixer.channelTrim(header.channel) } }
+                TapHandler { onDoubleTapped: Mixer.setChannelTrim(header.channel, 1) }
+                QQC2.ToolTip.text: i18n("Trim — double-click for 0 dB")
+                QQC2.ToolTip.visible: hovered
+            }
+            QQC2.Label {
+                objectName: "channelTrimText/" + header.channel
+                Layout.alignment: Qt.AlignHCenter
+                font: Kirigami.Theme.smallFont
+                opacity: 0.8
+                text: trimDial.value <= 0 ? "-∞" : (20 * Math.log10(Math.pow(trimDial.value, 3))).toFixed(0) + " dB"
+            }
         }
         // DV-22 pan: a small dial, double-click = centre. Text below reads L40 / C / R100 so the position is
         // legible without reading the needle. Only meaningful with an input; hidden for apps-only channels.

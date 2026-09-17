@@ -66,6 +66,7 @@ int main(int argc, char *argv[])
     auto *client = new kmixdeck::frontend::MixerClient(&app);
     MixerForeign::setInstance(client);
     kmixdeck::frontend::KdeIntegration kde(client);
+    if (headless) client->setHideToTray(false);
 
     QQmlApplicationEngine engine;
     // --self-test also fails on QML *warnings* (ReferenceError, TypeError, unresolved bindings): the 2026-09-16
@@ -100,7 +101,7 @@ int main(int argc, char *argv[])
             else if (openG == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
             else if (openG == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
         });
-        QTimer::singleShot(1200, &app, [win, gestures] {
+        QTimer::singleShot(1200, &app, [win, gestures, &kde] {
             for (const QString &g : gestures) {
                 const QString op = g.section(QLatin1Char(':'), 0, 0), rest = g.section(QLatin1Char(':'), 1);
                 const QStringList a = rest.split(QLatin1Char('|'));
@@ -108,6 +109,9 @@ int main(int argc, char *argv[])
                 if (op == QLatin1String("connect") && a.size() == 4) QMetaObject::invokeMethod(win, "gestureConnect", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]), Q_ARG(QVariant, a[3]));
                 else if (op == QLatin1String("remove") && a.size() == 3) QMetaObject::invokeMethod(win, "gestureRemove", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]));
                 else if (op == QLatin1String("drop") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureDrop", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
+                else if (op == QLatin1String("trayclick") && a.size() == 1) {   // UX-17: N clicks on the tray icon within the double-click interval
+                    const int n = a[0].toInt(); for (int i = 0; i < n; ++i) kde.trayClick(QPoint(100, 100)); ret = QString();
+                }
                 else if (op == QLatin1String("wirepopup") && a.size() == 3) QMetaObject::invokeMethod(win, "gestureWirePopup", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]));
                 else if (op == QLatin1String("monitors") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureMonitors", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 fprintf(stdout, "gesture %s -> %s\n", qPrintable(g), qPrintable(ret.toString().isEmpty() ? QStringLiteral("ok") : ret.toString()));
@@ -144,6 +148,16 @@ int main(int argc, char *argv[])
             else if (open == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
             else if (open == QLatin1String("apps")) QMetaObject::invokeMethod(win, "showApps");
             else if (open == QLatin1String("channel-ports")) QMetaObject::invokeMethod(win, "addDialogOpenPorts");
+            else if (open == QLatin1String("tray")) {   // UX-17: render the tray popover itself
+                QMetaObject::invokeMethod(win, "showTrayOverview", Q_ARG(QVariant, 400), Q_ARG(QVariant, 700));
+                QTimer::singleShot(900, win, [win, file] {
+                    QVariant v = win->property("trayOverview"); auto *pop = v.value<QQuickWindow *>();
+                    const bool ok = pop && pop->grabWindow().save(file);
+                    qInfo("%s %s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file));
+                    QCoreApplication::exit(ok ? 0 : 1);
+                });
+                return;
+            }
             else if (!open.isEmpty()) QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, open));
             QTimer::singleShot(900, win, [win, file] {
                 const bool ok = win->grabWindow().save(file);

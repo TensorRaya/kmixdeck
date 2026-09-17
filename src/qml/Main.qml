@@ -68,6 +68,13 @@ Kirigami.ApplicationWindow {
     // DV-24: Loopback-style patchbay — cards with jacks, wires as S-curves
     PatchBayPage { id: patchBayPage; visible: false }
     pageStack.initialPage: mixerPage
+    // UX-17: the tray popover is part of this window's QML so it shares the Mixer singleton (ADR 0010 D2).
+    property alias trayOverview: trayOverviewWin
+    TrayOverview { id: trayOverviewWin; visible: false }
+    function showTrayOverview(x, y) { trayOverviewWin.x = x - trayOverviewWin.width / 2; trayOverviewWin.y = y - trayOverviewWin.height - 8; trayOverviewWin.show(); trayOverviewWin.requestActivate() }
+    function raiseFromTray() { root.show(); root.raise(); root.requestActivate() }
+    // closing the window keeps the tray alive (the daemon keeps mixing anyway; the icon is the way back)
+    onClosing: (close) => { if (Mixer.hideToTray) { close.accepted = false; root.hide() } }
     function showMixer(channel, mix) { root.pageStack.clear(); root.pageStack.push(mixerPage); if (channel) mixerPage.highlightCell(channel, mix) }
     function showApps() { root.pageStack.clear(); root.pageStack.push(appsPage) }
     function showRouting() { root.pageStack.clear(); root.pageStack.push(routingPage) }
@@ -100,6 +107,7 @@ Kirigami.ApplicationWindow {
             return null
         }
         const it = find(root.contentItem) || find(root.pageStack) || findOverlay() || (patchBayPage && patchBayPage.probeItem ? patchBayPage.probeItem(name) : null)
+                 || (name === "trayOverview" ? trayOverviewWin : find(trayOverviewWin.contentItem))
         if (!it) return "<not found: " + name + ">"
         const v = it[prop]
         return v === undefined ? "<no property " + prop + ">" : String(v)

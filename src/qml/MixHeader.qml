@@ -67,10 +67,12 @@ QQC2.Control {
             radius: Kirigami.Units.smallSpacing
             color: Qt.darker(Kirigami.Theme.alternateBackgroundColor, 1.6)
             Kirigami.Icon {
+                objectName: "mixIcon/" + header.mix   // AR-12 probe: neutral colour = device unplugged (DV-9)
+                property bool devicePresent: header.outputPresent || header.outputs.length === 0
                 anchors.centerIn: parent
                 width: parent.width * 0.6; height: width
                 source: header.iconName
-                color: header.outputPresent || header.outputs.length === 0 ? Kirigami.Theme.textColor : Kirigami.Theme.neutralTextColor
+                color: devicePresent ? Kirigami.Theme.textColor : Kirigami.Theme.neutralTextColor
             }
             TapHandler { onTapped: applicationWindow().iconDialogOpen("mix", header.mix) }
             QQC2.ToolTip.text: i18n("Change icon")
@@ -131,6 +133,7 @@ QQC2.Control {
         }
         Fader {
             id: master
+            objectName: "mixFader/" + header.mix   // AR-12 probe
             Layout.fillWidth: true
             Layout.preferredWidth: Kirigami.Units.gridUnit * 4
             Layout.minimumWidth: Kirigami.Units.gridUnit * 2.5

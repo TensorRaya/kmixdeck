@@ -27,6 +27,7 @@ class MixerClient : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool connected READ connected NOTIFY connectedChanged)          // PipeWire state as reported by the service
     Q_PROPERTY(bool serviceAvailable READ serviceAvailable NOTIFY serviceAvailableChanged)
+    Q_PROPERTY(bool hideToTray READ hideToTray WRITE setHideToTray NOTIFY hideToTrayChanged)   // UX-17: window close → hide, tray stays; false in headless/test modes
     Q_PROPERTY(QStringList channelSlugs READ channelSlugs NOTIFY layoutChanged)
     Q_PROPERTY(QStringList mixSlugs READ mixSlugs NOTIFY layoutChanged)
     Q_PROPERTY(QVariantList apps READ apps NOTIFY appsChanged)   // [{path,name,binary,mediaName,channel}] for QML
@@ -48,6 +49,8 @@ public:
     Q_INVOKABLE QString channelName(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Name")).toString(); }
     QString defaultChannel() const { return m_defaultChannel; }
     QString listeningDevice() const { return m_listeningDevice; }
+    bool hideToTray() const { return m_hideToTray; }
+    void setHideToTray(bool v) { if (m_hideToTray == v) return; m_hideToTray = v; Q_EMIT hideToTrayChanged(); }
     void setListeningDevice(const QString &node);
     QString undoDescription() const { return m_undoDescription; }
     Q_INVOKABLE void undo();
@@ -70,6 +73,8 @@ public:
     Q_INVOKABLE bool   channelMuted(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Muted")).toBool(); }
     Q_INVOKABLE double channelPan(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Pan")).toDouble(); }   // DV-22
     Q_INVOKABLE void   setChannelPan(const QString &slug, double pan);
+    Q_INVOKABLE double channelTrim(const QString &slug) const { return std::cbrt(m_channels.value(slug).value(QStringLiteral("Trim"), 1.0).toDouble()); }   // CH-7, cubic like every fader
+    Q_INVOKABLE void   setChannelTrim(const QString &slug, double cubic);
     Q_INVOKABLE void   addChannel(const QString &name);
     /// CH-13: one picker for every source. kind = "app" (ref = app object path), "device" (ref = input node.name)
     /// or "" (apps only). Creates the channel, then assigns the app / sets the input on the new channel.
@@ -102,6 +107,9 @@ public:
     //     wires: [{from: {card, pos}, to: {card, pos}, ref, muted, meterKey, kind: input|cell|output}] }
     // Card ids: "app/<path>", "dev/<node>", "ch/<slug>", "mix/<slug>", "out/<mix>/<ref>". Row pos for stereo cards is "L"/"R".
     Q_INVOKABLE QVariantMap patchbay() const;
+    /// ADR 0010 D4 — the ONE definition of "the essentials": what the tray popover shows and what the window's
+    /// header summarises. Anything the tray needs goes in here, never into the tray directly.
+    Q_INVOKABLE QVariantMap overview() const;
     Q_INVOKABLE QStringList channelInputs(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Inputs")).toStringList(); }
     // Patchbay gestures. connectJacks: drag from one jack to another → the right daemon call, or "" on success /
     // a human reason when the pair makes no sense (same column, device→device …). removeWire: click on a wire.
@@ -171,6 +179,7 @@ Q_SIGNALS:
     void errorOccurred(const QString &message);
     void defaultChannelChanged();
     void listeningDeviceChanged();
+    void hideToTrayChanged();
     void undoChanged();   // a refused request (duplicate name, unknown device, …)
     void connectedChanged();
     void serviceAvailableChanged();
@@ -203,6 +212,7 @@ private:
     bool m_available = false, m_pwConnected = false;
     QMap<QString, QVariantMap> m_channels, m_mixes, m_cells;   // keyed by slug / slug / "ch/mix"
     QVariantList m_fxTypes; QVariantMap m_fxPresets;           // FX catalog + presets, read once
+    bool m_hideToTray = true;
     QMap<QString, QVariantMap> m_apps;                          // keyed by object path
     QMap<QString, QString> m_outputDevices, m_inputDevices;    // node.name → description (both directions)
     PortMap m_devicePorts;                                     // node.name → ["POS|port.name|alias", …] (ADR 0009)
