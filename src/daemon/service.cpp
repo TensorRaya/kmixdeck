@@ -69,6 +69,9 @@ void ChannelObject::setMuted(bool m) { m_mixer->setChannelMuted(m_slug, m); }
 void ChannelObject::ToggleMute() { m_mixer->setChannelMuted(m_slug, !m_mixer->channelMuted(m_slug)); }
 QString ChannelObject::inputDevice() const { return m_mixer->channelInputDevice(m_slug); }
 QStringList ChannelObject::inputs() const { return m_mixer->channelInputs(m_slug); }
+bool ChannelObject::SetWireTrim(const QString &ref, double trim, bool muted) { return m_mixer->setChannelWireTrim(m_slug, ref, trim, muted); }
+double ChannelObject::WireTrim(const QString &ref) { double t; bool m; return m_mixer->channelWireTrim(m_slug, ref, &t, &m) ? t : -1.0; }
+bool ChannelObject::WireMuted(const QString &ref) { double t; bool m; return m_mixer->channelWireTrim(m_slug, ref, &t, &m) && m; }
 bool ChannelObject::AddInput(const QString &ref) { return !m_mixer->addChannelInput(m_slug, ref).isEmpty(); }
 bool ChannelObject::RemoveInput(const QString &ref) { return m_mixer->removeChannelInput(m_slug, ref); }
 void ChannelObject::setInputDevice(const QString &d) {
@@ -138,6 +141,9 @@ void MixObject::AddOutput(const QString &n) {
     outs.push_back(ref);
     m_mixer->setMixOutputs(m_slug, outs);
 }
+bool MixObject::SetWireTrim(const QString &ref, double trim, bool muted) { return m_mixer->setMixWireTrim(m_slug, ref, trim, muted); }
+double MixObject::WireTrim(const QString &ref) { double t; bool m; return m_mixer->mixWireTrim(m_slug, ref, &t, &m) ? t : -1.0; }
+bool MixObject::WireMuted(const QString &ref) { double t; bool m; return m_mixer->mixWireTrim(m_slug, ref, &t, &m) && m; }
 void MixObject::RemoveOutput(const QString &n) {
     auto outs = m_mixer->mixOutputs(m_slug);
     const int before = outs.size();

@@ -305,6 +305,29 @@ QString MixerClient::connectJacks(const QString &fromCard0, const QString &fromP
     if (fromCard.startsWith(QLatin1String("dev/")) && toCard.startsWith(QLatin1String("mix/"))) return i18n("A device feeds a channel, not a mix — add a channel first.");
     return i18n("These two cannot be wired.");
 }
+static QDBusInterface wireOwner(const QVariantMap &w) {
+    const QString kind = w.value(QStringLiteral("kind")).toString();
+    return kind == QLatin1String("input")
+        ? QDBusInterface(BUS, QStringLiteral("%1/channel/%2").arg(ROOT, w.value(QStringLiteral("channel")).toString()), QStringLiteral("org.kmixdeck1.Channel"), QDBusConnection::sessionBus())
+        : QDBusInterface(BUS, QStringLiteral("%1/mix/%2").arg(ROOT, w.value(QStringLiteral("mix")).toString()), QStringLiteral("org.kmixdeck1.Mix"), QDBusConnection::sessionBus());
+}
+double MixerClient::wireTrim(const QVariantMap &w) const {
+    const QString kind = w.value(QStringLiteral("kind")).toString();
+    if (kind != QLatin1String("input") && kind != QLatin1String("output")) return 1.0;
+    QDBusReply<double> r = wireOwner(w).call(QStringLiteral("WireTrim"), w.value(QStringLiteral("ref")).toString());
+    return (r.isValid() && r.value() >= 0) ? r.value() : 1.0;
+}
+bool MixerClient::wireMuted(const QVariantMap &w) const {
+    const QString kind = w.value(QStringLiteral("kind")).toString();
+    if (kind != QLatin1String("input") && kind != QLatin1String("output")) return false;
+    QDBusReply<bool> r = wireOwner(w).call(QStringLiteral("WireMuted"), w.value(QStringLiteral("ref")).toString());
+    return r.isValid() && r.value();
+}
+void MixerClient::setWireTrim(const QVariantMap &w, double trim, bool muted) {
+    const QString kind = w.value(QStringLiteral("kind")).toString();
+    if (kind != QLatin1String("input") && kind != QLatin1String("output")) return;
+    wireOwner(w).asyncCall(QStringLiteral("SetWireTrim"), w.value(QStringLiteral("ref")).toString(), trim, muted);
+}
 void MixerClient::removeWire(const QVariantMap &w) {
     const QString kind = w.value(QStringLiteral("kind")).toString();
     if (kind == QLatin1String("input")) removeChannelInput(w.value(QStringLiteral("channel")).toString(), w.value(QStringLiteral("ref")).toString());

@@ -182,7 +182,9 @@ def test_ux11_drop_on_channel_row_assigns_the_app(stack):
             now = next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")["Channels"]
             if "voice" in now: break
             time.sleep(0.1)
-        assert "voice" in now and all(c in now for c in before), f"drop must ADD voice, keep {before}: {now}"
+        if not ("voice" in now and all(c in now for c in before)):
+            from test_service_cli import daemon_log_tail
+            raise AssertionError(f"drop must ADD voice, keep {before}: {now}\n--- daemon log ---\n" + daemon_log_tail(stack, ("assign", "new application", "routed \"FakeGame\"")))
     finally:
         p.kill(); p.wait()
 
@@ -210,3 +212,23 @@ def test_dv27_monitors_column_is_hidden_by_default_and_shows_listening_device_wi
     ui_level = float(got["monitorsVolume/stream.value"]); daemon_lin = 0.5
     assert abs(ui_level ** 3 - daemon_lin) < 0.05, f"slider {ui_level} → linear {ui_level ** 3} ≠ {daemon_lin}"
     stack.cli("mix", "volume", "stream", "1.0"); stack.cli("mix", "output", "stream", "none"); stack.cli("listen", "none", check=False)
+
+
+def test_dv14_wire_popover_shows_trim_and_mute_of_that_wire(stack):
+    """DV-14 in the patchbay: clicking a device wire opens a popover whose slider/dB text/mute reflect THAT wire's trim
+    (set via the CLI), not the channel's fader; the popover offers Remove."""
+    from test_service_cli import make_fake_sink
+    make_fake_sink(stack, "fake.pop", "Pop Sink")
+    stack.cli("mix", "output-add", "stream", "fake.pop")
+    for _ in range(50):
+        if "fake.pop" in stack.cli("mix", "outputs", "stream", json_out=True): break
+        time.sleep(0.1)
+    stack.cli("mix", "wire", "stream", "fake.pop", "trim", "-6dB", "mute", "on")
+    got = kde(stack, "--gesture", "wirepopup:output|stream|fake.pop", "--probe", "wirePopup.visible", "--probe", "wireTrim.value", "--probe", "wireTrimText.text", "--probe", "wireMute.checked", "--probe", "wireRemove.visible", open_page="patchbay")
+    assert got["wirePopup.visible"] == "true", got
+    want = (10 ** (-6 / 20)) ** (1 / 3)
+    assert abs(float(got["wireTrim.value"]) - want) < 0.02, got
+    assert got["wireTrimText.text"].startswith("-6.") or got["wireTrimText.text"].startswith("-5.9"), got
+    assert got["wireMute.checked"] == "true" and got["wireRemove.visible"] == "true", got
+    stack.cli("mix", "wire", "stream", "fake.pop", "trim", "0dB", "mute", "off")
+    stack.cli("mix", "output-remove", "stream", "fake.pop")

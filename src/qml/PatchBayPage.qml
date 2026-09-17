@@ -15,7 +15,15 @@ Kirigami.ScrollablePage {
 
     // the shared view model (AR-9); rebuilt on every daemon change, coalesced so a burst of signals = one rebuild
     property var model: Mixer.patchbay()
-    property bool showMonitors: false          // DV-27: the Monitors column is opt-in, like Loopback's "Show Monitors"
+    property bool showMonitors: false
+    function probeItem(name) {   // probe fallback for items that live in the Overlay (popups)
+        if (name === "wirePopup") return wirePopup
+        const kids = wirePopup.contentItem ? [wirePopup.contentItem] : []
+        function find(item) { if (!item) return null; if (item.objectName === name) return item; for (let i = 0; i < (item.children ? item.children.length : 0); ++i) { const r = find(item.children[i]); if (r) return r } return null }
+        for (const k of kids) { const r = find(k); if (r) return r }
+        return null
+    }
+    function openWirePopup(w) { wirePopup.wire = w; wirePopup.x = 40; wirePopup.y = 40; wirePopup.open(); return "" }          // DV-27: the Monitors column is opt-in, like Loopback's "Show Monitors"
     actions: [
         Kirigami.Action {
             text: page.showMonitors ? i18n("Hide Monitors") : i18n("Show Monitors")
@@ -481,10 +489,60 @@ Kirigami.ScrollablePage {
             cursorShape: layer.hoverWire ? Qt.PointingHandCursor : Qt.ArrowCursor
         }
         QQC2.ToolTip.visible: layer.hoverWire !== null && page.dragFrom.length === 0
-        QQC2.ToolTip.text: layer.hoverWire ? (layer.hoverWire.kind === "cell" ? i18n("Click: mute this send") : i18n("Click: remove this wire")) : ""
+        QQC2.ToolTip.text: layer.hoverWire ? (layer.hoverWire.kind === "cell" ? i18n("Click: mute this send")
+                                             : (layer.hoverWire.kind === "input" || layer.hoverWire.kind === "output") ? i18n("Click: trim, mute or remove this wire")
+                                             : i18n("Click: remove this wire")) : ""
         TapHandler {
             enabled: page.dragFrom.length === 0
-            onTapped: (ev) => { const w = layer.wireAt(ev.position.x, ev.position.y); if (w) Mixer.removeWire(w) }
+            onTapped: (ev) => {
+                const w = layer.wireAt(ev.position.x, ev.position.y); if (!w) return
+                if (w.kind === "input" || w.kind === "output") { wirePopup.wire = w; wirePopup.x = ev.position.x; wirePopup.y = ev.position.y; wirePopup.open() }
+                else Mixer.removeWire(w)
+            }
+        }
+
+    }
+    // DV-14: a device wire carries its own trim and mute — the popover is the only UI for it (the mixer page shows
+    // channels and mixes, not individual wires).
+    QQC2.Popup {
+        id: wirePopup
+        objectName: "wirePopup"
+        property var wire: null
+        padding: Kirigami.Units.largeSpacing
+        modal: false; focus: true
+        closePolicy: QQC2.Popup.CloseOnEscape | QQC2.Popup.CloseOnPressOutside
+        onOpened: { trimSlider.value = Mixer.wireTrim(wire); muteBtn.checked = Mixer.wireMuted(wire) }
+        contentItem: ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+            QQC2.Label { text: wirePopup.wire ? wirePopup.wire.ref : ""; font.weight: Font.DemiBold; elide: Text.ElideMiddle; Layout.maximumWidth: Kirigami.Units.gridUnit * 18 }
+            RowLayout {
+                QQC2.Label { text: i18n("Trim"); opacity: 0.7 }
+                QQC2.Slider {
+                    id: trimSlider
+                    objectName: "wireTrim"
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 12
+                    from: 0; to: 1; stepSize: 0.01
+                    onMoved: Mixer.setWireTrim(wirePopup.wire, value, muteBtn.checked)
+                    TapHandler { onDoubleTapped: { trimSlider.value = 1; Mixer.setWireTrim(wirePopup.wire, 1, muteBtn.checked) } }
+                }
+                QQC2.Label { objectName: "wireTrimText"; text: trimSlider.value <= 0 ? "-∞" : (20 * Math.log10(Math.pow(trimSlider.value, 3))).toFixed(1) + " dB"; Layout.preferredWidth: Kirigami.Units.gridUnit * 4; horizontalAlignment: Text.AlignRight }
+            }
+            RowLayout {
+                QQC2.ToolButton {
+                    id: muteBtn
+                    objectName: "wireMute"
+                    checkable: true
+                    icon.name: checked ? "audio-volume-muted" : "audio-volume-high"
+                    text: checked ? i18n("Muted") : i18n("Mute")
+                    onToggled: Mixer.setWireTrim(wirePopup.wire, trimSlider.value, checked)
+                }
+                Item { Layout.fillWidth: true }
+                QQC2.ToolButton {
+                    objectName: "wireRemove"
+                    icon.name: "edit-delete"; text: i18n("Remove wire")
+                    onClicked: { Mixer.removeWire(wirePopup.wire); wirePopup.close() }
+                }
+            }
         }
     }
 }

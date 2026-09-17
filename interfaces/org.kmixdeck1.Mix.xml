@@ -21,6 +21,22 @@
     <!-- parallel to Outputs: last seen node.description, so a frontend can name an unplugged device (DV-9) -->
     <property name="OutputDescriptions" type="as" access="read"/>
     <method name="AddOutput"><arg name="node_name" type="s" direction="in"/></method>
+    <!-- DV-14: each wire has its own trim (cubic 0..1, 1 = unity) and mute inside kmixdeck, applied to the edge loopback node,
+         never to the hardware device (CT-5). Persisted with the wire; survives unplug/replug and restarts. ref as listed in Outputs. -->
+    <method name="SetWireTrim">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="trim" type="d" direction="in"/>
+      <arg name="muted" type="b" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
+    <method name="WireTrim">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="trim" type="d" direction="out"/>
+    </method>
+    <method name="WireMuted">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="muted" type="b" direction="out"/>
+    </method>
     <method name="RemoveOutput"><arg name="node_name" type="s" direction="in"/></method>
     <!-- DV-15: played to while every entry of Outputs is unplugged. Empty = silence (never the default sink). -->
     <property name="FallbackOutput" type="s" access="readwrite"/>

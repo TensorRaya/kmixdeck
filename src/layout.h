@@ -23,6 +23,10 @@ struct DeviceRef {
     /// ADR 0009 A2: which side of the CHANNEL/MIX this ref is bound to. Empty = both (mono→centre / stereo pair).
     /// "L"/"R" on an input: the port(s) feed only that side. On an output: only that side of the mix goes to the port(s).
     QString side;
+    /// DV-14: the wire's own trim (cubic 0..1, 1 = unity) and mute, applied to kmixdeck's edge loopback node — never to the
+    /// hardware device (Plasma owns that, CT-5). Persisted with the wire; re-applied every time the edge node appears.
+    double trim = 1.0;
+    bool   muted = false;
     bool operator==(const DeviceRef &o) const { return node == o.node && positions == o.positions && side == o.side; }
     QJsonObject toJson() const;
     static DeviceRef fromJson(const QJsonObject &o);

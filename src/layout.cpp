@@ -50,12 +50,16 @@ QJsonObject DeviceRef::toJson() const {
     QJsonObject o{{QStringLiteral("node"), node}, {QStringLiteral("description"), description}};
     if (!positions.isEmpty()) o.insert(QStringLiteral("positions"), QJsonArray::fromStringList(positions));
     if (!side.isEmpty()) o.insert(QStringLiteral("side"), side);
+    if (trim != 1.0) o.insert(QStringLiteral("trim"), trim);
+    if (muted) o.insert(QStringLiteral("muted"), true);
     return o;
 }
 DeviceRef DeviceRef::fromJson(const QJsonObject &o) {
     DeviceRef r; r.node = o.value(QStringLiteral("node")).toString(); r.description = o.value(QStringLiteral("description")).toString();
     for (const auto &v : o.value(QStringLiteral("positions")).toArray()) r.positions << v.toString();
     r.side = o.value(QStringLiteral("side")).toString();
+    r.trim = o.contains(QStringLiteral("trim")) ? o.value(QStringLiteral("trim")).toDouble(1.0) : 1.0;
+    r.muted = o.value(QStringLiteral("muted")).toBool(false);
     return r;
 }
 

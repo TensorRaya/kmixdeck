@@ -133,6 +133,17 @@ public:
     bool setInputDevice(const QString &slug, const DeviceRef &device);
     /// Input trim/mute (DV-14) = channelVolumes on kmixdeck.in.<slug> (playback side).
     double inputVolume(const QString &slug) const;
+    double inputTrimLayout(const QString &slug) const;                    // DV-14: the wire's persisted value (also while unplugged)
+    bool   inputMutedLayout(const QString &slug) const;
+    double mixOutputTrimLayout(const QString &slug, int index) const;
+    bool   mixOutputMutedLayout(const QString &slug, int index) const;
+    void   applyEdgeState(const pw::NodeInfo &n);
+    /// DV-14 by wire ref: input wires of a channel (ref → input slug) and output wires of a mix (ref → index).
+    QString inputSlugForWire(const QString &channel, const QString &ref) const;
+    bool   setChannelWireTrim(const QString &channel, const QString &ref, double trim, bool muted);
+    bool   channelWireTrim(const QString &channel, const QString &ref, double *trim, bool *muted) const;
+    bool   setMixWireTrim(const QString &mix, const QString &ref, double trim, bool muted);
+    bool   mixWireTrim(const QString &mix, const QString &ref, double *trim, bool *muted) const;
     bool   inputMuted(const QString &slug) const;
     void   setInputVolume(const QString &slug, double cubic, bool muted);
     bool   inputPresent(const QString &slug) const;

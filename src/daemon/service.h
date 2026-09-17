@@ -97,6 +97,9 @@ public:
     bool inputPresent() const;
     QString fxChainJson() const;
 public Q_SLOTS:
+    bool SetWireTrim(const QString &ref, double trim, bool muted);   // DV-14, input wire by ref (as in Inputs)
+    double WireTrim(const QString &ref);   // -1 = no such wire
+    bool   WireMuted(const QString &ref);
     void ToggleMute();
     bool AddInput(const QString &ref);              // ADR 0009 B1: one more wire into this channel
     bool RemoveInput(const QString &ref);
@@ -144,6 +147,10 @@ public Q_SLOTS:
     void ToggleMute();
     void AddOutput(const QString &nodeName);
     void RemoveOutput(const QString &nodeName);
+    /// DV-14: trim (cubic 0..1) and mute of ONE output wire, addressed by its ref (as listed in Outputs). Lives on the wire.
+    bool SetWireTrim(const QString &ref, double trim, bool muted);
+    double WireTrim(const QString &ref);   // -1 = no such wire
+    bool   WireMuted(const QString &ref);
     bool SetFx(const QString &chainJson);
     bool SetFxControl(const QString &control, double value);
 private:

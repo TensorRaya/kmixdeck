@@ -107,6 +107,10 @@ public:
     // a human reason when the pair makes no sense (same column, device→device …). removeWire: click on a wire.
     Q_INVOKABLE QString connectJacks(const QString &fromCard, const QString &fromPos, const QString &toCard, const QString &toPos);
     Q_INVOKABLE void removeWire(const QVariantMap &wire);
+    /// DV-14: the wire's own trim (cubic 0..1) and mute; only for kind "input" / "output" (device wires).
+    Q_INVOKABLE double wireTrim(const QVariantMap &wire) const;
+    Q_INVOKABLE bool   wireMuted(const QVariantMap &wire) const;
+    Q_INVOKABLE void   setWireTrim(const QVariantMap &wire, double trim, bool muted);
     Q_INVOKABLE void addChannelInput(const QString &slug, const QString &ref);
     Q_INVOKABLE void removeChannelInput(const QString &slug, const QString &ref);
     bool metersEnabled() const { return m_metersEnabled; }

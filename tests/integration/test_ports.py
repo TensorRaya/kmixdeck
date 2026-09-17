@@ -451,3 +451,70 @@ def test_dv22_pan_moves_a_mono_source_between_the_sides_and_persists(stack):
     finally:
         p.kill(); p.wait()
     stack.cli("channel", "remove", "panner"); stack.cli("devices", "virtual", "remove", "pan_ui24r")
+
+
+def test_dv14_wire_trim_and_mute_live_on_the_wire_not_on_the_device(stack):
+    """DV-14: every wire has its own trim/mute inside kmixdeck. Measured: input wire trim halves what reaches the channel,
+    mute silences it, the fake DEVICE's own volume is never touched (CT-5); the same on an output wire measured at the
+    device's input port; value survives unplug/replug of the device and a daemon restart; refused for an unknown wire."""
+    import os, json
+    dev = "virt.trim.src"; make_device(stack, dev, "Trim Source", "Audio/Source/Virtual")
+    sink = "virt.trim.sink"; make_device(stack, sink, "Trim Sink", "Audio/Sink")
+    stack.cli("channel", "add", "Trimmed")
+    stack.cli("channel", "input-add", "trimmed", f"{dev}:AUX1")
+    stack.pw.wait_node("kmixdeck.in.trimmed")
+    stack.cli("mix", "output-add", "stream", f"{sink}:AUX1,AUX2")
+    for _ in range(50):
+        if sink in stack.cli("mix", "outputs", "stream", json_out=True)[0] if stack.cli("mix", "outputs", "stream", json_out=True) else False: break
+        time.sleep(0.1)
+    for _ in range(80):
+        if stack.pw.node("kmixdeck.out.stream") or stack.pw.node("kmixdeck.out.stream.1"): break
+        time.sleep(0.1)
+    hw_before = (stack.pw.props(dev), stack.pw.props(sink))
+
+    def ch_level(): return stack.pw.level_at_port("kmixdeck.channel.trimmed", "monitor_FL")
+    p = stack.pw.play_into_port(dev, "input_AUX1")
+    try:
+        unity = wait_level(ch_level, lambda v: v > HOT)
+        # -- input wire: trim to 50 % (cubic) → linear 0.125 → -18 dB
+        assert stack.cli("channel", "wire", "trimmed", f"{dev}:AUX1", "trim", "50%").returncode == 0
+        half = wait_level(ch_level, lambda v: v < unity - 12)
+        assert -21 < (half - unity) < -15, f"50 % trim should be ≈ -18 dB, got {half - unity:.1f} dB"
+        shown = stack.cli("channel", "wire", "trimmed", f"{dev}:AUX1", json_out=True)
+        assert abs(shown["trim"] - 0.5) < 0.01 and shown["muted"] is False, shown
+        # -- mute
+        stack.cli("channel", "wire", "trimmed", f"{dev}:AUX1", "mute", "on")
+        wait_level(ch_level, lambda v: v < SILENT)
+        stack.cli("channel", "wire", "trimmed", f"{dev}:AUX1", "mute", "off")
+        wait_level(ch_level, lambda v: v > SILENT + 10)
+        # -- output wire, measured at the sink's input side (monitor of the sink)
+        def sink_level(): return stack.pw.level_at_port(sink, "monitor_AUX1")
+        loud = wait_level(sink_level, lambda v: v > HOT - 30)
+        assert stack.cli("mix", "wire", "stream", f"{sink}:AUX1,AUX2", "trim", "-12dB").returncode == 0
+        quiet = wait_level(sink_level, lambda v: v < loud - 8)
+        assert -15 < (quiet - loud) < -9, f"-12 dB output trim, got {quiet - loud:.1f} dB"
+        # -- the hardware nodes themselves are untouched (CT-5)
+        assert (stack.pw.props(dev), stack.pw.props(sink)) == hw_before, "device volume/mute was touched"
+        # -- unknown wire is refused
+        assert stack.cli("channel", "wire", "trimmed", f"{dev}:AUX3", "trim", "0.5", check=False).returncode != 0
+    finally:
+        p.kill(); p.wait()
+
+    # -- unplug + replug: the trim is on the wire, so the new edge node gets it again
+    destroy_node(stack, dev); time.sleep(0.6)
+    make_device(stack, dev, "Trim Source", "Audio/Source/Virtual")
+    stack.pw.wait_node("kmixdeck.in.trimmed"); time.sleep(0.8)
+    p = stack.pw.play_into_port(dev, "input_AUX1")
+    try:
+        after = wait_level(ch_level, lambda v: v > SILENT + 10)
+        assert -21 < (after - unity) < -15, f"trim lost across replug: {after - unity:.1f} dB vs unity"
+    finally:
+        p.kill(); p.wait()
+    # -- restart: persisted on disk with the wire
+    layout = json.loads(open(os.path.join(stack.env["XDG_CONFIG_HOME"], "kmixdeck", "layout.json")).read())
+    wire = next(i for i in layout["inputs"] if i["channel"] == "trimmed")["device"]
+    assert abs(wire["trim"] - 0.5) < 0.01, wire
+    stack.restart_daemon()
+    got = stack.cli("mix", "wire", "stream", f"{sink}:AUX1,AUX2", json_out=True)
+    assert abs(got["trim"] - (10 ** (-12 / 20)) ** (1 / 3)) < 0.02, got
+    stack.cli("mix", "output-remove", "stream", f"{sink}:AUX1,AUX2")

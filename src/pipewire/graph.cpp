@@ -204,10 +204,14 @@ struct Graph::Impl {
         // ask for Props once; further changes arrive via onNodeInfo(PARAMS) → enum_params
         pw_node_subscribe_params(reinterpret_cast<pw_node *>(np->proxy), (uint32_t[]){SPA_PARAM_Props}, 1);
     }
+    bool isMeterNode(uint32_t id) const { auto it = nodes.constFind(id); return it != nodes.constEnd() && it.value()->info.name == QLatin1String("kmixdeck.meter"); }
     void recomputeRoute(uint32_t outNode) {
-        // majority target of this node's outgoing links (a stereo stream has 2 links to the same sink)
+        // majority target of this node's outgoing links (a stereo stream has 2 links to the same sink). Our own level
+        // meter (UX-13) is a second consumer of every metered app node — 2 links, same as the real sink — and won the
+        // tie by hash order: "routed → kmixdeck.meter" cleared App.Channels, and the next drop REPLACED instead of
+        // adding (test_ux11 red 1 in 3 in the suite, 2026-09-17). The meter is a tap, never a route.
         QHash<uint32_t, int> count;
-        for (const auto &l : links) if (l.out == outNode) count[l.in]++;
+        for (const auto &l : links) if (l.out == outNode && !isMeterNode(l.in)) count[l.in]++;
         uint32_t best = 0; int n = 0;
         for (auto it = count.cbegin(); it != count.cend(); ++it) if (it.value() > n) { n = it.value(); best = it.key(); }
         bool changed;

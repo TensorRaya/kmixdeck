@@ -342,6 +342,26 @@ int main(int argc, char *argv[]) {
             if (g_json) out << QJsonDocument(QJsonArray::fromStringList(outs)).toJson(); else for (const auto &o2 : outs) out << o2 << "\n";
             return Ok;
         }
+        if (sub == "wire" && a.size() >= 4) {   // <channel|mix> wire <slug> <ref> [trim <level>] [mute on|off] — DV-14, applies to BOTH kinds
+            QDBusInterface obj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
+            const QString ref = a[3];
+            QDBusReply<double> cur = obj.call("WireTrim", ref);
+            if (!cur.isValid() || cur.value() < 0) return fail(Rejected, QStringLiteral("no wire '%1' on '%2'").arg(ref, a[2]));
+            QDBusReply<bool> curM = obj.call("WireMuted", ref);
+            double trim = cur.value(); bool muted = curM.isValid() && curM.value();
+            if (a.size() == 4) {   // show
+                if (g_json) out << QJsonDocument(QJsonObject{{"ref", ref}, {"trim", trim}, {"muted", muted}}).toJson();
+                else out << ref << "  trim " << QString::number(trim, 'f', 3) << (muted ? "  muted" : "") << "\n";
+                return Ok;
+            }
+            for (int i = 4; i + 1 < a.size() || (i < a.size() && a[i] == "mute"); ) {
+                if (a[i] == "trim" && i + 1 < a.size()) { double lin; if (!parseLevel(a[i + 1], &lin)) return fail(Usage, QStringLiteral("bad level '%1'").arg(a[i + 1])); trim = std::cbrt(lin); i += 2; }
+                else if (a[i] == "mute") { if (!parseBool(a, i + 1, &muted)) return fail(Usage, QStringLiteral("bad mute value")); i += (i + 1 < a.size() ? 2 : 1); }
+                else return fail(Usage, QStringLiteral("unknown word '%1'").arg(a[i]));
+            }
+            QDBusReply<bool> r = obj.call("SetWireTrim", ref, trim, muted);
+            return (r.isValid() && r.value()) ? Ok : fail(Rejected, QStringLiteral("wire trim refused"));
+        }
         if ((sub == "output-add" || sub == "output-remove") && !ch) {
             if (!need(4)) return Usage;
             QDBusInterface mixObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());

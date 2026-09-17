@@ -468,11 +468,14 @@ bool Mixer::mixOutputMuted(const QString &slug, int index) const {
     return it == m_edges.constEnd() ? false : it->mute;
 }
 void Mixer::setMixOutputVolume(const QString &slug, int index, double cubic, bool muted) {
+    cubic = std::clamp(cubic, 0.0, 1.0);
+    // DV-14: the value lives on the WIRE (layout) so it survives unplug/replug and daemon restarts; the edge node is where
+    // it is applied. Set the layout first — the node may not exist right now (device unplugged) and comes back later.
+    if (auto *m = m_layout.mix(slug); m && index >= 0 && index < m->outputs.size()) {
+        m->outputs[index].trim = cubic; m->outputs[index].muted = muted; saveLayout();
+    }
     auto it = m_edges.find(EdgeNames::outputNode(slug, index));
-    if (it == m_edges.end()) return;
-    it->volume = cubicToLinear(std::clamp(cubic, 0.0, 1.0));
-    it->mute = muted;
-    m_graph.setVolume(it->id, it->volume, muted);
+    if (it != m_edges.end()) { it->volume = cubicToLinear(cubic); it->mute = muted; m_graph.setVolume(it->id, it->volume, muted); }
     Q_EMIT mixChanged(slug);
 }
 QString Mixer::mixCaptureSource(const QString &slug) const {
@@ -524,12 +527,54 @@ bool Mixer::inputMuted(const QString &slug) const {
     return it == m_edges.constEnd() ? false : it->mute;
 }
 void Mixer::setInputVolume(const QString &slug, double cubic, bool muted) {
+    cubic = std::clamp(cubic, 0.0, 1.0);
+    if (auto *in = m_layout.input(slug)) { in->device.trim = cubic; in->device.muted = muted; saveLayout(); }   // DV-14: on the wire
     auto it = m_edges.find(EdgeNames::inputNode(slug));
-    if (it == m_edges.end()) return;
-    it->volume = cubicToLinear(std::clamp(cubic, 0.0, 1.0));
-    it->mute = muted;
-    m_graph.setVolume(it->id, it->volume, muted);
+    if (it != m_edges.end()) { it->volume = cubicToLinear(cubic); it->mute = muted; m_graph.setVolume(it->id, it->volume, muted); }
     Q_EMIT inputChanged(slug);
+}
+double Mixer::inputTrimLayout(const QString &slug) const { const auto *in = m_layout.input(slug); return in ? in->device.trim : 1.0; }
+bool Mixer::inputMutedLayout(const QString &slug) const { const auto *in = m_layout.input(slug); return in ? in->device.muted : false; }
+double Mixer::mixOutputTrimLayout(const QString &slug, int index) const { const auto *m = m_layout.mix(slug); return (m && index >= 0 && index < m->outputs.size()) ? m->outputs[index].trim : 1.0; }
+bool Mixer::mixOutputMutedLayout(const QString &slug, int index) const { const auto *m = m_layout.mix(slug); return (m && index >= 0 && index < m->outputs.size()) ? m->outputs[index].muted : false; }
+static bool sameWire(const DeviceRef &d, const DeviceRef &ref) { return d == ref || (ref.positions.isEmpty() && ref.side.isEmpty() && d.node == ref.node); }
+QString Mixer::inputSlugForWire(const QString &channel, const QString &refStr) const {
+    const DeviceRef ref = DeviceRef::fromRef(refStr);
+    if (const auto *p = m_layout.input(channel); p && sameWire(p->device, ref)) return p->slug;
+    for (const auto &i : m_layout.inputs) if (i.channel == channel && sameWire(i.device, ref)) return i.slug;
+    return {};
+}
+bool Mixer::setChannelWireTrim(const QString &channel, const QString &refStr, double trim, bool muted) {
+    const QString slug = inputSlugForWire(channel, refStr); if (slug.isEmpty()) return false;
+    setInputVolume(slug, trim, muted); Q_EMIT channelChanged(channel); return true;
+}
+bool Mixer::channelWireTrim(const QString &channel, const QString &refStr, double *trim, bool *muted) const {
+    const QString slug = inputSlugForWire(channel, refStr); if (slug.isEmpty()) return false;
+    if (trim) *trim = inputTrimLayout(slug); if (muted) *muted = inputMutedLayout(slug); return true;
+}
+bool Mixer::setMixWireTrim(const QString &mix, const QString &refStr, double trim, bool muted) {
+    const auto *m = m_layout.mix(mix); if (!m) return false;
+    const DeviceRef ref = DeviceRef::fromRef(refStr);
+    for (int i = 0; i < m->outputs.size(); ++i) if (sameWire(m->outputs[i], ref)) { setMixOutputVolume(mix, i, trim, muted); return true; }
+    return false;
+}
+bool Mixer::mixWireTrim(const QString &mix, const QString &refStr, double *trim, bool *muted) const {
+    const auto *m = m_layout.mix(mix); if (!m) return false;
+    const DeviceRef ref = DeviceRef::fromRef(refStr);
+    for (int i = 0; i < m->outputs.size(); ++i) if (sameWire(m->outputs[i], ref)) { if (trim) *trim = m->outputs[i].trim; if (muted) *muted = m->outputs[i].muted; return true; }
+    return false;
+}
+void Mixer::applyEdgeState(const pw::NodeInfo &n) {
+    // DV-14: an edge node (re)appeared — give it the wire's trim/mute. Hardware nodes are never touched here.
+    double trim = 1.0; bool muted = false; bool known = false;
+    if (n.name.startsWith(QLatin1String("kmixdeck.in."))) { const QString slug = n.name.mid(12); if (m_layout.input(slug)) { trim = inputTrimLayout(slug); muted = inputMutedLayout(slug); known = true; } }
+    else if (n.name.startsWith(QLatin1String("kmixdeck.out."))) {
+        for (const auto &m : m_layout.mixes) for (int i = 0; i < m.outputs.size(); ++i)
+            if (EdgeNames::outputNode(m.slug, i) == n.name) { trim = m.outputs[i].trim; muted = m.outputs[i].muted; known = true; }
+    }
+    if (!known || (trim == 1.0 && !muted)) return;
+    const float lin = cubicToLinear(trim);
+    if (std::abs(n.volume - lin) > 1e-4 || n.mute != muted) { m_graph.setVolume(n.id, lin, muted); m_edges[n.name].volume = lin; m_edges[n.name].mute = muted; }
 }
 bool Mixer::inputPresent(const QString &slug) const {
     const auto *in = m_layout.input(slug);
@@ -716,7 +761,10 @@ bool Mixer::assignApp(uint32_t id, const QStringList &wantedIn, bool cumulative)
     // addOn merges with what the app is on NOW — its layout entry if it has one, else the channel CH-5 auto-routed
     // it to (which is in it->channels but not yet in the layout). Before: the first drop onto a second channel
     // REPLACED the auto-routed one (test_ux11_drop_on_channel_row_assigns_the_app, 2026-09-16).
-    if (cumulative) { QStringList merged = la ? la->channels : it->channels; for (const QString &s : want) if (!merged.contains(s)) merged << s; want = merged; }
+    // Merge with what the app is on NOW — that is it->channels (the live list: layout entry if it has one, else the
+    // channel CH-5 auto-routed it to). NOT la->channels alone: a stale layout entry from an earlier session/test can
+    // name channels the app is not on any more and miss the one it IS on (ux11 red in the suite only, 2026-09-17).
+    if (cumulative) { QStringList merged = it->channels; if (la) for (const QString &s : la->channels) if (!merged.contains(s)) merged << s; for (const QString &s : want) if (!merged.contains(s)) merged << s; want = merged; }
     if (want.isEmpty()) {                                   // un-route: back to wherever WirePlumber puts it
         if (la) { removeAppRelays(*la); m_layout.apps.removeIf([&](const LayoutApp &a) { return a.key == key; }); }
         m_graph.clearStreamTarget(id);
@@ -1044,7 +1092,9 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         if (isNew) { layout = true; if (!m_pendingCellState.isEmpty()) restorePendingCellStates(); }
     }
     else if (n.name.startsWith(QLatin1String("kmixdeck.in.")) || n.name.startsWith(QLatin1String("kmixdeck.out.")) || n.name.startsWith(QLatin1String("kmixdeck.source."))) {
-        m_edges[n.name] = n;                                    // device-edge playback side (DV-14 volume lives here)
+        const bool edgeNew = !m_edges.contains(n.name);
+        m_edges[n.name] = n;                                    // device-edge playback side (DV-14 volume is applied here)
+        if (edgeNew) applyEdgeState(n);
         if (n.name.startsWith(QLatin1String("kmixdeck.in."))) Q_EMIT inputChanged(n.name.mid(12));
         else for (const auto &m : m_mixes) {
             const QString base = QStringLiteral("kmixdeck.out.") + m.slug;

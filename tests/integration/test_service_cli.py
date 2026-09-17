@@ -24,7 +24,8 @@ class Stack:
         addr = self.dbus.stdout.readline().strip()
         assert addr.startswith("unix:"), addr
         self.env["DBUS_SESSION_BUS_ADDRESS"] = addr
-        self.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        import os as _os; self.daemon_log_path = _os.path.join(self.env["XDG_CONFIG_HOME"], "kmixdeckd.log")   # daemon stderr, readable by tests on failure
+        self.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=self.env, stdout=subprocess.DEVNULL, stderr=open(self.daemon_log_path, "a"), text=True)
         for _ in range(50):
             if self.cli("status", check=False).returncode == 0: break
             time.sleep(0.1)
@@ -43,7 +44,7 @@ class Stack:
 
     def restart_daemon(self):
         self.daemon.terminate(); self.daemon.wait(timeout=5)
-        self.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        self.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=self.env, stdout=subprocess.DEVNULL, stderr=open(self.daemon_log_path, "a"), text=True)
         # the bus name is claimed only after every object is exported (Service::start), so one green `status` = ready
         for _ in range(100):
             if self.cli("status", check=False).returncode == 0: break
@@ -153,7 +154,7 @@ def test_ar5_frontend_call_activates_nothing_but_survives_daemon_gone(stack):
     stack.daemon.terminate(); stack.daemon.wait(timeout=3); time.sleep(0.3)
     r = stack.cli("status", check=False)
     assert r.returncode == 2, (r.returncode, r.stderr)
-    stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL, stderr=open(stack.daemon_log_path, "a"), text=True)
     for _ in range(50):
         if stack.cli("status", check=False).returncode == 0: break
         time.sleep(0.1)
@@ -293,7 +294,7 @@ def test_dv1_layout_survives_without_the_daemon(stack):
     stack.pw.wait_node("kmixdeck.link.voice.recording")
     assert stack.pw.props("kmixdeck.link.voice.recording")["volume"] == pytest.approx(1.0)
     # daemon comes back, sees the graph, exports it — nothing recreated twice
-    stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL, stderr=open(stack.daemon_log_path, "a"), text=True)
     for _ in range(50):
         if stack.cli("status", check=False).returncode == 0: break
         time.sleep(0.1)
@@ -719,3 +720,11 @@ def test_ar7_frontend_guide_snippets_run_verbatim(stack):
     # and the "# d 1" comment under the read is the value a fresh cell has (documented output must be true)
     stack.cli("cell", "set", "game", "stream", "1.0"); stack.cli("cell", "mute", "game", "stream", "off"); stack.cli("mix", "remove", "recording")
     assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1/cell/game/stream", "org.kmixdeck1.Cell", "Volume").stdout.strip() == "d 1"
+
+
+def daemon_log_tail(stack, needles=(), n=3000):
+    """Last lines of the daemon's stderr (tests attach it to assertion messages — a red test must explain itself)."""
+    try: text = open(stack.daemon_log_path).read()
+    except FileNotFoundError: return "<no daemon log>"
+    lines = [l for l in text.splitlines() if not needles or any(k in l for k in needles)]
+    return "\n".join(lines)[-n:]

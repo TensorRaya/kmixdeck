@@ -85,7 +85,21 @@ Kirigami.ApplicationWindow {
             if (item.background) { const r = find(item.background); if (r) return r }
             return null
         }
-        const it = find(root.contentItem) || find(root.pageStack)
+        // Popups live in the window's Overlay, not under contentItem — search it too (DV-14 wire popover).
+        // Popups live in the window's Overlay: its popups are not "children" — walk contentChildren + each popup's
+        // contentItem/background (DV-14 wire popover; the QQC2.Popup itself carries the objectName).
+        function findOverlay() {
+            const ov = QQC2.Overlay.overlay; if (!ov) return null
+            const kids = ov.contentChildren || ov.children || []
+            for (let i = 0; i < kids.length; ++i) {
+                const k = kids[i]
+                if (k.objectName === name) return k
+                if (k.parent && k.parent.objectName === name) return k.parent           // popup's contentItem → the popup
+                const r = find(k); if (r) return r
+            }
+            return null
+        }
+        const it = find(root.contentItem) || find(root.pageStack) || findOverlay() || (patchBayPage && patchBayPage.probeItem ? patchBayPage.probeItem(name) : null)
         if (!it) return "<not found: " + name + ">"
         const v = it[prop]
         return v === undefined ? "<no property " + prop + ">" : String(v)
@@ -102,6 +116,12 @@ Kirigami.ApplicationWindow {
         const d = find(root.contentItem)
         if (!d) return "<no drop target for " + channel + ">"
         return d.parent.gestureDrop(appPath)
+    }
+    // DV-14 probe path: open the wire popover for a device wire as a click on it would (kind input|output).
+    function gestureWirePopup(kind, owner, ref) {
+        if (!patchBayPage) return "<no patchbay page>"
+        const w = kind === "input" ? { kind: "input", channel: owner, ref: ref } : { kind: "output", mix: owner, ref: ref }
+        return patchBayPage.openWirePopup(w)
     }
     function gestureRemove(kind, owner, ref) {
         const w = kind === "input" ? { kind: "input", channel: owner, ref: ref } : kind === "output" ? { kind: "output", mix: owner, ref: ref } : kind === "cell" ? { kind: "cell", channel: owner, mix: ref } : { kind: "app", app: owner, channel: ref }
