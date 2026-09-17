@@ -109,6 +109,7 @@ int main(int argc, char *argv[])
                 if (op == QLatin1String("connect") && a.size() == 4) QMetaObject::invokeMethod(win, "gestureConnect", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]), Q_ARG(QVariant, a[3]));
                 else if (op == QLatin1String("remove") && a.size() == 3) QMetaObject::invokeMethod(win, "gestureRemove", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]));
                 else if (op == QLatin1String("drop") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureDrop", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
+                else if (op == QLatin1String("traymenu") && a.size() == 1) { for (const QString &t : kde.trayMenuTexts()) fprintf(stdout, "traymenu %s\n", qPrintable(t)); ret = QString(); }
                 else if (op == QLatin1String("trayclick") && a.size() == 1) {   // UX-17: N clicks on the tray icon within the double-click interval
                     const int n = a[0].toInt(); for (int i = 0; i < n; ++i) kde.trayClick(QPoint(100, 100)); ret = QString();
                 }

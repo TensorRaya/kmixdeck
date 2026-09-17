@@ -23,7 +23,8 @@ class KdeIntegration : public QObject {
 public:
     explicit KdeIntegration(MixerClient *client, QObject *parent = nullptr);
     void setMainWindow(QQuickWindow *w);
-    void trayClick(const QPoint &pos);   // simulates a tray click (tests: one = popover, two within the interval = window)
+    void trayClick(const QPoint &pos);
+    QStringList trayMenuTexts() const;   // test hook: the context menu's entries, "[x] " prefix when checked   // simulates a tray click (tests: one = popover, two within the interval = window)
 
 private:
     void rebuildActions();              // one global-shortcut action per channel + per mix, kept in sync with the layout

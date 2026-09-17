@@ -84,3 +84,18 @@ def test_tray_shows_only_what_overview_defines(stack):
     g = tray(stack, "trayMix/tray_extra.visible", "trayMixVolume/tray_extra.value")
     assert g["trayMix/tray_extra.visible"] == "true", g
     stack.cli("mix", "remove", "tray_extra")
+
+
+def test_ct4_tray_menu_offers_quick_mute_and_mix_switch(stack):
+    """CT-4: the tray's context menu has a mute toggle per channel and per mix (checked = muted) and the
+    'Listening to' switch with the current mix checked — all driven by the daemon's state, not by the tray."""
+    from test_service_cli import make_fake_sink
+    make_fake_sink(stack, "fake.tray", "Tray Phones"); time.sleep(0.4)
+    stack.cli("mix", "output-add", "monitor", "fake.tray"); stack.cli("listen", "fake.tray")
+    stack.cli("channel", "mute", "voice", "on"); stack.cli("mix", "mute", "stream", "on"); time.sleep(0.5)
+    r = subprocess.run([str(BIN / "kmixdeck-kde"), "--gesture", "traymenu:1"], env=dict(stack.env, QT_QPA_PLATFORM="offscreen"), capture_output=True, text=True, timeout=40)
+    items = [l.split(" ", 1)[1] for l in r.stdout.splitlines() if l.startswith("traymenu ")]
+    assert "[x] Voice" in items and "[ ] Game" in items, items
+    assert any(i.startswith("[x] ") and "Stream" in i for i in items) and any(i.startswith("[ ] ") and "Monitor" in i for i in items), items
+    assert items.count("[x] Monitor") >= 1, f"listening-to entry should show Monitor checked: {items}"   # the Listening-to section
+    stack.cli("channel", "mute", "voice", "off"); stack.cli("mix", "mute", "stream", "off"); stack.cli("mix", "output-remove", "monitor", "fake.tray")

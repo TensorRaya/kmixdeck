@@ -49,7 +49,15 @@ void KdeIntegration::setMainWindow(QQuickWindow *w) {
         const QString cur = listeningMix(); if (!cur.isEmpty()) m_client->toggleMixMute(cur);
     });
 }
-void KdeIntegration::trayClick(const QPoint &pos) { m_tray->activate(pos); }   // test hook (--gesture trayclick)
+void KdeIntegration::trayClick(const QPoint &pos) { m_tray->activate(pos); }
+QStringList KdeIntegration::trayMenuTexts() const {
+    QStringList out;
+    for (QAction *a : m_trayMenu->actions()) {
+        if (a->isSeparator()) continue;
+        out << (a->isCheckable() ? (a->isChecked() ? QStringLiteral("[x] ") : QStringLiteral("[ ] ")) : QString()) + a->text().remove(QLatin1Char('&'));
+    }
+    return out;
+}   // test hook (--gesture trayclick)
 
 void KdeIntegration::rebuildActions() {
     // Global shortcuts are identified by (component = app name, action objectName). Keep names stable per slug so
