@@ -340,6 +340,15 @@ void Mixer::setCellMuted(const QString &ch, const QString &mix, bool muted) {
     breakLink(ch, mix);
     it->mute = muted;
     m_graph.setVolume(it->id, it->volume, muted);
+    // same WirePlumber restore-stream window as setCellVolume(): DV-6 under ctest34 — `cell mute voice stream on`
+    // read back unmuted, the app's tone summed into the mic measurement (+4.7 dB). One re-assert, last intent wins.
+    const uint32_t id = it->id; const float vol = it->volume; const quint64 seq = ++m_cellWriteSeq[Names::cellNode(ch, mix)];
+    QTimer::singleShot(400, this, [this, id, vol, muted, ch, mix, seq] {
+        const QString node = Names::cellNode(ch, mix);
+        auto c = m_cells.constFind(node);
+        if (c == m_cells.constEnd() || c->id != id || m_cellWriteSeq.value(node) != seq) return;
+        if (c->mute != muted) { qInfo() << "cell" << node << "mute was overwritten to" << c->mute << "after our write of" << muted << "- re-asserting"; m_graph.setVolume(id, vol, muted); }
+    });
     Q_EMIT cellChanged(ch, mix);
     propagateLinks(ch, mix);
 }

@@ -618,6 +618,14 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
     # comparison below is about the mic path, so the app's send into the stream mix is muted; it keeps playing into
     # the monitor mix, which is what the app part of this test checks.
     stack.cli("cell", "mute", "voice", "stream", "on")
+    # …and make sure the mute LANDED (ctest34: the chain diagnosis showed 'voice/stream cell': [(1, False)] = unmuted,
+    # the app's tone summed into the mic measurement; same WirePlumber restore-stream window as the -6 dB above)
+    for _ in range(50):
+        c = next((c for c in stack.cli("status", json_out=True)["cells"] if c["Path"].endswith("/voice/stream")), None)
+        if c and c["Muted"] is True: break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("cell mute voice/stream never landed in the daemon (restore-stream race?)")
     stack.pw.wait_nodes(["kmixdeck.in.mic", "kmixdeck.out.stream", "kmixdeck.out.monitor"])
     time.sleep(1.0)
     tone = stack.pw.play_into_port(iface, "input_AUX3")
