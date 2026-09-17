@@ -518,3 +518,43 @@ def test_dv14_wire_trim_and_mute_live_on_the_wire_not_on_the_device(stack):
     got = stack.cli("mix", "wire", "stream", f"{sink}:AUX1,AUX2", json_out=True)
     assert abs(got["trim"] - (10 ** (-12 / 20)) ** (1 / 3)) < 0.02, got
     stack.cli("mix", "output-remove", "stream", f"{sink}:AUX1,AUX2")
+
+
+def test_dv28_ui24r_scale_32_in_32_out_every_port_routable_and_fast(stack):
+    """DV-28 (Michel 2026-09-17: "bei UI24R alle Eingänge und Ausgänge sauber konfigurierbar / routbar?"): a 32-in/32-out
+    device (the Ui24R's USB shape, measured on aether) — 32 mono channels on AUX1..32, mixes on AUX1+2 and AUX31+32,
+    a second side-wire on a high port; every edge exists within a few seconds (not 0.7 s each: that was the test's own
+    per-name polling, 2026-09-17), audio on port 32 reaches only channel 32, the mixes reach exactly their ports,
+    and everything is back after a daemon restart."""
+    import json, os
+    stack.cli("devices", "virtual", "add", "Ui24R", "--in", "32", "--out", "32")
+    din, dout = "kmixdeck.virt.ui24r", "kmixdeck.virt.ui24r.out"
+    stack.pw.wait_nodes([din, dout])
+    assert len([p for p in stack.cli("devices", "ports", din).stdout.split() if p.startswith("AUX")]) == 32
+    assert len([p for p in stack.cli("devices", "ports", dout).stdout.split() if p.startswith("AUX")]) == 32
+    for i in range(1, 33): stack.cli("channel", "add", f"In {i}")
+    t0 = time.time()
+    for i in range(1, 33): stack.cli("channel", "input-add", f"in_{i}", f"{din}:AUX{i}")
+    took = stack.pw.wait_nodes([f"kmixdeck.in.in_{i}" for i in range(1, 33)], timeout=30)
+    assert took < 10, f"32 input edges took {took:.1f}s"
+    stack.cli("mix", "output-add", "stream", f"{dout}:AUX1,AUX2")
+    stack.cli("mix", "output-add", "monitor", f"{dout}:AUX31,AUX32")
+    assert stack.cli("channel", "input-add", "in_21", f"{din}:AUX22>R").returncode == 0     # second wire, side-bound (DV-21/25)
+    assert stack.cli("channel", "input-add", "in_1", f"{din}:AUX99", check=False).returncode != 0   # no such port → refused
+    time.sleep(1.5)
+    p = stack.pw.play_into_port(din, "input_AUX32")
+    try:
+        v = wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.in_32", "monitor_FL"), lambda x: x > HOT)
+        assert stack.pw.level_at_port("kmixdeck.channel.in_1", "monitor_FL") < SILENT, "port 32 leaked into channel 1"
+        stack.cli("cell", "volume", "in_32", "stream", "1.0", check=False)
+        out1 = wait_level(lambda: stack.pw.level_at_port(dout, "monitor_AUX1"), lambda x: x > HOT - 30)
+        assert stack.pw.level_at_port(dout, "monitor_AUX31") > HOT - 30, "monitor mix did not reach AUX31"
+        assert stack.pw.level_at_port(dout, "monitor_AUX5") < SILENT, "an unused output port carries signal"
+    finally:
+        p.kill(); p.wait()
+    t1 = time.time(); stack.restart_daemon()
+    back = stack.pw.wait_nodes([f"kmixdeck.in.in_{i}" for i in range(1, 33)] + ["kmixdeck.out.stream", "kmixdeck.out.monitor"], timeout=40)
+    assert back < 15, f"restart: 32 edges took {back:.1f}s to return"
+    assert set(stack.cli("channel", "inputs", "in_21").stdout.split()) == {f"{din}:AUX21", f"{din}:AUX22>R"}
+    layout = json.loads(open(os.path.join(stack.env["XDG_CONFIG_HOME"], "kmixdeck", "layout.json")).read())
+    assert len([i for i in layout["inputs"] if i["channel"].startswith("in_")]) == 33

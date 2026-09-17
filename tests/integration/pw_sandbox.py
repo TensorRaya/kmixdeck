@@ -31,6 +31,21 @@ class PwDaemon:
                 return o
         return None
 
+    def node_names(self) -> set[str]:
+        """ONE pw-dump for a whole set of names. Polling node() per name scales with (names × graph size): with 32
+        channels the loop itself took 25 s and was read as \"PipeWire needs 0.7 s per loopback\" (2026-09-17). The
+        graph had every edge after 2 s. Measure with this, not with node() in a loop."""
+        return {o.get("info", {}).get("props", {}).get("node.name") for o in self.dump() if o.get("type", "").endswith("Node")}
+
+    def wait_nodes(self, names, timeout: float = 30.0) -> float:
+        """Wait until every name exists; returns the seconds it took. Raises with the missing set on timeout."""
+        want = set(names); t0 = time.time()
+        while time.time() - t0 < timeout:
+            missing = want - self.node_names()
+            if not missing: return time.time() - t0
+            time.sleep(0.05)
+        raise AssertionError(f"nodes never appeared within {timeout}s: {sorted(want - self.node_names())[:6]}")
+
     def node_id(self, name: str) -> int:
         n = self.node(name)
         assert n is not None, f"node {name} not found"

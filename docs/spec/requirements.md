@@ -10,7 +10,7 @@ Status legend: 📝 draft · 🔶 partly covered · ✅ **verified by an automat
 **Tiers (ADR 0010 D3, AR-12):** a row tagged `tier:core` is ✅ only with a proof in every frontend (CLI + KDE window + tray) in
 `tests/integration/frontends_sync suite`; untagged rows are `full` (CLI + window) or `api` (CLI) as their text says.
 
-**Stand 2026-09-17:** 84 ✅ · 3 🔶 · 16 📝 (101 rows). The count is produced by `tools/sot-audit.py`, which also
+**Stand 2026-09-17:** 85 ✅ · 3 🔶 · 16 📝 (102 rows). The count is produced by `tools/sot-audit.py`, which also
 fails the build (ctest `sot-audit`) when a ✅ row names no existing test — 11 rows were downgraded or given their
 test on 2026-09-16 when that audit ran for the first time.
 
@@ -104,6 +104,7 @@ test on 2026-09-16 when that audit ran for the first time.
 | DV-15 | A mix MAY name a fallback output used while the primary is absent; without one the mix is silent, never rerouted to the default sink. | ADR 0007 D3; DV-3 | ✅ `Mix.FallbackOutput` (s), `kmixdeck mix fallback`, submenu in the header. test_mx9_mix_plays_to_several_outputs_and_dv15_fallback_takes_over::test_mx9_*: both outputs destroyed → fallback carries the mix, default sink stays silent, config kept; replug → primary wins, fallback quiet |
 | DV-16 | On multi-channel hardware (RØDECaster, Ui24R) each usable slice MUST be turnable into its own named virtual device: own name, own icon, stereo pair or mono, chosen from the device's channel positions. The reference stays `node.name` + positions (DV-9/DV-13), so the slice survives replug and reboot. | owner 2026-09-15 | ✅ superseded by DV-17/18/19/21/25 (a slice = wires from named connectors into a named channel, or a mix onto a port subset); proven by `test_dv17_two_mono_channels_from_one_device_hear_only_their_port`, `test_dv18_mix_output_into_a_port_subset_leaves_other_ports_silent`, AR-10 hotplug test (survives replug + restart) |
 | DV-7 | Virtual device identity (node.name) MUST stay stable across app updates so OBS/Discord keep their device selection (Wave Link L7: driver update changed device IDs). | wavelink L7; tests `test_dv7_levels_and_mute_survive_daemon_restart`, `test_dv7_state_is_keyed_by_stable_name_not_display_name` | ✅ |
+| DV-28 | **Ui24R scale.** A 32-in / 32-out device (the Ui24R over USB, measured on aether) MUST be fully routable: every input port as a mono channel or side of a stereo channel, every output port as a mix target, second wires on any port, unknown ports refused; all edges up within seconds and back after a daemon restart. | Michel 2026-09-17 | ✅ 32 channels on AUX1..32 + mixes on AUX1+2 / AUX31+32 + side wire AUX22>R: edges < 10 s, restart < 15 s, audio on port 32 only in channel 32, unused output port silent. `test_dv28_ui24r_scale_32_in_32_out_every_port_routable_and_fast` |
 
 ## 5a. Architecture: service, CLI, frontends
 
