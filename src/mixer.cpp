@@ -1038,11 +1038,10 @@ QJsonObject Mixer::firstRunPlan() const {
     o.insert(QStringLiteral("sinkKnown"), m_devices.contains(m_defaultSink)); o.insert(QStringLiteral("sourceKnown"), m_devices.contains(m_defaultSource));
     o.insert(QStringLiteral("sinkDescription"), m_devices.value(m_defaultSink).description); o.insert(QStringLiteral("sourceDescription"), m_devices.value(m_defaultSource).description);
     QJsonArray apps;
-    for (const auto &a : m_apps) {
-        if (!a.running) continue;
+    for (const auto &a : m_apps) {   // every stream that exists — "running" (making sound right now) flickers while WirePlumber relinks
         const QString role = a.mediaRole.toLower();
         const QString target = a.channels.isEmpty() ? (role == QLatin1String("communication") ? QStringLiteral("voice") : role == QLatin1String("music") ? QStringLiteral("system") : QStringLiteral("game")) : a.channels.first();
-        apps.append(QJsonObject{{QStringLiteral("id"), int(a.id)}, {QStringLiteral("name"), a.name}, {QStringLiteral("role"), a.mediaRole}, {QStringLiteral("channel"), target}, {QStringLiteral("assigned"), !a.channels.isEmpty()}});
+        apps.append(QJsonObject{{QStringLiteral("id"), int(a.id)}, {QStringLiteral("name"), a.name}, {QStringLiteral("role"), a.mediaRole}, {QStringLiteral("running"), a.running}, {QStringLiteral("channel"), target}, {QStringLiteral("assigned"), !a.channels.isEmpty()}});
     }
     o.insert(QStringLiteral("apps"), apps);
     o.insert(QStringLiteral("monitorMix"), m_layout.mix(QStringLiteral("monitor")) != nullptr);

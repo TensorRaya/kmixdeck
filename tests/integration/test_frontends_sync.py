@@ -249,6 +249,26 @@ def test_mx5_eight_mixes_all_faders_visible_and_bad_colour_refused(stack):
         hidden = [p for p in probes if p.endswith(".visible") and g.get(p) != "true"]
         flat = [p for p in probes if (p.endswith(".width") or p.endswith(".height")) and float(g.get(p, "0") or 0) < 8]
         assert not hidden and not flat, f"hidden: {hidden} flat: {flat}"
+        # "Scrollbalken? Mix 2 3 4 5 6 ??" (Michel 2026-09-17): columns share the width instead of scrolling. At 1280 px
+        # six mixes fit without a scrollbar (headers fold to two rows), at 1600 px all eight do; the folded header keeps
+        # every control (mute, master, listen, ⋮) and the master fader stays wide enough to grab.
+        for sl in slugs[-2:]: stack.cli("mix", "remove", sl)
+        six = [m for m in mixes if m not in slugs[-2:]]; time.sleep(0.8)
+        g6 = kde(stack, "--size", "1280x760", "--probe", "mixStrip.needed", "--probe", "mixStrip.availableWidth", "--probe", "mixHeader/monitor.narrow",
+                 "--probe", "mixFader/monitor.width", "--probe", "mixMute/monitor.visible", "--probe", "mixHeader/monitor.height", "--probe", "channelHeader/game.width")
+        assert int(g6["mixStrip.needed"]) <= int(g6["mixStrip.availableWidth"]), f"six mixes must fit at 1280 px without scrolling: {g6}"
+        assert g6["mixHeader/monitor.narrow"] == "true" and float(g6["mixFader/monitor.width"]) >= 60, g6
+        assert g6["mixMute/monitor.visible"] == "true"
+        g8 = kde(stack, "--size", "1600x760", "--probe", "mixStrip.needed", "--probe", "mixStrip.availableWidth") if len(six) == 6 else None
+        for i in range(2): stack.cli("mix", "add", f"Mix {i + 7}")
+        slugs = [m["Slug"] for m in stack.cli("status", json_out=True)["mixes"] if m["Slug"] not in ("monitor", "stream")]
+        stack.pw.wait_nodes([f"kmixdeck.mix.{sl}" for sl in slugs]); time.sleep(0.8)
+        g8 = kde(stack, "--size", "1600x760", "--probe", "mixStrip.needed", "--probe", "mixStrip.availableWidth")
+        assert int(g8["mixStrip.needed"]) <= int(g8["mixStrip.availableWidth"]), f"eight mixes must fit at 1600 px: {g8}"
+        for sl in slugs: stack.cli("mix", "remove", sl)
+        slugs = []; time.sleep(0.8)
+        gw = kde(stack, "--size", "1280x760", "--probe", "mixHeader/monitor.narrow", "--probe", "mixHeader/monitor.width")
+        assert gw["mixHeader/monitor.narrow"] == "false", f"two mixes: the header is back to one row: {gw}"
         # bad colour
         stack.cli("mix", "color", "stream", "#3daee9")
         r = stack.cli("mix", "color", "stream", "blue", check=False); assert r.returncode != 0, r

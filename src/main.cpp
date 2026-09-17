@@ -192,7 +192,8 @@ int main(int argc, char *argv[])
         if (engine.rootObjects().isEmpty()) return 1;
         auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         const QString open = parser.value(openArg); const QStringList probes = parser.values(probeArg);
-        win->resize(1280, 760); win->show();
+        { const QStringList wh = parser.value(sizeArg).split(QLatin1Char('x')); win->resize(wh.size() == 2 ? wh[0].toInt() : 1280, wh.size() == 2 ? wh[1].toInt() : 760); }
+        win->show();
         QTimer::singleShot(900, &app, [win, open] {
             if (open == QLatin1String("apps")) QMetaObject::invokeMethod(win, "showApps");
             else if (open == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");

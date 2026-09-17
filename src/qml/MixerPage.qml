@@ -24,9 +24,25 @@ Kirigami.ScrollablePage {
     readonly property var channels: Mixer.channelSlugs
     readonly property var mixes: Mixer.mixSlugs
     readonly property int rowH: Kirigami.Units.gridUnit * 3.6          // ≈ 66 px @ 18 px gridUnit, like Wave Link
-    readonly property int gap: Kirigami.Units.smallSpacing * 2
-    readonly property int channelColW: Kirigami.Units.gridUnit * 19
-    readonly property int mixColW: Kirigami.Units.gridUnit * 17     // MX-5: the header (icon, name, mute, master, listen, ⋮) needs this much; below it the master handle left the card (2026-09-17 render)
+    readonly property int gap: narrow ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing * 2
+    // Columns share the width: no scrolling as long as every mix gets at least mixColMin (UX: "Scrollbalken? Mix 2 3 4
+    // 5 6 ??" — Michel 2026-09-17: eight mixes at 1280 px showed two and a scrollbar). Wide → full header in one row;
+    // narrow (< mixColWide) → the header folds to two rows (icon+name+⋮ / mute+master+listen) and the channel column
+    // shrinks with it. Only beyond mixColMin per mix does the strip scroll.
+    readonly property int mixColWide: Kirigami.Units.gridUnit * 14
+    readonly property int mixColMin: Kirigami.Units.gridUnit * 8.5
+    readonly property int channelColWide: Kirigami.Units.gridUnit * 19
+    readonly property int channelColNarrow: Kirigami.Units.gridUnit * 12
+    readonly property int addW: rowH
+    // width the mix strip would get with the wide channel column
+    readonly property int stripWide: Math.max(0, width - channelColWide - addW - gap * 3)
+    readonly property bool narrow: mixes.length > 0 && stripWide < mixes.length * (mixColWide + gap) - gap
+    readonly property int channelColW: narrow ? channelColNarrow : channelColWide
+    // measured, not estimated: the strip reports what it really has (set from mixStrip.availableWidth)
+    property int stripW: 0
+    readonly property int mixColW: mixes.length === 0 || stripW === 0 ? mixColWide
+                                 : Math.max(mixColMin, Math.min(mixColWide, Math.floor((stripW - gap * (mixes.length - 1)) / mixes.length)))
+    readonly property int headerH: narrow ? Math.round(rowH * 1.55) : rowH   // two-row header when folded     // MX-5: the header (icon, name, mute, master, listen, ⋮) needs this much; below it the master handle left the card (2026-09-17 render)
 
     Kirigami.PlaceholderMessage {
         anchors.centerIn: parent
@@ -120,11 +136,13 @@ Kirigami.ScrollablePage {
         // ---- channel panel: one dark panel, rows separated by hairlines
         Panel {
             Layout.preferredWidth: page.channelColW
+            Layout.minimumWidth: page.channelColW
+            Layout.maximumWidth: page.channelColW
             Layout.alignment: Qt.AlignTop
                 // header row of the channel panel is empty in Wave Link; we use it for the count + hint
                 Item {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: page.rowH
+                    Layout.preferredHeight: page.headerH   // same as the mix headers so the channel rows line up with the cells
                     QQC2.Label {
                         anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: Kirigami.Units.largeSpacing }
                         text: i18np("%1 channel", "%1 channels", page.channels.length)
@@ -154,6 +172,8 @@ Kirigami.ScrollablePage {
             Layout.alignment: Qt.AlignTop
             // each mix panel is mixColW wide at least; with room to spare they share the width (fillWidth)
             readonly property int needed: page.mixes.length * (page.mixColW + page.gap) - page.gap
+            onAvailableWidthChanged: page.stripW = availableWidth
+            Component.onCompleted: page.stripW = availableWidth
             Layout.preferredHeight: mixRow.implicitHeight + (needed > availableWidth ? QQC2.ScrollBar.horizontal.height : 0)
             contentWidth: Math.max(availableWidth, needed)
             contentHeight: mixRow.implicitHeight
@@ -172,10 +192,11 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 Layout.minimumWidth: page.mixColW
                 Layout.preferredWidth: page.mixColW
+                Layout.maximumWidth: page.mixColWide * 1.5
                 Layout.alignment: Qt.AlignTop
                     MixHeader {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: page.rowH
+                        Layout.preferredHeight: page.headerH
                         mix: mixPanel.modelData; channel: ""
                     }
                     Repeater {

@@ -22,6 +22,7 @@ Item {
     property string colorCode: Mixer.channelColor(channel)   // MX-5
     property string group: Mixer.channelGroup(channel)       // CH-8
     readonly property bool compact: width < Kirigami.Units.gridUnit * 21   // only the FX button folds into ⋮; listen stays
+    readonly property bool narrow: width < Kirigami.Units.gridUnit * 13    // many mixes: smaller tile, no trim read-out (tooltip has it)
     property bool dropActive: false           // UX-11: a drag hovers this row
 
     Connections {
@@ -77,8 +78,8 @@ Item {
 
         // icon tile — the channel's icon on a darker rounded square
         Rectangle {
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 2.2
-            Layout.preferredHeight: Kirigami.Units.gridUnit * 2.2
+            Layout.preferredWidth: Kirigami.Units.gridUnit * (header.narrow ? 1.6 : 2.2)
+            Layout.preferredHeight: Layout.preferredWidth
             radius: Kirigami.Units.smallSpacing
             color: Qt.darker(Kirigami.Theme.alternateBackgroundColor, 1.25)
             Kirigami.Icon {
@@ -97,7 +98,7 @@ Item {
         // name + input line
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.minimumWidth: Kirigami.Units.gridUnit * 5
+            Layout.minimumWidth: Kirigami.Units.gridUnit * (header.narrow ? 3 : 5)
             spacing: 0
             RowLayout {
                 Layout.fillWidth: true
@@ -136,7 +137,7 @@ Item {
                 opacity: header.inputPresent ? 0.6 : 0.4
                 elide: Text.ElideRight
                 text: {
-                    if (header.inputDevice.length === 0) return i18nc("@label channel has no hardware input, apps only", "Apps only")
+                    if (header.inputDevice.length === 0) return header.narrow ? i18nc("@label channel has no hardware input, apps only (short)", "Apps") : i18nc("@label channel has no hardware input, apps only", "Apps only")
                     const name = Mixer.deviceRefLabel(header.inputDevice)   // ADR 0009: "Ui24R · AUX7", not "fake.ui24r:AUX7"
                     return header.inputPresent ? name : i18nc("@label %1 device name, device is unplugged", "%1 (unplugged)", name)
                 }
@@ -183,7 +184,7 @@ Item {
                 Layout.alignment: Qt.AlignHCenter
                 font: Kirigami.Theme.smallFont
                 opacity: 0.8
-                text: trimDial.value <= 0 ? "-∞" : (20 * Math.log10(Math.pow(trimDial.value, 3))).toFixed(0) + " dB"
+                text: trimDial.value <= 0 ? "-∞" : (20 * Math.log10(Math.pow(trimDial.value, 3))).toFixed(0) + (header.narrow ? "" : " dB")
             }
         }
         // DV-22 pan: a small dial, double-click = centre. Text below reads L40 / C / R100 so the position is
@@ -261,6 +262,7 @@ Item {
             Accessible.name: Mixer.channelName(header.channel) + " — " + text
         }
         QQC2.ToolButton {
+            objectName: "channelMenuButton/" + header.channel
             icon.name: "overflow-menu"
             display: QQC2.AbstractButton.IconOnly
             text: i18n("Channel actions")

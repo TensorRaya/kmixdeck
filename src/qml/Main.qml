@@ -138,6 +138,7 @@ Kirigami.ApplicationWindow {
         const it = find(root.contentItem) || find(root.pageStack) || findOverlay() || (patchBayPage && patchBayPage.probeItem ? patchBayPage.probeItem(name) : null)
                  || (name === "trayOverview" ? trayOverviewWin : find(trayOverviewWin.contentItem))
         if (!it) return "<not found: " + name + ">"
+        if (prop.startsWith("probe:") && it.probeItem) return String(it.probeItem(prop.slice(6)))   // item-specific diagnostics
         const v = it[prop]
         return v === undefined ? "<no property " + prop + ">" : String(v)
     }

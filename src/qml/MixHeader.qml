@@ -10,6 +10,8 @@ import org.kmixdeck
 QQC2.Control {
     id: header
     objectName: "mixHeader/" + mix
+    clip: true   // a folded master fader must not bleed into the neighbouring column
+    function probeItem(n) { if (n !== "kids") return undefined; let out = []; for (const c of contentItem.children) out.push((c.objectName || c.toString().split("(")[0]) + ":" + Math.round(c.implicitWidth) + "/" + Math.round(c.width) + "@" + Math.round(c.x) + "," + Math.round(c.y) + (c.visible ? "" : "(hidden)")); return out.join(" ") }
     property string mix
     function triggerOutput(nodeName) { return outMenu.triggerDevice(nodeName) }   // UX-14 gesture (the menu is a popup, not a child)
     property string channel                   // unused; Repeater contract
@@ -25,6 +27,9 @@ QQC2.Control {
     // Narrow card (laptop, 3 mixes): the FX button folds into the ⋮ menu (it is there anyway) so the device line keeps
     // room. The listen button NEVER folds — hold-to-listen is a primary control (Michel, 2026-09-16).
     readonly property bool compact: width < Kirigami.Units.gridUnit * 24
+    // Folded header (many mixes on a normal screen): two rows — icon+name+⋮ over mute+master+listen. Same controls,
+    // same objectNames, so every gesture and probe keeps working; only the arrangement changes.
+    readonly property bool narrow: width < Kirigami.Units.gridUnit * 12
 
     Connections {
         target: Mixer
@@ -71,12 +76,18 @@ QQC2.Control {
     }
     TapHandler { acceptedButtons: Qt.RightButton; onTapped: mixCtxMenu.popup() }
 
-    contentItem: RowLayout {
-        spacing: Kirigami.Units.smallSpacing
-        Item { Layout.preferredWidth: Kirigami.Units.smallSpacing }
-        Rectangle {   // icon tile
+    contentItem: GridLayout {
+        width: header.availableWidth
+        // one row wide, two rows narrow — the GridLayout flows the same children either way
+        columns: header.narrow ? 4 : 99
+        rowSpacing: 0
+        columnSpacing: Kirigami.Units.smallSpacing
+        Item { Layout.preferredWidth: Kirigami.Units.smallSpacing; visible: !header.narrow }
+        Item { Layout.preferredWidth: Kirigami.Units.smallSpacing; visible: header.narrow }
+        Rectangle {   // icon tile — folded away when narrow (the mix icon is still on the "I hear" bar)
+            visible: !header.narrow
             Layout.preferredWidth: Kirigami.Units.gridUnit * 2.2
-            Layout.preferredHeight: Kirigami.Units.gridUnit * 2.2
+            Layout.preferredHeight: Layout.preferredWidth
             radius: Kirigami.Units.smallSpacing
             color: Qt.darker(Kirigami.Theme.alternateBackgroundColor, 1.6)
             Kirigami.Icon {
@@ -95,8 +106,9 @@ QQC2.Control {
         }
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.minimumWidth: Kirigami.Units.gridUnit * 5
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 7
+            Layout.minimumWidth: Kirigami.Units.gridUnit * (header.narrow ? 4 : 5)
+            Layout.preferredWidth: Kirigami.Units.gridUnit * (header.narrow ? 5 : 7)
+            Layout.columnSpan: header.narrow ? 2 : 1
             spacing: 0
             QQC2.Label {
                 objectName: "mixHeaderTitle/" + header.mix   // MX-10 probe
@@ -117,8 +129,8 @@ QQC2.Control {
                 color: header.outputPresent ? Kirigami.Theme.textColor : Kirigami.Theme.neutralTextColor
                 elide: Text.ElideRight
                 text: {
-                    if (header.outputs.length === 0) return i18nc("@label mix is not routed to a hardware output", "Capture only")
-                    const name = header.outputs.length === 1 ? Mixer.deviceDescription(header.outputs[0])   // handles "node:POS,POS" too
+                    if (header.outputs.length === 0) return header.narrow ? i18nc("@label mix is not routed to a hardware output (short)", "Capture") : i18nc("@label mix is not routed to a hardware output", "Capture only")
+                    const name = header.outputs.length === 1 && !header.narrow ? Mixer.deviceDescription(header.outputs[0])   // handles "node:POS,POS" too
                                : i18ncp("@label number of hardware outputs of a mix", "%1 output", "%1 outputs", header.outputs.length)
                     return header.outputPresent ? name : i18nc("@label %1 device name(s), unplugged", "%1 — unplugged", name)
                 }
@@ -130,6 +142,14 @@ QQC2.Control {
                     : i18n("The device is unplugged. The mix is parked silently and resumes on this device as soon as it is back.")
                 QQC2.ToolTip.visible: outHover.hovered
             }
+        }
+        QQC2.ToolButton {
+            icon.name: "overflow-menu"
+            display: QQC2.AbstractButton.IconOnly
+            text: i18n("Mix actions")
+            onClicked: mixCtxMenu.popup()
+            QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+            Accessible.name: Mixer.mixName(header.mix) + " — " + text
         }
         // master: mute + fader (MX-6)
         QQC2.ToolButton {
@@ -150,9 +170,10 @@ QQC2.Control {
             objectName: "mixFader/" + header.mix   // AR-12 probe
             accessibleName: i18n("Master volume of mix %1", header.title)
             Layout.fillWidth: true
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 4
-            Layout.minimumWidth: Kirigami.Units.gridUnit * 2.5
-            Layout.maximumWidth: Kirigami.Units.gridUnit * 6
+            Layout.columnSpan: header.narrow ? 2 : 1   // folded: under the name column, full width between mute and listen
+            Layout.preferredWidth: Kirigami.Units.gridUnit * (header.narrow ? 2.5 : 4)
+            Layout.minimumWidth: Kirigami.Units.gridUnit * 2
+            Layout.maximumWidth: header.narrow ? Kirigami.Units.gridUnit * 20 : Kirigami.Units.gridUnit * 6
             value: header.masterValue
             enabled: !header.masterMuted
             peak: header.masterMuted ? 0 : mixMeter.peak
@@ -183,15 +204,7 @@ QQC2.Control {
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
             Accessible.name: Mixer.mixName(header.mix) + " — " + text
         }
-        QQC2.ToolButton {
-            icon.name: "overflow-menu"
-            display: QQC2.AbstractButton.IconOnly
-            text: i18n("Mix actions")
-            onClicked: mixCtxMenu.popup()
-            QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
-            Accessible.name: Mixer.mixName(header.mix) + " — " + text
-        }
-        Item { Layout.preferredWidth: Kirigami.Units.smallSpacing / 2 }
+        Item { Layout.preferredWidth: Kirigami.Units.smallSpacing / 2; visible: !header.narrow }
     }
 
     QQC2.Menu {
