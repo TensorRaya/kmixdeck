@@ -322,7 +322,6 @@ private:
     int m_reconnectMs = 500;      // channel + mix null sinks, key: node name
     QHash<uint32_t, QString> m_idToName;
     bool m_firstRun = false;              // no layout.json existed when we started (UX-3)
-    QHash<QString, quint64> m_cellWriteSeq;   // per cell node: last setCellVolume() generation (WirePlumber-race retry)
     // What the user wants a cell/mix node to be, by node name. WirePlumber's restore-stream writes ITS value (a stored
     // one or the 1.0 default) to a node whenever it (re)appears, at a moment we cannot predict — 400 ms after creation
     // in a quiet session, seconds later under load (ctest35: CT-7 import lost a mute, DV-6 lost a cell volume, both
@@ -331,6 +330,12 @@ private:
     struct Intent { float volume; bool mute; int rewrites = 0; };
     QHash<QString, Intent> m_intent;
     void intend(const QString &node, float volume, bool mute) { m_intent[node] = {volume, mute}; }
+    /// THE way to write a cell/mix node: records the intent, then writes PipeWire. Every path that changes a cell's
+    /// volume/mute goes through here — a write that skips the intent is fought back by onNode() (MX-7 under ctest37:
+    /// propagateLinks() wrote the follower to 0.1 with a stale 1.0 intent, and the guard restored 1.0).
+    void writeCell(const QString &node, uint32_t id, float volume, bool mute) { intend(node, volume, mute); m_graph.setVolume(id, volume, mute); }
+    /// onNode(): echo vs intent for one node; returns true if a rewrite was issued (caller then trusts the intent, not the echo)
+    bool enforceIntent(const pw::NodeInfo &n);
     QString m_defaultSink, m_defaultSource;
 };
 

@@ -289,20 +289,8 @@ void Mixer::setCellVolume(const QString &ch, const QString &mix, double cubic) {
     breakLink(ch, mix);                       // MX-7: a direct write to a follower unlinks it
     const float lin = cubicToLinear(std::clamp(cubic, 0.0, 1.0));
     it->volume = lin;                         // optimistic; PipeWire echoes via nodeChanged
-    intend(Names::cellNode(ch, mix), lin, it->mute);
-    m_graph.setVolume(it->id, lin, it->mute);
-    // WirePlumber's restore-stream writes ITS value (default 1.0 for a node it has never seen) shortly after a new
-    // stream appears; a user write in that window loses (DV-6 under ctest31: `cell set -6dB` on a channel created a
-    // second earlier read back as 1.000 — same mechanism restorePendingCellStates() already guards against, MX-8).
-    // Re-assert once after WirePlumber had its turn; identical values are a no-op in PipeWire.
-    // Guard: the LAST user intent wins — a newer setCellVolume() bumps m_cellWriteSeq and this retry stands down.
-    const uint32_t id = it->id; const bool mute = it->mute; const quint64 seq = ++m_cellWriteSeq[Names::cellNode(ch, mix)];
-    QTimer::singleShot(400, this, [this, id, lin, mute, ch, mix, seq] {
-        const QString node = Names::cellNode(ch, mix);
-        auto c = m_cells.constFind(node);
-        if (c == m_cells.constEnd() || c->id != id || m_cellWriteSeq.value(node) != seq) return;
-        if (std::abs(c->volume - lin) > 1e-3f) { qInfo() << "cell" << node << "volume was overwritten to" << c->volume << "after our write of" << lin << "- re-asserting"; m_graph.setVolume(id, lin, mute); }
-    });
+    writeCell(Names::cellNode(ch, mix), it->id, lin, it->mute);
+    // WirePlumber's restore-stream may overwrite this later; onNode() compares the echo with the intent (writeCell) and puts it back.
     Q_EMIT cellChanged(ch, mix);
     propagateLinks(ch, mix);
 }
@@ -332,7 +320,7 @@ void Mixer::propagateLinks(const QString &ch, const QString &sourceMix) {
         auto it = m_cells.find(Names::cellNode(ch, l.mix)); if (it == m_cells.end()) continue;
         if (it->volume == src->volume && it->mute == src->mute) continue;
         it->volume = src->volume; it->mute = src->mute;
-        m_graph.setVolume(it->id, it->volume, it->mute);
+        writeCell(Names::cellNode(ch, l.mix), it->id, it->volume, it->mute);
         Q_EMIT cellChanged(ch, l.mix);
     }
 }
@@ -340,17 +328,7 @@ void Mixer::setCellMuted(const QString &ch, const QString &mix, bool muted) {
     auto it = m_cells.find(Names::cellNode(ch, mix)); if (it == m_cells.end()) return;
     breakLink(ch, mix);
     it->mute = muted;
-    intend(Names::cellNode(ch, mix), it->volume, muted);
-    m_graph.setVolume(it->id, it->volume, muted);
-    // same WirePlumber restore-stream window as setCellVolume(): DV-6 under ctest34 — `cell mute voice stream on`
-    // read back unmuted, the app's tone summed into the mic measurement (+4.7 dB). One re-assert, last intent wins.
-    const uint32_t id = it->id; const float vol = it->volume; const quint64 seq = ++m_cellWriteSeq[Names::cellNode(ch, mix)];
-    QTimer::singleShot(400, this, [this, id, vol, muted, ch, mix, seq] {
-        const QString node = Names::cellNode(ch, mix);
-        auto c = m_cells.constFind(node);
-        if (c == m_cells.constEnd() || c->id != id || m_cellWriteSeq.value(node) != seq) return;
-        if (c->mute != muted) { qInfo() << "cell" << node << "mute was overwritten to" << c->mute << "after our write of" << muted << "- re-asserting"; m_graph.setVolume(id, vol, muted); }
-    });
+    writeCell(Names::cellNode(ch, mix), it->id, it->volume, muted);
     Q_EMIT cellChanged(ch, mix);
     propagateLinks(ch, mix);
 }
@@ -432,11 +410,11 @@ double Mixer::mixVolume(const QString &slug) const { auto it = m_sinks.constFind
 bool   Mixer::mixMuted(const QString &slug) const  { auto it = m_sinks.constFind(Names::mixNode(slug)); return it == m_sinks.constEnd() ? false : it->mute; }
 void Mixer::setMixVolume(const QString &slug, double linear) {
     auto it = m_sinks.find(Names::mixNode(slug)); if (it == m_sinks.end()) return;
-    it->volume = static_cast<float>(std::clamp(linear, 0.0, 1.0)); m_graph.setVolume(it->id, it->volume, it->mute); Q_EMIT mixChanged(slug);
+    it->volume = static_cast<float>(std::clamp(linear, 0.0, 1.0)); writeCell(Names::mixNode(slug), it->id, it->volume, it->mute); Q_EMIT mixChanged(slug);
 }
 void Mixer::setMixMuted(const QString &slug, bool muted) {
     auto it = m_sinks.find(Names::mixNode(slug)); if (it == m_sinks.end()) return;
-    it->mute = muted; m_graph.setVolume(it->id, it->volume, muted); Q_EMIT mixChanged(slug);
+    it->mute = muted; writeCell(Names::mixNode(slug), it->id, it->volume, muted); Q_EMIT mixChanged(slug);
 }
 void Mixer::renameChannel(const QString &slug, const QString &name) { for (auto &c : m_channels) if (c.slug == slug) { c.name = name; Q_EMIT channelChanged(slug); } if (auto *l = m_layout.channel(slug)) { l->name = name; saveLayout(); } }
 void Mixer::renameMix(const QString &slug, const QString &name)     { for (auto &m : m_mixes) if (m.slug == slug) { m.name = name; Q_EMIT mixChanged(slug); } if (auto *l = m_layout.mix(slug)) { l->name = name; saveLayout(); } }
@@ -957,7 +935,7 @@ void Mixer::startAudition(const QString &kind, const QString &slug) {
             saved.insert(s, {it->volume, it->mute});
             const bool mine = (s == slug);
             it->mute = !mine; if (mine) it->volume = 1.0f;
-            m_graph.setVolume(it->id, it->volume, it->mute);
+            writeCell(node, it->id, it->volume, it->mute);
         }
     };
     if (isCh) snapAndSilence(channelSlugs(), m_audition.channels, &Names::channelNode);
@@ -971,7 +949,7 @@ void Mixer::stopAudition() {
             const QString node = slugKind == QLatin1String("channel") ? Names::channelNode(it.key()) : Names::mixNode(it.key());
             auto sink = m_sinks.find(node); if (sink == m_sinks.end()) continue;
             sink->volume = it->first; sink->mute = it->second;
-            m_graph.setVolume(sink->id, sink->volume, sink->mute);
+            writeCell(node, sink->id, sink->volume, sink->mute);
             if (slugKind == QLatin1String("channel")) Q_EMIT channelChanged(it.key()); else Q_EMIT mixChanged(it.key());
         }
     };
@@ -1224,14 +1202,8 @@ void Mixer::restorePendingCellStates() {
             auto s = m_sinks.find(it.key()); if (s != m_sinks.end()) { s->volume = it->first; s->mute = it->second; }
             applyChannelGain(it.key().mid(17));
         } else {
-            intend(it.key(), it->first, it->second);
-            m_graph.setVolume(n->id, it->first, it->second);
-            // WirePlumber applies its stored/default volume to a NEW node right after it appears — for a node it has
-            // never seen (a duplicated mix, an imported channel) that write lands after ours and resets it to unity
-            // (MX-8 measured 1.0 after we wrote 0.501, 2026-09-17). Undo worked only because WirePlumber remembered
-            // the old value. Write once more after WirePlumber had its turn; the later write wins in PipeWire.
-            const uint32_t id = n->id; const float vol = it->first; const bool mute = it->second;
-            QTimer::singleShot(400, this, [this, id, vol, mute] { if (m_idToName.contains(id)) m_graph.setVolume(id, vol, mute); });
+            writeCell(it.key(), n->id, it->first, it->second);
+            // WirePlumber applies its stored/default volume to a NEW node whenever it likes; writeCell() recorded the intent, onNode() enforces it.
         }
         it = m_pendingCellState.erase(it);
     }
@@ -1274,6 +1246,17 @@ void Mixer::destroyOurNodes(const std::function<bool(const QString &)> &match) {
 }
 
 // Discover our objects from the live graph — the graph is the source of truth (DV-1).
+bool Mixer::enforceIntent(const pw::NodeInfo &n) {
+    auto in = m_intent.find(n.name); if (in == m_intent.end()) return false;
+    if (std::abs(n.volume - in->volume) <= 1e-3f && n.mute == in->mute) { in->rewrites = 0; return false; }
+    // somebody else (WirePlumber restore-stream) wrote this node — put the user's intent back. Bounded so a genuinely
+    // fighting peer cannot make us loop forever; more than one rewrite has not been seen.
+    if (in->rewrites >= 3) return false;
+    ++in->rewrites;
+    qInfo() << "node" << n.name << "echoed" << n.volume << n.mute << "but intent is" << in->volume << in->mute << "- rewriting";
+    m_graph.setVolume(n.id, in->volume, in->mute);
+    return true;
+}
 void Mixer::onNode(const pw::NodeInfo &n) {
     m_idToName[n.id] = n.name;
     static const QString chP = QStringLiteral("kmixdeck.channel."), mxP = QStringLiteral("kmixdeck.mix."), lkP = QStringLiteral("kmixdeck.link.");
@@ -1291,6 +1274,7 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         const QString slug = n.name.mid(mxP.size());
         const bool isNew = !m_sinks.contains(n.name);
         m_sinks[n.name] = n;
+        if (enforceIntent(n)) { auto &c = m_sinks[n.name]; c.volume = m_intent[n.name].volume; c.mute = m_intent[n.name].mute; }
         if (isNew && !m_pendingCellState.isEmpty()) restorePendingCellStates();   // undo of a mix: master volume/mute (nodes arrive in any order — CI showed the mix sink after its cells)
         QString disp = n.description; if (disp.startsWith(QLatin1String("Mix: "))) disp.remove(0, 5);
         bool found = false; for (auto &m : m_mixes) if (m.slug == slug) { found = true; if (m.name.isEmpty()) m.name = disp; }
@@ -1299,11 +1283,7 @@ void Mixer::onNode(const pw::NodeInfo &n) {
     } else if (n.name.startsWith(lkP) && !n.name.endsWith(QLatin1String(".in")) && n.mediaClass.startsWith(QLatin1String("Stream/Output"))) {
         const bool isNew = !m_cells.contains(n.name);
         m_cells[n.name] = n;
-        if (auto in = m_intent.find(n.name); in != m_intent.end() && (std::abs(n.volume - in->volume) > 1e-3f || n.mute != in->mute)) {
-            // somebody else (WirePlumber restore-stream) wrote this node — put the user's intent back. Bounded so a
-            // genuinely fighting peer cannot make us loop forever; 3 rewrites have never been needed in practice.
-            if (in->rewrites < 3) { ++in->rewrites; qInfo() << "cell" << n.name << "echoed" << n.volume << n.mute << "but intent is" << in->volume << in->mute << "- rewriting"; m_graph.setVolume(n.id, in->volume, in->mute); auto &c = m_cells[n.name]; c.volume = in->volume; c.mute = in->mute; }
-        } else if (in != m_intent.end()) in->rewrites = 0;
+        if (enforceIntent(n)) { auto &c = m_cells[n.name]; c.volume = m_intent[n.name].volume; c.mute = m_intent[n.name].mute; }
         const QStringList parts = n.name.mid(lkP.size()).split(QLatin1Char('.'));
         if (parts.size() == 2) { Q_EMIT cellChanged(parts[0], parts[1]); if (!isNew) propagateLinks(parts[0], parts[1]); }
         if (isNew) { layout = true; if (!m_pendingCellState.isEmpty()) restorePendingCellStates(); }
