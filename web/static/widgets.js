@@ -6,9 +6,9 @@ const fracOf = (lin) => (lin <= 0 ? 0 : Math.max(0, Math.min(1, 1 - (20 * Math.l
 
 /** Vertical peak meter, same drawing rules as LevelMeter.qml (UX-6/UX-16): dB scale −60…0, colour bands with 2 dB
  *  hysteresis, peak-hold marker that sits 1 s and then slides. Ballistics (hold/fall) come from the daemon. */
-export function meter(key, { horizontal = false, probe } = {}) {
+export function meter(key, { horizontal = false, probe, cls = "" } = {}) {
   const el = document.createElement("div");
-  el.className = "meter" + (horizontal ? " horizontal" : "");
+  el.className = "meter" + (horizontal ? " horizontal" : "") + (cls ? " " + cls : "");
   if (probe) el.dataset.probe = probe;
   el.dataset.meterKey = key;
   el.innerHTML = '<div class="bar"></div><div class="hold"></div><div class="clip"></div>';
@@ -40,20 +40,22 @@ requestAnimationFrame(frame);
 /** Fader: pointer-events slider with a cubic curve (UX-7), keyboard (UX-4), ≥ 44 px hit area on touch.
  *  `value` is linear gain 0…1 (what the bus speaks); the handle position is cubic. onInput fires while dragging,
  *  onCommit once on release / key. Double-tap → unity (1.0). */
-export function fader({ value = 1, max = 1, vertical = true, label, probe, onInput, onCommit }) {
+export function fader({ value = 1, max = 1, vertical = false, label, probe, meterKey, onInput, onCommit }) {
   const el = document.createElement("div");
   el.className = "fader" + (vertical ? " vertical" : " horizontal");
   el.setAttribute("role", "slider"); el.tabIndex = 0;
   el.setAttribute("aria-valuemin", "0"); el.setAttribute("aria-valuemax", "100");
   if (label) el.setAttribute("aria-label", label);
   if (probe) el.dataset.probe = probe;
-  el.innerHTML = '<div class="track"><div class="fill"></div></div><div class="handle"></div><output class="db"></output>';
-  const fill = el.querySelector(".fill"), handle = el.querySelector(".handle"), out = el.querySelector(".db");
+  el.innerHTML = '<div class="track"><div class="fill"></div><div class="live"></div><div class="tick"></div></div><div class="handle"></div><output class="db"></output>';
+  const fill = el.querySelector(".fill"), live = el.querySelector(".live"), handle = el.querySelector(".handle"), out = el.querySelector(".db");
+  if (meterKey) { el.dataset.meterKey = meterKey; el._live = live; el._band = 0; faderMeters.add(el); }
   const maxCubic = linToCubic(max);
   let lin = value, dragging = false, lastTap = 0;
 
   const render = () => {
     const pos = Math.min(1, linToCubic(lin) / maxCubic);
+    el._pos = pos;
     fill.style.transform = vertical ? `scaleY(${pos})` : `scaleX(${pos})`;   // track is padded 8px, handle travels 15px..; close enough at 132px
     el.style.setProperty("--pos", pos);                         // handle travels inside the track's padded range (CSS)
     out.textContent = dbLabel(lin);
@@ -88,9 +90,26 @@ export function fader({ value = 1, max = 1, vertical = true, label, probe, onInp
     ev.preventDefault();
   });
   el.update = (v) => { if (!dragging) { lin = v; render(); } };
+  el.querySelector(".tick").style[vertical ? "bottom" : "left"] = `${(1 / maxCubic) * 100}%`;   // unity (0 dB) mark
   render();
   return el;
 }
+// live level inside faders (ADR 0006 / Fader.qml liveFill): dB scale −60…0, clipped at the knob, UX-16 bands
+const faderMeters = new Set();
+function faderFrame() {
+  for (const f of faderMeters) {
+    if (!f.isConnected) { faderMeters.delete(f); continue; }
+    const lin = peaks[f.dataset.meterKey] ?? 0, db = lin > 0 ? 20 * Math.log10(lin) : -60;
+    const frac = Math.max(0, Math.min(1, (db + 60) / 60));
+    let b = f._band;
+    if (b === 0 && db > -18) b = db > -6 ? 2 : 1; else if (b === 1) { if (db > -6) b = 2; else if (db < -20) b = 0; } else if (b === 2 && db < -8) b = 1;
+    f._band = b; f.dataset.band = b;
+    const shown = Math.min(frac, f._pos ?? 1);
+    f._live.style.transform = f.classList.contains("vertical") ? `scaleY(${shown})` : `scaleX(${shown})`;
+  }
+  requestAnimationFrame(faderFrame);
+}
+requestAnimationFrame(faderFrame);
 
 export function button(text, { probe, cls = "", pressed, title, onClick } = {}) {
   const b = document.createElement("button");
@@ -176,6 +195,8 @@ const ICON_PATHS = {
   // link (two arrows head-to-tail): "this cell follows another mix"
   link: "M4 8h13M13 4l4 4-4 4M20 16H7M11 12l-4 4 4 4",
   more: "M12 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm0 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm0 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z",
+  speaker: "M11 5L6 9H3v6h3l5 4V5zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13",
+  muted: "M11 5L6 9H3v6h3l5 4V5zM22 9l-6 6M16 9l6 6",
   plus: "M12 5v14M5 12h14",
 };
 export function svgIcon(name) {

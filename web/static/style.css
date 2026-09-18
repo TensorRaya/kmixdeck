@@ -37,75 +37,78 @@ button.danger, .menu button.danger { color: var(--red); }
 main { padding: 12px; overflow: auto; }
 .empty { color: var(--muted); text-align: center; padding: 40px 16px; }
 
-/* ---- mixer grid: first column = channel headers, then one column per mix */
-.mixer { display: grid; grid-template-columns: minmax(150px, 190px) repeat(var(--mixes), minmax(120px, 1fr)); gap: 6px; align-items: start; }
-.channel-header, .mix-header, .cell { height: 100%; }
+/* ---- mixer grid (MixerPage.qml / Wave Link): first column = channel headers, one column per mix; every row is one
+   channel, every cell one horizontal fader whose track is the meter. Rows are 2 gridUnits tall, not a fader's height. */
+.mixer { display: grid; grid-template-columns: minmax(200px, 260px) repeat(var(--mixes), minmax(180px, 1fr)); gap: 6px; align-items: stretch; }
 .corner { display: flex; align-items: flex-end; }
 .corner.bottom { align-items: flex-start; }
-.channel-header, .mix-header, .cell { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 8px; position: relative; overflow: hidden; }
-.stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--accent); }   /* --accent set inline per header = the entity's colour */
-.name { background: none; border: none; font-weight: 600; font-size: 15px; padding: 0 4px; text-align: left; min-height: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.head-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.source { color: var(--muted); font-size: 12px; margin: 0 4px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.channel-header, .mix-header, .cell { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); position: relative; overflow: hidden; }
+.channel-header, .mix-header { padding: 5px 8px 4px 12px; display: flex; flex-direction: column; }
+.stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--accent); }
+/* one row per header, like a Wave Link channel card: [name+source block][controls…] */
+.hbody { display: flex; flex-direction: row; align-items: center; gap: 8px; min-height: 40px; }
+.hbody .head-row { flex: 1 1 auto; display: flex; flex-direction: column; align-items: flex-start; gap: 0; min-width: 0; }
+.name-line { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.hbody .hrow { flex: 0 0 auto; }
+.mix-header .hbody { flex-wrap: wrap; }
+.mix-header .hbody .head-row { flex: 1 1 100%; flex-direction: row; align-items: center; }
+.mix-header .hbody .hrow { flex: 1 1 100%; }
+.head-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.name { background: none; border: none; font-weight: 600; font-size: 15px; padding: 0; text-align: left; min-height: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.source { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: none; border: none; text-align: left; padding: 0; min-height: 0; }
+.source.link:hover { color: var(--accent); }
 .gone { color: var(--amber); }
-.badge { display: inline-block; font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; margin-left: 6px; }
-/* header strip = [button column][vertical fader][meter] — the same shape as a cell, like a real desk */
-.strip { display: flex; align-items: flex-start; justify-content: center; gap: 6px; margin-top: 2px; }
-.strip .fader.vertical { margin-bottom: 16px; }
-.strip .meter { height: 116px; margin-top: 8px; }
-.button-col { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; align-items: center; }
-.button-col button { min-width: 40px; min-height: 30px; padding: 3px 6px; font-size: 13px; }
-/* pan knob */
-.knob { display: flex; flex-direction: column; align-items: center; width: 40px; margin-top: 4px; touch-action: none; user-select: none; cursor: ns-resize; }
-.knob svg { display: block; width: 32px; height: 28px; }
-.knob .arc { stroke: color-mix(in srgb, var(--text) 35%, transparent); stroke-width: 4; stroke-linecap: round; }
-.knob .val { stroke: var(--accent); stroke-width: 4; stroke-linecap: round; }
-.knob .pointer { stroke: var(--text); stroke-width: 3; stroke-linecap: round; }
-.knob.dragging .pointer, .knob:focus-visible .pointer { stroke: var(--accent); }
-.knob output { font-size: 10px; color: var(--muted); margin-top: 0; font-variant-numeric: tabular-nums; line-height: 1; }
-/* icon buttons: inline SVG so they render the same in every browser/font */
-button svg.i { width: 18px; height: 18px; display: block; margin: 0 auto; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.mix-header { display: flex; flex-direction: column; align-items: center; }
-.mix-header .head-row, .mix-header .name, .mix-header .source { text-align: center; }
+.badge { display: inline-block; font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; }
+.spacer { flex: 1; }
+.hrow { display: flex; align-items: center; gap: 4px; min-height: 36px; }
+.hrow .fader { flex: 1; }
+.hrow button, .cell button { min-width: 36px; min-height: 36px; padding: 4px; }
 .mix-header.muted { background: color-mix(in srgb, var(--red) 22%, var(--panel)); border-color: var(--red); }
 .mix-header.hearing { border-color: var(--hear); }
+.mix-header .outmeter, .channel-header .hmeter { position: relative; height: 4px; margin: 6px 2px 2px; border-radius: 2px; }
 
-/* ---- fader */
-.fader { position: relative; touch-action: none; user-select: none; -webkit-user-select: none; }
-.fader.vertical { width: var(--handle); height: 132px; flex: none; }
-.fader.horizontal { height: 32px; min-width: 50px; }
-.fader .track { position: absolute; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
-.fader.vertical .track { left: 50%; top: 8px; bottom: 8px; width: 10px; transform: translateX(-50%); }
-.fader.vertical .handle-area { position: absolute; top: 8px; bottom: 8px; left: 0; right: 0; }
-.fader.horizontal .track { top: 50%; left: 8px; right: 8px; height: 8px; transform: translateY(-50%); }
-.fader .fill { position: absolute; inset: 0; background: var(--accent); transform-origin: bottom; }
-.fader.horizontal .fill { transform-origin: left; }
-.fader .handle { position: absolute; background: var(--text); border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
-.fader.vertical .handle { left: 50%; width: 30px; height: 14px; transform: translate(-50%, 50%); bottom: calc(15px + (100% - 30px) * var(--pos, 1)) !important; }
-.fader.horizontal .handle { top: 50%; width: 12px; height: 22px; transform: translate(-50%, -50%); left: calc(14px + (100% - 28px) * var(--pos, 1)) !important; }
-.fader.dragging .handle { background: var(--accent); }
-.fader .db { position: absolute; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.fader.vertical .db { bottom: -15px; left: 50%; transform: translateX(-50%); white-space: nowrap; }
-.fader.horizontal .db { display: none; }
-.cell.muted .fader .fill { background: var(--muted); }
-/* cell = [fader | meter | M over ⇄] — the buttons stand beside the fader, so the cell is exactly one fader tall */
-.cell { display: flex; align-items: flex-start; justify-content: center; gap: 6px; }
-.cell .fader.vertical { margin: 0 0 16px; }
-.cell .meter { height: 116px; margin-top: 8px; }
-.cell-foot { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-.cell-foot button { min-width: 40px; min-height: 40px; padding: 4px 6px; font-size: 13px; }
+/* ---- cell: [mute][fader][link] */
+.cell { display: flex; align-items: center; gap: 4px; padding: 5px 8px; }
+.cell .fader { flex: 1; }
 .cell.linked .link { border-color: var(--accent); }
+.cell.muted .fader .fill { background: var(--muted); }
 .pending { color: var(--muted); }
 
-/* ---- meter: bar scales from the bottom (or left), band colour via data-band */
-.meter { position: relative; width: 10px; background: rgba(127,127,127,.15); border-radius: 5px; overflow: hidden; }
-.meter.horizontal { width: auto; height: 6px; margin-top: 8px; }
+/* ---- fader: horizontal pill, gain fill + live level inside (Fader.qml), unity tick, round knob */
+.fader { position: relative; touch-action: none; user-select: none; -webkit-user-select: none; height: 36px; min-width: 80px; }
+.fader.disabled { opacity: .5; }
+.fader .track { position: absolute; top: 50%; left: 4px; right: 4px; height: 10px; transform: translateY(-50%); background: color-mix(in srgb, var(--text) 16%, transparent); border-radius: 5px; overflow: hidden; }
+.fader .fill { position: absolute; inset: 0; transform-origin: left; background: var(--green); opacity: .4; }
+.fader .live { position: absolute; inset: 0; transform-origin: left; transform: scaleX(0); background: var(--green); }
+.fader[data-band="1"] .live { background: var(--amber); }
+.fader[data-band="2"] .live { background: var(--red); }
+.fader .tick { position: absolute; top: -2px; bottom: -2px; width: 2px; background: color-mix(in srgb, var(--text) 55%, transparent); transform: translateX(-50%); }
+.fader .handle { position: absolute; top: 50%; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); border: 2px solid var(--panel); box-shadow: 0 1px 4px rgba(0,0,0,.5); transform: translate(-50%, -50%); left: calc(14px + (100% - 28px) * var(--pos, 1)); }
+.fader.dragging .handle, .fader:focus-visible .handle { transform: translate(-50%, -50%) scale(1.15); }
+.fader .db { position: absolute; right: 0; top: -14px; font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; opacity: 0; transition: .15s; }
+.fader:hover .db, .fader.dragging .db, .fader:focus-visible .db { opacity: 1; }
+.fader.vertical { display: none; }   /* not used on the mixer page any more */
+
+/* ---- meter (standalone): channel header has a short vertical one, mix header a thin horizontal one at the bottom */
+.meter { position: relative; width: 6px; height: 28px; background: rgba(127,127,127,.15); border-radius: 3px; overflow: hidden; }
+
+.meter.horizontal { width: auto; height: 6px; }
 .meter .bar { position: absolute; inset: 0; transform-origin: bottom; transform: scaleY(0); background: var(--green); }
 .meter.horizontal .bar { transform-origin: left; transform: scaleX(0); }
 .meter[data-band="1"] .bar { background: var(--amber); }
 .meter[data-band="2"] .bar { background: var(--red); }
 .meter .hold { position: absolute; left: 0; right: 0; height: 2px; background: var(--text); bottom: 0; }
 .meter.horizontal .hold { top: 0; bottom: 0; width: 2px; height: auto; left: 0; }
+
+/* pan knob (QQC2.Dial in ChannelHeader.qml) */
+.knob { display: flex; flex-direction: column; align-items: center; width: 36px; touch-action: none; user-select: none; cursor: ns-resize; }
+.knob svg { display: block; width: 30px; height: 26px; }
+.knob .arc { stroke: color-mix(in srgb, var(--text) 35%, transparent); stroke-width: 4; stroke-linecap: round; }
+.knob .val { stroke: var(--accent); stroke-width: 4; stroke-linecap: round; }
+.knob .pointer { stroke: var(--text); stroke-width: 3; stroke-linecap: round; }
+.knob.dragging .pointer, .knob:focus-visible .pointer { stroke: var(--accent); }
+.knob output { font-size: 9px; color: var(--muted); line-height: 1; font-variant-numeric: tabular-nums; }
+button svg.i { width: 18px; height: 18px; display: block; margin: 0 auto; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ---- apps */
 .apps { display: flex; flex-direction: column; gap: 8px; max-width: 900px; margin: 0 auto; }
@@ -155,7 +158,7 @@ svg.wires .wire:hover { stroke-width: 5px; opacity: 1; }
 
 /* ---- phone: one mix per screen width, headers stack */
 @media (max-width: 720px) {
-  .mixer { grid-template-columns: minmax(140px, 160px) repeat(var(--mixes), minmax(112px, 1fr)); gap: 4px; }
+  .mixer { grid-template-columns: minmax(150px, 180px) repeat(var(--mixes), minmax(140px, 1fr)); gap: 4px; }
   #hearing { order: 5; width: 100%; margin-left: 0; }
   .app { grid-template-columns: 36px 1fr; }
   .app .target { grid-column: 1 / -1; justify-content: flex-start; max-width: none; }

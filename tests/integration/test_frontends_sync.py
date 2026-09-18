@@ -67,7 +67,7 @@ CORE = [
      lambda s: abs(next(c for c in s.cli("status", json_out=True)["channels"] if c["Slug"] == "game")["Trim"] - 10 ** (-12 / 20)) < 0.01,
      ["channelTrim/game.value", "channelTrimText/game.text"], lambda g: abs(float(g["channelTrim/game.value"]) - _cubic(-12)) < 0.02 and g["channelTrimText/game.text"].startswith("-12"),
      ["trayChannelTrim/game.value"], lambda g: abs(float(g["trayChannelTrim/game.value"]) - _cubic(-12)) < 0.02,
-     ["channelTrim/game.dataset.value", "channelTrim/game.ariaValueText"], lambda g: abs(float(g["channelTrim/game.dataset.value"]) - 10 ** (-12 / 20)) < 0.02 and g["channelTrim/game.ariaValueText"].startswith("-12")),
+     ["channelHeader/game.dataset.trim"], lambda g: abs(float(g["channelHeader/game.dataset.trim"]) - 10 ** (-12 / 20)) < 0.02),
     ("UX-2 listening device",
      lambda s: (make_fake_sink(s, "fake.ears", "My Ears"), time.sleep(0.5), s.cli("listen", "fake.ears")),
      lambda s: s.cli("listen").stdout.strip().split()[0] == "fake.ears",
