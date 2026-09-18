@@ -13,6 +13,7 @@
     <property name="Version" type="s" access="read"/>
     <!-- true while the service has a live PipeWire connection -->
     <property name="Connected" type="b" access="read"/>
+    <property name="LastError" type="s" access="read"/>
     <!-- hardware sinks a Mix.OutputDevice may point to: node.name → human description -->
     <property name="OutputDevices" type="a{ss}" access="read"/>
     <!-- hardware sources a channel may be fed by (ADR 0007): node.name → human description -->

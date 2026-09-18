@@ -47,6 +47,14 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     });
     // AR-4: PipeWire restarted under us → drop everything (nodeRemoved for each → layout/app objects vanish on
     // the bus), then reconnect with backoff; the registry replays the graph and objects reappear.
+    QObject::connect(&m_graph, &pw::Graph::moduleLoadFailed, this, [this](const QString &args) {
+        // args start with `{ node.description = "Input: Talk ← …" capture.props = …` — the quoted description is the name a user knows
+        static const QRegularExpression rx(QStringLiteral(R"rx(node\.description\s*=\s*"((?:[^"\\]|\\.)*)")rx"));
+        const auto m = rx.match(args);
+        m_lastError = QStringLiteral("edge could not be created: ") + (m.hasMatch() ? m.captured(1) : args.left(80)) + QStringLiteral(" (see journal)");
+        qCCritical(lcMixer) << m_lastError;
+        Q_EMIT lastErrorChanged();
+    });
     QObject::connect(&m_graph, &pw::Graph::disconnected, this, [this](const QString &why) {
         qCWarning(lcMixer) << "PipeWire disconnected:" << why;
         m_graph.teardown();

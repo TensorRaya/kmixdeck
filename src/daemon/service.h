@@ -238,6 +238,7 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_CLASSINFO("D-Bus Interface", "org.kmixdeck1.Mixer")
     Q_PROPERTY(QString Version READ version CONSTANT)
     Q_PROPERTY(bool Connected READ connected)
+    Q_PROPERTY(QString LastError READ lastError)   // last graph failure the daemon could not repair itself (EMFILE …); "" = none
     Q_PROPERTY(StringMap OutputDevices READ outputDevices)     // a{ss}: node.name → description
     Q_PROPERTY(StringMap InputDevices READ inputDevices)
     Q_PROPERTY(PortMap DevicePorts READ devicePorts)     // ADR 0009 D4: node → ["POS|port.name|port.alias", …]
@@ -257,6 +258,7 @@ public:
     MixerAdaptor(Mixer *mixer, QObject *parent);
     QString version() const;
     bool connected() const;
+    QString lastError() const;
     StringMap outputDevices() const;
     StringMap inputDevices() const;
     PortMap devicePorts() const;

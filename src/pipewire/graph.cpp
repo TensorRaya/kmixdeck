@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "graph.h"
+#include <cerrno>
+#include <cstring>
 #include "../logging.h"
 
 #include <pipewire/pipewire.h>
@@ -434,8 +436,16 @@ void Graph::createNullNode(const QString &name, const QString &description, cons
 
 void Graph::loadLoopback(const QString &args, const char *module) {
     pw_thread_loop_lock(d->loop);
-    pw_context_load_module(d->context, module, args.toUtf8().constData(), nullptr);
+    pw_impl_module *m = pw_context_load_module(d->context, module, args.toUtf8().constData(), nullptr);
     pw_thread_loop_unlock(d->loop);
+    if (!m) {
+        // Seen 2026-09-18 on a 32x32 desk: EMFILE (fd soft limit) — PipeWire only logged "Protocol error" and the
+        // edge was silently missing. Name the edge and the errno so the journal tells the story in one line.
+        const int e = errno;
+        qCCritical(lcPipewire).noquote() << "failed to load" << module << "-" << strerror(e)
+                                         << (e == EMFILE ? "(raise the open-files limit: systemd LimitNOFILE / ulimit -n)" : "") << "\n  args:" << args.left(200);
+        QMetaObject::invokeMethod(this, [this, args] { Q_EMIT moduleLoadFailed(args); }, Qt::QueuedConnection);
+    }
 }
 
 pw_thread_loop *Graph::threadLoop() const { return d->loop; }

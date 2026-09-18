@@ -110,6 +110,7 @@ public:
 Q_SIGNALS:
     void connected();
     void disconnected(const QString &reason);
+    void moduleLoadFailed(const QString &args);   // a loopback/filter module did not load (EMFILE, bad args)
     void nodeAdded(const kmixdeck::pw::NodeInfo &node);
     void nodeChanged(const kmixdeck::pw::NodeInfo &node);
     void nodeRemoved(uint32_t id);

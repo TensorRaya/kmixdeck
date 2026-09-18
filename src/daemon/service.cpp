@@ -276,6 +276,7 @@ void LevelsAdaptor::syncTargets() {
 MixerAdaptor::MixerAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor(parent), m_mixer(mixer) {}
 QString MixerAdaptor::version() const { return QStringLiteral(KMIXDECK_VERSION_STRING); }
 bool MixerAdaptor::connected() const { return m_mixer->connected(); }
+QString MixerAdaptor::lastError() const { return m_mixer->lastError(); }
 QString MixerAdaptor::fxTypes() const { return QJsonDocument(QJsonArray(m_mixer->fxTypes())).toJson(QJsonDocument::Compact); }
 QString MixerAdaptor::fxPresets() const { return QJsonDocument(m_mixer->fxPresets()).toJson(QJsonDocument::Compact); }
 StringMap MixerAdaptor::outputDevices() const {
@@ -413,6 +414,9 @@ Service::Service(QObject *parent) : QObject(parent) {
     connect(&m_mixer, &Mixer::connectedChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("Connected"), m_mixer.connected()}});
     });
+    connect(&m_mixer, &Mixer::lastErrorChanged, this, [this] {
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("LastError"), m_mixer.lastError()}});
+    });
     connect(&m_mixer, &Mixer::cellChanged, this, [this](const QString &ch, const QString &mix) {
         if (auto *o = qobject_cast<CellObject *>(m_objects.value(cellPath(ch, mix)))) o->notifyChanged();
     });
@@ -497,7 +501,7 @@ void Service::syncObjects() {
 ManagedObjects Service::managedObjects() const {
     ManagedObjects out;
     out.insert(QDBusObjectPath(QLatin1String(kRootPath)), InterfaceMap{{QStringLiteral("org.kmixdeck1.Mixer"),
-        {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()},
+        {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()}, {QStringLiteral("LastError"), m_mixerAdaptor->lastError()},
          {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())},
          {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor->devicePorts())}, {QStringLiteral("VirtualDevices"), m_mixerAdaptor->virtualDevices()}, {QStringLiteral("HiddenDevices"), m_mixerAdaptor->hiddenDevices()}, {QStringLiteral("FirstRun"), m_mixerAdaptor->firstRun()}, {QStringLiteral("DefaultSink"), m_mixerAdaptor->defaultSink()}, {QStringLiteral("DefaultSource"), m_mixerAdaptor->defaultSource()},
          {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("ListeningDevice"), m_mixer.listeningDevice()}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}, {QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()},

@@ -20,6 +20,7 @@ The root object at `/org/kmixdeck1`. Everything else hangs below it; `GetManaged
 |---|---|---|---|
 | `Version` | string | read | Service version, e.g. `0.1.1`. Constant for the life of the process. |
 | `Connected` | bool | read | True while a PipeWire connection is alive. `false` means the daemon is waiting for PipeWire — the layout is intact and re-applies itself. |
+| `LastError` | string | read | Last graph-level failure the daemon could not repair on its own — an edge module that did not load (open-files limit hit, bad arguments). Empty when everything the layout asks for exists. Frontends show it as a banner; `kmixdeck status` prints it. |
 | `OutputDevices` | dict<string,string> | read | Hardware sinks a mix may play to: `node.name` → human description. Unplugged devices stay in here with their last description. |
 | `InputDevices` | dict<string,string> | read | Hardware sources a channel may be fed by: `node.name` → description (ADR 0007). |
 | `DevicePorts` | `a{sas}` | read | Per-device port list: `node.name` → the port names that device exposes (`FL`, `FR`, `AUX3`, …). Basis for the `<ref>` grammar (ADR 0009). |

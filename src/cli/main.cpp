@@ -91,7 +91,7 @@ bool parseBool(const QStringList &a, int i, bool *b) { if (a.size() <= i) { *b =
 
 int cmdStatus(const Objects &o) {
     if (g_json) {
-        QJsonObject j{{"version", o.mixer.value("Version").toString()}, {"connected", o.mixer.value("Connected").toBool()}};
+        QJsonObject j{{"version", o.mixer.value("Version").toString()}, {"connected", o.mixer.value("Connected").toBool()}, {"lastError", o.mixer.value("LastError").toString()}};
         QJsonArray ch, mx, cells;
         for (auto it = o.channels.cbegin(); it != o.channels.cend(); ++it) ch.append(QJsonObject::fromVariantMap(it.value()));
         for (auto it = o.mixes.cbegin(); it != o.mixes.cend(); ++it) mx.append(QJsonObject::fromVariantMap(it.value()));
@@ -100,6 +100,7 @@ int cmdStatus(const Objects &o) {
         out << QJsonDocument(j).toJson(QJsonDocument::Indented); return Ok;
     }
     out << "kmixdeckd " << o.mixer.value("Version").toString() << (o.mixer.value("Connected").toBool() ? "  PipeWire: connected\n" : "  PipeWire: NOT CONNECTED\n");
+    if (const QString e = o.mixer.value("LastError").toString(); !e.isEmpty()) out << "!! " << e << "\n";
     if (o.channels.isEmpty() || o.mixes.isEmpty()) { out << "(no channels or mixes)\n"; return Ok; }
     out << QStringLiteral("%1").arg("", -14);
     for (const auto &m : o.mixes) out << QStringLiteral("%1").arg(m.value("Name").toString().left(12), -14);

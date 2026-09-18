@@ -251,7 +251,10 @@ public:
     static double linearToCubic(float lin) { return std::cbrt(static_cast<double>(lin)); }
     static float  cubicToLinear(double cub) { return static_cast<float>(cub * cub * cub); }
 
+    QString lastError() const { return m_lastError; }   // last graph-level failure (EMFILE, bad module args); "" = none
+
 Q_SIGNALS:
+    void lastErrorChanged();
     void connectedChanged();
     void layoutChanged();
     void cellChanged(const QString &ch, const QString &mix);
@@ -289,6 +292,7 @@ private:
     QHash<QString, pw::NodeInfo> m_edges;      // kmixdeck.in.* / kmixdeck.out.* playback streams, key: node name
     void applyFallbacks();
     void ensureEdgeLoopbacks();
+    QString m_lastError;
     void ensureEdgeLoopbackForInput(const QString &slug);
     void ensureAppRelays(const LayoutApp &a);            // CH-12: relay loopbacks for extra channels
     void retargetWhenPresent(const QString &entry, const QList<uint32_t> &streams, int triesLeft);   // FX-5: after a chain swap

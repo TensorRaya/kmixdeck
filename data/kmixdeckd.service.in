@@ -10,6 +10,11 @@ Wants=pipewire.service pipewire-session-manager.service
 Type=dbus
 BusName=org.kmixdeck1
 ExecStart=@KDE_INSTALL_FULL_LIBEXECDIR@/kmixdeckd
+# Every edge (channel wire, mix output, capture source) is a loopback module = its own PipeWire client with ~10 fds
+# (socket + memfds + eventfds). A 32x32 desk layout reached 913 fds and the daemon hit the 1024 soft limit
+# (measured 2026-09-18: "Failed to create memfd: Too many open files", the new edge silently missing). pipewire-pulse
+# ships LimitNOFILE=8192 for the same reason.
+LimitNOFILE=65536
 Restart=on-failure
 RestartSec=1
 Slice=session.slice

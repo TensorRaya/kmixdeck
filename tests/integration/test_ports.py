@@ -8,6 +8,7 @@ AUX1..AUX4 — the Pro-Audio naming real multichannel devices expose.
 The fake source is `Audio/Source/Virtual`: that null-sink variant has `input_<POS>` ports we can feed the tone into
 and `capture_<POS>` ports the daemon captures from — a plain `Audio/Source` null-sink has no inputs at all (and
 drops its first position, PipeWire 1.x quirk)."""
+import os
 import subprocess
 import time
 
@@ -693,3 +694,101 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
         tone.kill(); tone.wait(); p.kill(); p.wait()
         stack.cli("channel", "mute", "game", "off"); stack.cli("channel", "remove", "mic", check=False)
         stack.cli("mix", "output-remove", "stream", "fake.speakers", check=False); stack.cli("mix", "output-remove", "monitor", "fake.cans", check=False); stack.cli("listen", "none", check=False)
+
+
+def _links_into(stack, prefix: str) -> dict[str, str]:
+    """{edge input port: source port} for every pw-link whose destination node starts with `prefix`."""
+    out = subprocess.run(["pw-link", "-l", "-i"], env=stack.pw.env, capture_output=True, text=True).stdout
+    table, cur = {}, None
+    for line in out.splitlines():
+        if not line.startswith(" "): cur = line.strip(); continue
+        if cur and cur.startswith(prefix) and "|<-" in line: table[cur] = line.split("|<-", 1)[1].strip()
+    return table
+
+
+def test_dv30_rewiring_a_channel_retargets_its_links(stack):
+    """DV-30 (found on the Ui24R 2026-09-18): `input-remove` + `input-add` on one channel MUST leave the PipeWire link
+    table equal to the layout — old ports unlinked, new ports linked to the right side — and audio must follow."""
+    node = stack.cli("devices", "virtual", "add", "Rewire", "--in", "8", "--out", "8").stdout.strip()
+    stack.pw.wait_node(node)
+    stack.cli("channel", "add", "Patch")
+    assert stack.cli("channel", "input-add", "patch", f"{node}:AUX2>L").returncode == 0
+    assert stack.cli("channel", "input-add", "patch", f"{node}:AUX3>R").returncode == 0
+    stack.pw.wait_node("kmixdeck.in.patch.in"); stack.pw.wait_node("kmixdeck.in.patch.w1.in"); time.sleep(0.8)
+    # rewire: AUX2>L,AUX3>R  →  AUX3>L,AUX4>R   (remove by the EXACT ref the layout reports)
+    assert stack.cli("channel", "input-remove", "patch", f"{node}:AUX2>L").returncode == 0
+    assert stack.cli("channel", "input-remove", "patch", f"{node}:AUX3>R").returncode == 0
+    assert stack.cli("channel", "input-add", "patch", f"{node}:AUX3>L").returncode == 0
+    assert stack.cli("channel", "input-add", "patch", f"{node}:AUX4>R").returncode == 0
+    assert stack.cli("channel", "inputs", "patch").stdout.split() == [f"{node}:AUX3>L", f"{node}:AUX4>R"]
+
+    def sources():
+        return sorted(_links_into(stack, "kmixdeck.in.patch").values())
+    want = sorted([f"{node}:capture_AUX3", f"{node}:capture_AUX4"])
+    wait_for(lambda: sources() == want, timeout=10, what=f"links after rewire, got {sources()}")
+    # audio follows: AUX4 → right only, AUX2 (old) → nothing
+    p = stack.pw.play_into_port(node, "input_AUX4")
+    try:
+        right = wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.patch", "monitor_FR"), lambda v: v > HOT)
+        left = stack.pw.level_at_port("kmixdeck.channel.patch", "monitor_FL")
+        assert right > HOT and left < SILENT, f"AUX4 → R only: L={left} R={right}"
+    finally:
+        p.kill(); p.wait()
+    p = stack.pw.play_into_port(node, "input_AUX2")
+    try:
+        time.sleep(0.8)
+        assert stack.pw.level_at_port("kmixdeck.channel.patch", "monitor_FL") < SILENT, "old port AUX2 still reaches the channel"
+    finally:
+        p.kill(); p.wait()
+    stack.cli("channel", "remove", "patch"); stack.cli("devices", "virtual", "remove", "rewire")
+
+
+def test_dv30b_fd_limit_lifted_and_a_failed_edge_is_reported_not_swallowed(stack):
+    """DV-30, second finding (Ui24R 2026-09-18): 47 edges = 47 PipeWire clients ≈ 913 fds; at the 1024 soft limit
+    PipeWire logged only 'Protocol error' and the new wire was silently missing. Now: (a) the daemon lifts its soft
+    fd limit to the hard one on start, (b) an edge module that still fails lands in Mixer.LastError and in `status`."""
+    import resource
+    limits = open(f"/proc/{stack.daemon.pid}/limits").read()
+    soft, hard = [int(x) for x in [l for l in limits.splitlines() if l.startswith("Max open files")][0].split()[3:5]]
+    assert soft == hard, f"daemon soft fd limit {soft} != hard {hard}"
+    assert stack.cli("status", json_out=True)["lastError"] == ""
+    # (b) restart the daemon under a hard limit too small for even one loopback client
+    stack.daemon.terminate(); stack.daemon.wait(timeout=5)
+    def clamp():
+        # 40: enough for the daemon core + one null node (measured: idle daemon 14 fds, a virtual device ~8), not for a
+        # loopback module (own client: socket + memfds + eventfds ≈ 10). Do not tune this by feel — re-measure.
+        resource.setrlimit(resource.RLIMIT_NOFILE, (40, 40))
+    stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL,
+                                    stderr=open(stack.daemon_log_path, "a"), text=True, preexec_fn=clamp)
+    wait_for(lambda: stack.cli("status", check=False).returncode == 0, timeout=15, what="daemon up under fd clamp")
+    node = stack.cli("devices", "virtual", "add", "Clamp", "--in", "2", "--out", "2").stdout.strip()
+    stack.pw.wait_node(node)
+    stack.cli("channel", "add", "Starved"); stack.cli("channel", "input", "starved", f"{node}:AUX1", check=False)
+    err = wait_for(lambda: stack.cli("status", json_out=True)["lastError"], timeout=10, what="LastError after a starved edge")
+    assert "edge could not be created" in err, err
+    assert "!! edge could not be created" in stack.cli("status").stdout
+    assert "Too many open files" in open(stack.daemon_log_path).read()
+    # back to a healthy daemon for the rest of the session
+    stack.cli("channel", "remove", "starved", check=False); stack.cli("devices", "virtual", "remove", "clamp", check=False)
+    stack.restart_daemon()
+    assert stack.cli("status", json_out=True)["lastError"] == ""
+
+
+def test_dv30c_thirtytwo_by_thirtytwo_desk_never_loses_an_edge(stack):
+    """The layout from the real desk: 32 mono channels + 4 stereo mixes on a 32x32 device ≈ 45 loopback clients.
+    Every edge node must come up and LastError must stay empty — this is exactly what failed on hardware at fd 1024."""
+    node = stack.cli("devices", "virtual", "add", "Desk", "--in", "32", "--out", "32").stdout.strip()
+    din, dout = node, node + ".out"
+    stack.pw.wait_node(din); stack.pw.wait_node(dout)
+    for i in range(1, 33):
+        stack.cli("channel", "add", f"d{i}"); stack.cli("channel", "input", f"d{i}", f"{din}:AUX{i}")
+    for k in range(4):
+        stack.cli("mix", "add", f"r{k}"); stack.cli("mix", "output", f"r{k}", f"{dout}:AUX{2*k+1},AUX{2*k+2}")
+    stack.pw.wait_nodes([f"kmixdeck.in.d{i}.in" for i in range(1, 33)] + [f"kmixdeck.out.r{k}" for k in range(4)], timeout=60)
+    st = stack.cli("status", json_out=True)
+    assert st["lastError"] == "", st["lastError"]
+    fds = len(os.listdir(f"/proc/{stack.daemon.pid}/fd"))
+    assert fds > 500, f"the desk should cost >500 fds (the reason this test exists), got {fds}"
+    for k in range(4): stack.cli("mix", "remove", f"r{k}")
+    for i in range(1, 33): stack.cli("channel", "remove", f"d{i}")
+    stack.cli("devices", "virtual", "remove", "desk")
