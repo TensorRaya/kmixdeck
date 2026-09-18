@@ -10,7 +10,7 @@ hardware lock-in and without the artificial limits.
 
 ![kmixdeck — six mixes at 1280 px](docs/screenshots/six-mixes-1280.png)
 
-*Qt 6 / Kirigami · PipeWire-native · GPL-3.0-or-later · v0.1*
+*Qt 6 / Kirigami · PipeWire-native · GPL-3.0-or-later · v0.1.1*
 
 ## Why
 

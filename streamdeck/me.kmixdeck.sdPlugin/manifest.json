@@ -1,7 +1,7 @@
 {
   "Name": "kmixdeck",
   "Author": "kmixdeck contributors",
-  "Version": "0.1.0",
+  "Version": "0.1.1",
   "Description": "Mute, fader and listening-device actions for the kmixdeck audio mixer (PipeWire, KDE). Talks to the kmixdeck daemon over its public D-Bus API via the kmixdeck CLI.",
   "Icon": "icon",
   "Category": "kmixdeck",

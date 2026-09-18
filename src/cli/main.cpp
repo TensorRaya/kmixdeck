@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // kmixdeck — CLI. A pure D-Bus client of org.kmixdeck1; proves AR-3 (everything reachable from a shell).
 #include <QCoreApplication>
+#include "kmixdeck_version.h"
 #include <QCommandLineParser>
 #include <QDBusConnection>
 #include <QDBusInterface>
@@ -645,6 +646,8 @@ struct Cli {
 
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
+    QCoreApplication::setApplicationName(QStringLiteral("kmixdeck"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(KMIXDECK_VERSION_STRING));
     qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<PortMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
     QCommandLineParser p;
     p.setApplicationDescription(QStringLiteral(
