@@ -198,6 +198,11 @@ const ICON_PATHS = {
   speaker: "M11 5L6 9H3v6h3l5 4V5zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13",
   muted: "M11 5L6 9H3v6h3l5 4V5zM22 9l-6 6M16 9l6 6",
   plus: "M12 5v14M5 12h14",
+  // equalizer (FX): three sliders — the same idea as Breeze's view-media-equalizer
+  eq: "M6 4v16M12 4v16M18 4v16M4 9h4M10 14h4M16 7h4",
+  close: "M6 6l12 12M18 6L6 18",
+  up: "M12 19V5M5 12l7-7 7 7",
+  trash: "M4 7h16M10 11v6M14 11v6M6 7l1 12h10l1-12M9 7V4h6v3",
 };
 export function svgIcon(name) {
   const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.classList.add("i");

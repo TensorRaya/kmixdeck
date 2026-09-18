@@ -165,9 +165,14 @@ fx::Chain *chainOf(Layout &l, const QString &slug) {
 } // namespace
 
 QJsonObject Mixer::fxChain(const QString &slug) const {
-    if (const auto *c = m_layout.channel(slug)) return c->fx.isActive() ? c->fx.toJson() : QJsonObject{};
-    if (const auto *m = m_layout.mix(slug))     return m->fx.isActive() ? m->fx.toJson() : QJsonObject{};
-    return {};
+    // The chain as configured — including a bypassed one (FX-5: enabled=false keeps the effects, routes around them).
+    // Until 2026-09-18 this returned {} whenever the chain was not *active*, so a bypassed chain looked like "no
+    // effects" to every frontend and could not be re-enabled from any UI (found by the web FX-8 test). Only a chain
+    // with no effects at all is reported as {}.
+    const fx::Chain *c = nullptr;
+    if (const auto *ch = m_layout.channel(slug)) c = &ch->fx; else if (const auto *m = m_layout.mix(slug)) c = &m->fx;
+    if (!c || c->effects.isEmpty()) return {};
+    return c->toJson();
 }
 
 bool Mixer::setFxChain(const QString &slug, const QJsonObject &chainJson) {
@@ -177,6 +182,22 @@ bool Mixer::setFxChain(const QString &slug, const QJsonObject &chainJson) {
     const fx::Chain next = fx::Chain::fromJson(chainJson);
     const QString why = fx::validate(next);
     if (!why.isEmpty()) { qWarning() << "kmixdeck: refusing fx chain:" << why; return false; }
+    // Same topology (types, order, enabled flags) and only parameter values differ → this is a control tweak, not a
+    // rebuild: write the controls live (glitch-free Props write, ADR 0008 finding 2) and keep the nodes. Every frontend
+    // saves the whole chain JSON after a slider move (FxPanel.qml onMoved, web fx.js onchange); before this the node
+    // was torn down and re-created on each of those saves (found by the web FX-8 test, 2026-09-18).
+    const bool sameTopology = chain->enabled == next.enabled && chain->effects.size() == next.effects.size() &&
+        std::equal(chain->effects.cbegin(), chain->effects.cend(), next.effects.cbegin(),
+                   [](const fx::Effect &a, const fx::Effect &b) { return a.type == b.type && a.enabled == b.enabled && a.plugin == b.plugin && a.label == b.label; });
+    if (sameTopology && chain->isActive()) {
+        *chain = next;
+        const QString entry = m_layout.channel(slug) ? m_layout.channelEntry(slug) : m_layout.mixEntry(slug);
+        if (const auto info = m_graph.node(entry))
+            for (const auto &p : fx::controlValues(*chain, slug)) m_graph.setControl(info->id, p.first, p.second);
+        saveLayout();
+        Q_EMIT layoutChanged();
+        return true;
+    }
     *chain = next;
     applyFx(slug);
     saveLayout();
@@ -208,6 +229,18 @@ bool Mixer::setFxControl(const QString &slug, const QString &control, double val
     }
     if (key.isEmpty()) return false;
     m_graph.setControl(info->id, key, value);
+    // persist: the chain in the layout must carry what the node now has, or the next SetFx / restart snaps it back
+    if (fx::Chain *mut = chainOf(m_layout, slug)) {
+        const QString want = control.section(QLatin1Char(':'), -1).toLower();
+        for (auto &e : mut->effects) {
+            if (!e.enabled) continue;
+            if (const auto *spec = fx::typeSpec(e.type))
+                for (const auto &pr : spec->params)
+                    if (pr.key.toLower() == want || pr.label.toLower() == want || pr.label.toLower().startsWith(want + QLatin1Char(' ')) || key.section(QLatin1Char(':'), -1) == pr.label) {
+                        e.params[pr.key] = value; saveLayout(); Q_EMIT layoutChanged(); return true;
+                    }
+        }
+    }
     return true;
 }
 

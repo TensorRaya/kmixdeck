@@ -3,6 +3,7 @@ import * as C from "./client.js";
 import * as Mixer from "./mixer.js";
 import * as Apps from "./apps.js";
 import * as Patchbay from "./patchbay.js";
+import * as Fx from "./fx.js";
 import { el, toast, button } from "./widgets.js";
 
 const VIEWS = { mixer: Mixer, apps: Apps, patchbay: Patchbay };
@@ -18,6 +19,7 @@ document.getElementById("tabs").addEventListener("click", (ev) => { const t = ev
 
 let scheduled = false;
 function render() {
+  Fx.render();
   if (scheduled) return; scheduled = true;
   requestAnimationFrame(() => {
     scheduled = false;

@@ -3,12 +3,14 @@ that is not an allowlisted org.kmixdeck1 property/method (ADR 0011).
 
 The bridge runs under the system python (Gio bindings); the test client runs under pytest's python (`websockets`)."""
 import asyncio, json, os, shutil, subprocess, sys, time
+import websockets
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_service_cli import Stack, start_fake_app, stack  # noqa: E402,F401 — the fixture
+from chrome_driver import Chrome  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE = ROOT / "web" / "kmixdeck-web"
@@ -42,6 +44,16 @@ class Web:
         ws = await websockets.connect(f"ws://127.0.0.1:{self.port}/ws")
         await ws.send(json.dumps({"op": "hello", "token": self.token if token is None else token}))
         return ws
+
+
+def wait_for(pred, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if pred(): return True
+        except Exception: pass
+        time.sleep(0.1)
+    return False
 
 
 async def recv_until(ws, pred, timeout=5.0):
@@ -188,4 +200,49 @@ def test_ar8_static_files_are_served_and_the_tree_is_jailed(stack):
             urllib.request.urlopen(web.url + "nope.js", timeout=5)
         assert e.value.code == 404
     finally:
+        web.close()
+
+
+def test_fx8_web_ui_edits_the_chain_the_window_and_cli_see(stack):
+    """FX in the browser (rule 2): the drawer shows the daemon's catalog, adds a gate over WebSocket, the CLI sees the
+    chain and the fx nodes exist; a CLI-side change shows up in the drawer; a live control write goes through
+    SetFxControl without rebuilding the node; the FX button on the header lights up while a chain is active."""
+    web = Web(stack, token="")   # the token handshake has its own test; here the browser must get in
+    try:
+        ch = Chrome(web.url, size=(1280, 800))
+        ch.wait("window.kmixdeck && window.kmixdeck.state.connected && document.querySelector('[data-probe=\"channelFx/voice\"]')", 15)
+        assert ch.eval("document.querySelector('[data-probe=\"channelFx/voice\"]').classList.contains('on')") is False
+        ch.click("channelFx/voice")
+        ch.wait("!!document.querySelector('[data-probe=\"fxPanel\"]') && !document.getElementById('fx-drawer').hidden", 5)
+        options = ch.eval("[...document.querySelectorAll('[data-probe=\"fxAddType\"] option')].map(o => o.value).filter(Boolean)")
+        assert "gate" in options and "limiter" in options, options
+        # add a gate from the drawer
+        ch.eval("(() => { const s = document.querySelector('[data-probe=\"fxAddType\"]'); s.value = 'gate'; s.dispatchEvent(new Event('change')); })()")
+        ch.wait("document.querySelector('[data-probe=\"fxList\"]')?.dataset.value === '1'", 8)
+        got = json.loads(stack.cli("fx", "get", "channel", "voice").stdout)
+        assert got["enabled"] and got["chain"][0]["type"] == "gate", got
+        assert stack.pw.wait_nodes(["kmixdeck.fx.voice"], timeout=8)
+        assert ch.eval("document.querySelector('[data-probe=\"channelFx/voice\"]').classList.contains('on')") is True
+        # live control: slider input → SetFxControl, node ids unchanged
+        before = stack.pw.node_id("kmixdeck.fx.voice")
+        ch.eval("(() => { const s = document.querySelector('[data-probe^=\"fxParam/0/threshold\"]'); s.value = -12; s.dispatchEvent(new Event('input')); s.dispatchEvent(new Event('change')); })()")
+        def saved():
+            g = json.loads(stack.cli("fx", "get", "channel", "voice").stdout)
+            return abs(g["chain"][0]["params"].get("threshold", 99) - (-12)) < 0.01
+        assert wait_for(saved, 8), stack.cli("fx", "get", "channel", "voice").stdout
+        assert stack.pw.node_id("kmixdeck.fx.voice") == before, "a control tweak must not rebuild the chain"
+        # the other direction: CLI puts a limiter in front → the drawer shows two cards, limiter first
+        chain = json.loads(stack.cli("fx", "get", "channel", "voice").stdout)
+        chain["chain"].insert(0, {"type": "limiter", "enabled": True, "params": {"limit": -6}})
+        assert stack.cli("fx", "set", "channel", "voice", json.dumps(chain)).returncode == 0
+        ch.wait("document.querySelector('[data-probe=\"fxList\"]')?.dataset.value === '2' && document.querySelector('[data-probe=\"fxCard/0\"]')?.dataset.value === 'limiter'", 8)
+        # bypass from the drawer (FX-5): enabled=false, chain kept
+        ch.eval("(() => { const c = document.querySelector('[data-probe=\"fxEnabled\"]'); c.checked = false; c.dispatchEvent(new Event('change')); })()")
+        assert wait_for(lambda: json.loads(stack.cli("fx", "get", "channel", "voice").stdout)["enabled"] is False, 8)
+        assert len(json.loads(stack.cli("fx", "get", "channel", "voice").stdout)["chain"]) == 2
+        assert ch.eval("document.querySelector('[data-probe=\"channelFx/voice\"]').classList.contains('on')") is False
+        ch.shot("/tmp/web-fx.png")
+        ch.close()
+    finally:
+        stack.cli("fx", "set", "channel", "voice", "{}", check=False)
         web.close()

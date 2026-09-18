@@ -1,6 +1,7 @@
 // mixer.js — UX-1: channels as rows against mixes as panels, one fader per cell. Same layout rules as MixerPage.qml.
 import * as C from "./client.js";
 import { fader, meter, button, el, toast, knob, iconButton } from "./widgets.js";
+import { openFx, fxActive } from "./fx.js";
 
 const ICONS = { microphone: "🎤", "audio-headphones": "🎧", "applications-games": "🎮", "audio-speakers": "🔊", "preferences-system": "⚙️",
                 "media-playback-start": "▶", "audio-volume-high": "🔊", "camera-web": "📷", "internet-chat": "💬", "multimedia-player": "🎵", "": "" };
@@ -47,8 +48,10 @@ function channelHeader(ch) {
   const listen = iconButton("ear", { probe: `channelListen/${slug}`, cls: "listen", title: "Hold to hear only this channel", onClick: () => {} }); hold(listen, ch.path); row.append(listen);
   if (ch.Inputs?.length) row.append(knob({ value: ch.Pan ?? 0, label: `${ch.Name} pan`, probe: `channelPan/${slug}`,
     onInput: (v) => C.set(ch.path, "Pan", v).catch(() => {}), onCommit: (v) => C.set(ch.path, "Pan", v).catch(err) }));
+  row.append(iconButton("eq", { probe: `channelFx/${slug}`, cls: "fx" + (fxActive(ch) ? " on" : ""), pressed: fxActive(ch), title: fxActive(ch) ? "Effects (active)…" : "Effects…", onClick: () => openFx(ch, ch.Name) }));
   row.append(iconButton("more", { probe: `channelMenuButton/${slug}`, cls: "menu", title: "More", onClick: (ev) => menu(ev.currentTarget, [
     ["Rename…", async () => { const n = prompt2("Channel name", ch.Name); if (n) await C.set(ch.path, "Name", n).catch(err); }],
+    ["Effects…", () => openFx(ch, ch.Name)],
     ["Trim…", async () => { const t = prompt2("Trim in dB (−60 … +6)", (20 * Math.log10(ch.Trim || 1)).toFixed(1)); if (t !== null && !isNaN(+t)) await C.set(ch.path, "Trim", Math.pow(10, Math.max(-60, Math.min(6, +t)) / 20)).catch(err); }, "", `channelTrim/${slug}`],
     ["Colour…", async () => { const c = prompt2("Colour (#rrggbb or empty)", ch.Color); if (c !== null) await C.set(ch.path, "Color", c).catch(err); }],
     ["Group…", async () => { const g = prompt2("Group", ch.Group); if (g !== null) await C.set(ch.path, "Group", g).catch(err); }],
@@ -78,6 +81,7 @@ function mixHeader(m) {
       ["Rename…", async () => { const n = prompt2("Mix name", m.Name); if (n) await C.set(m.path, "Name", n).catch(err); }],
       ["Colour…", async () => { const c = prompt2("Colour (#rrggbb or empty)", m.Color); if (c !== null) await C.set(m.path, "Color", c).catch(err); }],
       ["Output device…", () => outputPicker(m)],
+      ["Effects…", () => openFx(m, m.Name)],
       ["Duplicate…", async () => { const n = prompt2("Name for the copy", `${m.Name} copy`); if (n) await C.call(C.ROOT, "DuplicateMix", m.path, n).catch(err); }, "", `mixDuplicate/${slug}`],
       ["Move left", () => C.call(C.ROOT, "MoveMix", m.path, Math.max(0, C.mixes().findIndex((x) => x.path === m.path) - 1)).catch(err)],
       ["Move right", () => C.call(C.ROOT, "MoveMix", m.path, C.mixes().findIndex((x) => x.path === m.path) + 1).catch(err)],
@@ -89,6 +93,7 @@ function mixHeader(m) {
   row.append(iconButton(m.Muted ? "muted" : "speaker", { probe: `mixMute/${slug}`, cls: "mute", pressed: m.Muted, title: m.Muted ? "Unmute mix" : "Mute mix", onClick: () => C.set(m.path, "Muted", !m.Muted).catch(err) }));
   row.append(fader({ value: m.Volume, max: 1, label: `${m.Name} master`, probe: `mixFader/${slug}`, meterKey: C.meterKey.mix(slug),
     onInput: (v) => C.set(m.path, "Volume", v).catch(() => {}), onCommit: (v) => C.set(m.path, "Volume", v).catch(err) }));
+  row.append(iconButton("eq", { probe: `mixFx/${slug}`, cls: "fx" + (fxActive(m) ? " on" : ""), pressed: fxActive(m), title: fxActive(m) ? "Effects (active)…" : "Effects…", onClick: () => openFx(m, m.Name) }));
   row.append(iconButton("headphones", { probe: `mixListen/${slug}`, cls: "listen" + (listening ? " on" : ""), pressed: !!listening, title: listening ? "You are hearing this mix" : "Hear this mix on your headphones",
     onClick: () => { const dev = m.Outputs?.[0]; if (dev) C.set(C.ROOT, "ListeningDevice", dev).catch(err); else toast("This mix has no output device yet", true); } }));
   body.append(row);
