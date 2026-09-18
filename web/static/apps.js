@@ -14,7 +14,7 @@ export function render(root) {
     const row = el("div", { class: "app" + (a.Running ? "" : " idle"), probe: `app/${a.NodeId}` });
     row.append(el("span", { class: "icon big", probe: `appIcon/${a.NodeId}` }, icon(a.Icon)));
     const body = el("div", { class: "body" });
-    body.append(el("div", { class: "title" }, a.Name, el("span", { class: "dot" + (a.Running ? " on" : ""), probe: `appRunning/${a.NodeId}`, title: a.Running ? "playing" : "silent" })));
+    body.append(el("div", { class: "title" }, a.Name, el("span", { class: "dot" + (a.Running ? " on" : ""), probe: `appRunning/${a.NodeId}`, "data-value": String(!!a.Running), title: a.Running ? "playing" : "silent", role: "img", "aria-label": a.Running ? "playing" : "silent" })));
     if (a.MediaName && a.MediaName !== a.Name) body.append(el("div", { class: "sub" }, a.MediaName));
     body.append(meter(C.meterKey.app(a.NodeId), { horizontal: true, probe: `appMeter/${a.NodeId}` }));
     row.append(body);
@@ -25,7 +25,7 @@ export function render(root) {
       const on = cur.has(ch.Slug);
       target.append(button(ch.Name, { probe: `appTo/${a.NodeId}/${ch.Slug}`, cls: "chip" + (on ? " on" : ""), pressed: on, title: on ? `Remove from ${ch.Name}` : `Send to ${ch.Name}`, onClick: () => {
         const next = new Set(cur); on ? next.delete(ch.Slug) : next.add(ch.Slug);
-        C.call(a.path, "Assign", [...next], false).catch(err);
+        C.call(a.path, "Assign", [...next].map((slug) => `${C.ROOT}/channel/${slug}`), false).catch(err);   // Assign takes channel OBJECT PATHS
       } }));
     }
     row.append(target);

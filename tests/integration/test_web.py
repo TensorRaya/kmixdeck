@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from test_service_cli import Stack, start_fake_app, stack  # noqa: E402,F401 — the fixture
+from test_service_cli import Stack, start_fake_app, stack, make_fake_sink, make_fake_source  # noqa: E402,F401 — the fixture
 from chrome_driver import Chrome  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,8 +22,8 @@ if not shutil.which(SYSTEM_PYTHON) or subprocess.run([SYSTEM_PYTHON, "-c", "impo
 
 
 class Web:
-    def __init__(self, stack, token="test-token", lan=False):
-        args = [SYSTEM_PYTHON, str(BRIDGE), "--port", "0", "--token", token] + (["--lan"] if lan else [])
+    def __init__(self, stack, token="test-token", lan=False, port=0):
+        args = [SYSTEM_PYTHON, str(BRIDGE), "--port", str(port), "--token", token] + (["--lan"] if lan else [])
         self.proc = subprocess.Popen(args, env=stack.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         lines = []
         for _ in range(5):                                  # --lan prints its warning first; never .read() (blocks)
@@ -209,40 +209,196 @@ def test_fx8_web_ui_edits_the_chain_the_window_and_cli_see(stack):
     SetFxControl without rebuilding the node; the FX button on the header lights up while a chain is active."""
     web = Web(stack, token="")   # the token handshake has its own test; here the browser must get in
     try:
-        ch = Chrome(web.url, size=(1280, 800))
-        ch.wait("window.kmixdeck && window.kmixdeck.state.connected && document.querySelector('[data-probe=\"channelFx/voice\"]')", 15)
-        assert ch.eval("document.querySelector('[data-probe=\"channelFx/voice\"]').classList.contains('on')") is False
-        ch.click("channelFx/voice")
-        ch.wait("!!document.querySelector('[data-probe=\"fxPanel\"]') && !document.getElementById('fx-drawer').hidden", 5)
-        options = ch.eval("[...document.querySelectorAll('[data-probe=\"fxAddType\"] option')].map(o => o.value).filter(Boolean)")
-        assert "gate" in options and "limiter" in options, options
-        # add a gate from the drawer
-        ch.eval("(() => { const s = document.querySelector('[data-probe=\"fxAddType\"]'); s.value = 'gate'; s.dispatchEvent(new Event('change')); })()")
-        ch.wait("document.querySelector('[data-probe=\"fxList\"]')?.dataset.value === '1'", 8)
-        got = json.loads(stack.cli("fx", "get", "channel", "voice").stdout)
-        assert got["enabled"] and got["chain"][0]["type"] == "gate", got
-        assert stack.pw.wait_nodes(["kmixdeck.fx.voice"], timeout=8)
-        assert ch.eval("document.querySelector('[data-probe=\"channelFx/voice\"]').classList.contains('on')") is True
-        # live control: slider input → SetFxControl, node ids unchanged
-        before = stack.pw.node_id("kmixdeck.fx.voice")
-        ch.eval("(() => { const s = document.querySelector('[data-probe^=\"fxParam/0/threshold\"]'); s.value = -12; s.dispatchEvent(new Event('input')); s.dispatchEvent(new Event('change')); })()")
-        def saved():
-            g = json.loads(stack.cli("fx", "get", "channel", "voice").stdout)
-            return abs(g["chain"][0]["params"].get("threshold", 99) - (-12)) < 0.01
-        assert wait_for(saved, 8), stack.cli("fx", "get", "channel", "voice").stdout
-        assert stack.pw.node_id("kmixdeck.fx.voice") == before, "a control tweak must not rebuild the chain"
-        # the other direction: CLI puts a limiter in front → the drawer shows two cards, limiter first
-        chain = json.loads(stack.cli("fx", "get", "channel", "voice").stdout)
-        chain["chain"].insert(0, {"type": "limiter", "enabled": True, "params": {"limit": -6}})
-        assert stack.cli("fx", "set", "channel", "voice", json.dumps(chain)).returncode == 0
-        ch.wait("document.querySelector('[data-probe=\"fxList\"]')?.dataset.value === '2' && document.querySelector('[data-probe=\"fxCard/0\"]')?.dataset.value === 'limiter'", 8)
-        # bypass from the drawer (FX-5): enabled=false, chain kept
-        ch.eval("(() => { const c = document.querySelector('[data-probe=\"fxEnabled\"]'); c.checked = false; c.dispatchEvent(new Event('change')); })()")
-        assert wait_for(lambda: json.loads(stack.cli("fx", "get", "channel", "voice").stdout)["enabled"] is False, 8)
-        assert len(json.loads(stack.cli("fx", "get", "channel", "voice").stdout)["chain"]) == 2
-        assert ch.eval("document.querySelector('[data-probe=\"channelFx/voice\"]').classList.contains('on')") is False
-        ch.shot("/tmp/web-fx.png")
-        ch.close()
+        with Chrome(web.url, size=(1280, 800)) as ch:
+            ch.wait("window.kmixdeck && window.kmixdeck.state.connected && document.querySelector('[data-probe=\"channelFx/voice\"]')", 15)
+            assert ch.eval("document.querySelector('[data-probe=\"channelFx/voice\"]').classList.contains('on')") is False
+            ch.click("channelFx/voice")
+            ch.wait("!!document.querySelector('[data-probe=\"fxPanel\"]') && !document.getElementById('fx-drawer').hidden", 5)
+            options = ch.eval("[...document.querySelectorAll('[data-probe=\"fxAddType\"] option')].map(o => o.value).filter(Boolean)")
+            assert "gate" in options and "limiter" in options, options
+            # add a gate from the drawer
+            ch.eval("(() => { const s = document.querySelector('[data-probe=\"fxAddType\"]'); s.value = 'gate'; s.dispatchEvent(new Event('change')); })()")
+            ch.wait("document.querySelector('[data-probe=\"fxList\"]')?.dataset.value === '1'", 8)
+            got = json.loads(stack.cli("fx", "get", "channel", "voice").stdout)
+            assert got["enabled"] and got["chain"][0]["type"] == "gate", got
+            assert stack.pw.wait_nodes(["kmixdeck.fx.voice"], timeout=8)
+            assert ch.eval("document.querySelector('[data-probe=\"channelFx/voice\"]').classList.contains('on')") is True
+            # live control: slider input → SetFxControl, node ids unchanged
+            before = stack.pw.node_id("kmixdeck.fx.voice")
+            ch.eval("(() => { const s = document.querySelector('[data-probe^=\"fxParam/0/threshold\"]'); s.value = -12; s.dispatchEvent(new Event('input')); s.dispatchEvent(new Event('change')); })()")
+            def saved():
+                g = json.loads(stack.cli("fx", "get", "channel", "voice").stdout)
+                return abs(g["chain"][0]["params"].get("threshold", 99) - (-12)) < 0.01
+            assert wait_for(saved, 8), stack.cli("fx", "get", "channel", "voice").stdout
+            assert stack.pw.node_id("kmixdeck.fx.voice") == before, "a control tweak must not rebuild the chain"
+            # the other direction: CLI puts a limiter in front → the drawer shows two cards, limiter first
+            chain = json.loads(stack.cli("fx", "get", "channel", "voice").stdout)
+            chain["chain"].insert(0, {"type": "limiter", "enabled": True, "params": {"limit": -6}})
+            assert stack.cli("fx", "set", "channel", "voice", json.dumps(chain)).returncode == 0
+            ch.wait("document.querySelector('[data-probe=\"fxList\"]')?.dataset.value === '2' && document.querySelector('[data-probe=\"fxCard/0\"]')?.dataset.value === 'limiter'", 8)
+            # bypass from the drawer (FX-5): enabled=false, chain kept
+            ch.eval("(() => { const c = document.querySelector('[data-probe=\"fxEnabled\"]'); c.checked = false; c.dispatchEvent(new Event('change')); })()")
+            assert wait_for(lambda: json.loads(stack.cli("fx", "get", "channel", "voice").stdout)["enabled"] is False, 8)
+            assert len(json.loads(stack.cli("fx", "get", "channel", "voice").stdout)["chain"]) == 2
+            assert ch.eval("document.querySelector('[data-probe=\"channelFx/voice\"]').classList.contains('on')") is False
+            ch.shot("/tmp/web-fx.png")
+            ch.close()
     finally:
         stack.cli("fx", "set", "channel", "voice", "{}", check=False)
+        web.close()
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Rule 2 for the rest of the mixer page: what UX-14 / UX-11 / DV-14 / CT-4 prove for the window, proven for the browser.
+# Every step drives the UI element (click / pointer event) and reads the truth back from the CLI — never from the DOM alone.
+# JS snippets use single quotes only, so they can live inside plain Python double-quoted strings.
+
+def _q(probe): return "document.querySelector('[data-probe=\"%s\"]')" % probe
+def _click(ch, probe): ch.eval(_q(probe) + ".click()", False)
+
+def _menu_click(ch, regex):
+    ch.wait("document.querySelector('.popover.menu')", 5)
+    ch.eval("[...document.querySelectorAll('.popover.menu button')].find(b => /%s/.test(b.textContent)).click()" % regex, False)
+
+SLIDE_JS = """
+(() => {
+  const f = FADER; const t = f.querySelector('.track').getBoundingClientRect();
+  const y = t.top + t.height / 2, x0 = t.left + 14 + (t.width - 28) * (f._pos ?? 1), x1 = t.left + 14 + (t.width - 28) * CUBIC;
+  const ev = (type, x) => f.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y, pointerId: 1, button: 0, isPrimary: true }));
+  ev('pointerdown', x0); ev('pointermove', x1); ev('pointerup', x1);
+})()
+"""
+def _slide(ch, probe, cubic):
+    """Move a web fader like a finger: pointerdown on the handle, pointermove to the target x, pointerup."""
+    ch.eval(SLIDE_JS.replace("FADER", _q(probe)).replace("CUBIC", str(cubic)), False)
+
+DRAG_JS = """
+(() => {
+  const a = document.querySelector('.jack.out[data-card=\"dev/SRC\"]');
+  const b = document.querySelector('.jack.in[data-card=\"ch/voice\"][data-pos=\"L\"]');
+  const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+  const ev = (t, el, r) => el.dispatchEvent(new PointerEvent(t, { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, pointerId: 1, button: 0, isPrimary: true }));
+  ev('pointerdown', a, ra); ev('pointermove', b, rb); ev('pointerup', b, rb);
+})()
+"""
+
+def _status(stack): return stack.cli("status", json_out=True)
+def _mix(stack, slug): return next(m for m in _status(stack)["mixes"] if m["Slug"] == slug)
+def _cell(stack, ch, mix): return next(c for c in _status(stack)["cells"] if c["Path"].endswith("/%s/%s" % (ch, mix)))
+def _tab(ch, view): ch.eval("document.querySelector('#tabs [data-view=\"%s\"]').click()" % view, False)
+
+
+def test_ux14_web_mix_end_to_end_from_the_browser_alone(stack):
+    """A whole mix from the browser: add → rename → output → cell fader by pointer → cell mute → link → undo → remove.
+    Each step is checked at the CLI, as UX-14 does for the window."""
+    web = Web(stack, token="")
+    sink = "fake.web.out"; make_fake_sink(stack, sink, "Web Speakers")
+    try:
+        with Chrome(web.url, size=(1280, 800)) as ch:
+            ch.wait("window.kmixdeck && window.kmixdeck.state.connected && " + _q("addMix"), 15)
+            ch.answer_dialogs("Web Mix"); _click(ch, "addMix")
+            assert wait_for(lambda: any(m["Name"] == "Web Mix" for m in _status(stack)["mixes"]), 8), "AddMix from the browser"
+            slug = next(m["Slug"] for m in _status(stack)["mixes"] if m["Name"] == "Web Mix")
+            ch.wait(_q("mixHeader/" + slug), 8)
+            ch.answer_dialogs("Renamed Mix"); _click(ch, "mixName/" + slug)
+            assert wait_for(lambda: _mix(stack, slug)["Name"] == "Renamed Mix", 8), "rename via the name button"
+            _click(ch, "mixOutput/" + slug)
+            ch.wait(_q("outMenu/" + slug), 5)
+            ch.eval("[...document.querySelectorAll('[data-probe=\"outMenu/%s\"] label')].find(l => l.textContent.includes('Web Speakers')).querySelector('input').click()" % slug, False)
+            assert wait_for(lambda: sink in _mix(stack, slug)["Outputs"], 8), "AddOutput from the picker"
+            stack.pw.wait_nodes(["kmixdeck.link.game." + slug])
+            ch.wait(_q("cellFader/game/" + slug), 8); time.sleep(0.3)
+            _slide(ch, "cellFader/game/" + slug, 0.5)
+            assert wait_for(lambda: abs(_cell(stack, "game", slug)["Volume"] - 0.125) < 0.02, 8), "pointer drag → cubic 0.5 = lin 0.125, got %s" % _cell(stack, "game", slug)["Volume"]
+            _click(ch, "cellMute/game/" + slug)
+            assert wait_for(lambda: _cell(stack, "game", slug)["Muted"] is True, 8), "cell mute"
+            _click(ch, "cellLink/system/" + slug); _menu_click(ch, "Stream$")
+            assert wait_for(lambda: _cell(stack, "system", slug)["Follows"].endswith("/stream"), 8), "link via the cell menu"
+            _click(ch, "cellLink/system/" + slug)                                        # linked → one click unlinks
+            assert wait_for(lambda: _cell(stack, "system", slug)["Follows"] in ("", "/"), 8), "unlink via the same button"
+            # CH-9: removing a mix is undoable — from the ⋮ menu, then the toolbar's undo button brings it back
+            ch.answer_dialogs(None, confirm=True); _click(ch, "mixMenuButton/" + slug); _menu_click(ch, "^Remove mix")
+            assert wait_for(lambda: all(m["Slug"] != slug for m in _status(stack)["mixes"]), 8), "RemoveMix from the browser"
+            ch.wait("!document.getElementById('undo').hidden && /Renamed Mix/.test(document.getElementById('undo').textContent)", 5)
+            ch.eval("document.getElementById('undo').click()", False)
+            assert wait_for(lambda: any(m["Slug"] == slug for m in _status(stack)["mixes"]), 8), "Undo from the toolbar restores the mix"
+            assert sink in _mix(stack, slug)["Outputs"], "undo restores the mix with its outputs"
+            stack.cli("mix", "remove", slug)
+            ch.close()
+    finally:
+        web.close()
+
+
+def test_ux11_web_app_chip_assigns_and_unassigns(stack):
+    """UX-11 in the browser: the Apps tab shows the running app; a channel chip adds that channel (accumulates, CH-12),
+    a second tap removes it — checked at the daemon like the window's drop test."""
+    web = Web(stack, token="")
+    p, app = start_fake_app(stack)
+    try:
+        with Chrome(web.url, size=(1280, 800)) as ch:
+            ch.wait("window.kmixdeck && window.kmixdeck.state.connected", 15)
+            _tab(ch, "apps")
+            ch.wait("document.querySelector('[data-probe^=\"appRunning/\"]')", 10)
+            nid = ch.eval("document.querySelector('[data-probe^=\"appRunning/\"]').dataset.probe.split('/')[1]", False)
+            assert ch.eval(_q("appRunning/" + nid) + ".dataset.value", False) == "true"
+            def chans(): return next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")["Channels"]
+            before = chans(); assert "voice" not in before
+            _click(ch, "appTo/%s/voice" % nid)
+            assert wait_for(lambda: "voice" in chans() and all(c in chans() for c in before), 8), "chip must ADD voice and keep %s: %s" % (before, chans())
+            ch.wait(_q("appTo/%s/voice" % nid) + ".classList.contains('on')", 5)
+            _click(ch, "appTo/%s/voice" % nid)
+            assert wait_for(lambda: "voice" not in chans(), 8), "second tap removes the channel again"
+            ch.close()
+    finally:
+        p.kill(); p.wait(); web.close()
+
+
+def test_dv24_web_patchbay_wire_menu_and_drag(stack):
+    """DV-14/DV-24 in the browser: one wire per link; a wire's menu mutes/removes at the daemon; dragging from a device
+    jack onto a channel jack calls AddInput."""
+    web = Web(stack, token="")
+    src = "fake.web.mic"; make_fake_source(stack, src, "Web Mic")
+    try:
+        with Chrome(web.url, size=(1280, 900)) as ch:
+            ch.wait("window.kmixdeck && window.kmixdeck.state.connected", 15)
+            _tab(ch, "patchbay")
+            ch.wait("document.querySelectorAll('.wire').length > 0", 10)
+            n0 = ch.eval("document.querySelectorAll('.wire').length", False)
+            ch.eval(_q("wire/ch/game/L/mix/stream/L") + ".dispatchEvent(new MouseEvent('click', {bubbles: true}))", False)
+            _menu_click(ch, "^Mute in this mix")
+            assert wait_for(lambda: _cell(stack, "game", "stream")["Muted"] is True, 8), "wire menu mute"
+            ch.wait("document.querySelector('.jack.out[data-card=\"dev/%s\"]')" % src, 8)
+            ch.eval(DRAG_JS.replace("SRC", src), False)
+            def inputs(): return next(c for c in _status(stack)["channels"] if c["Slug"] == "voice")["Inputs"]
+            assert wait_for(lambda: any(src in i for i in inputs()), 8), "dragging a wire must call AddInput: %s" % inputs()
+            ch.wait("document.querySelectorAll('.wire').length > %d" % n0, 8)
+            ch.eval("[...document.querySelectorAll('.wire.input')].find(w => w.dataset.probe.includes('dev/%s') && w.dataset.probe.includes('ch/voice')).dispatchEvent(new MouseEvent('click', {bubbles: true}))" % src, False)
+            _menu_click(ch, "^Remove wire")
+            assert wait_for(lambda: not any(src in i for i in inputs()), 8), "wire menu remove"
+            ch.close()
+    finally:
+        stack.cli("cell", "unmute", "game", "stream", check=False)
+        web.close()
+
+
+def test_ar8_web_reconnects_after_the_bridge_restarts(stack):
+    """The browser survives a bridge restart: shows 'disconnected', reconnects with backoff, and the state is fresh
+    (a change made while it was away is visible). What a phone does when the wifi drops for a moment."""
+    web = Web(stack, token="")
+    try:
+        with Chrome(web.url, size=(1280, 800)) as ch:
+            ch.wait("window.kmixdeck && window.kmixdeck.state.connected", 15)
+            port = web.port
+            web.proc.terminate(); web.proc.wait(5)
+            ch.wait("!window.kmixdeck.state.connected && " + _q("disconnected"), 10)
+            stack.cli("mix", "mute", "stream")                       # change while the browser is blind
+            web2 = Web(stack, token="", port=port)
+            try:
+                ch.wait("window.kmixdeck.state.connected", 20)
+                ch.wait(_q("mixMute/stream") + ".getAttribute('aria-pressed') === 'true'", 8)
+            finally:
+                web2.close()
+            ch.close()
+    finally:
+        stack.cli("mix", "unmute", "stream", check=False)
         web.close()

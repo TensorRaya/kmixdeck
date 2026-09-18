@@ -134,7 +134,7 @@ function wireMenu(ev, w) {
   if (w.kind === "cell" && w.cellPath) items.push([w.muted ? "Unmute in this mix" : "Mute in this mix", () => C.set(w.cellPath, "Muted", !w.muted).catch(err)]);
   if (w.kind === "input") items.push(["Remove wire", () => C.call(`${C.ROOT}/channel/${w.channel}`, "RemoveInput", w.ref).catch(err), "danger"]);
   if (w.kind === "output") items.push(["Remove wire", () => C.call(`${C.ROOT}/mix/${w.mix}`, "RemoveOutput", w.ref).catch(err), "danger"]);
-  if (w.kind === "app") items.push(["Take app off this channel", () => { const a = C.state.objects[w.app]; const rest = (a?.Channels || []).filter((c) => c !== w.channel); C.call(w.app, "Assign", rest, false).catch(err); }, "danger"]);
+  if (w.kind === "app") items.push(["Take app off this channel", () => { const a = C.state.objects[w.app]; const rest = (a?.Channels || []).filter((c) => c !== w.channel).map((slug) => `${C.ROOT}/channel/${slug}`); C.call(w.app, "Assign", rest, false).catch(err); }, "danger"]);
   if (items.length) menu({ getBoundingClientRect: () => ({ bottom: ev.clientY, left: ev.clientX }) }, items);
 }
 
@@ -176,7 +176,7 @@ export function connect(fromCard, fromPos, toCard, toPos) {
   }
   if (fromCard.startsWith("app/") && toCard.startsWith("ch/")) {
     const path = fromCard.slice(4), ch = toCard.slice(3), a = C.state.objects[path];
-    return C.call(path, "Assign", [...new Set([...(a?.Channels || []), ch])], false).catch(err);
+    return C.call(path, "Assign", [...new Set([...(a?.Channels || []), ch])].map((slug) => `${C.ROOT}/channel/${slug}`), false).catch(err);   // object paths, not slugs
   }
   toast("These two cannot be wired", true);
 }
