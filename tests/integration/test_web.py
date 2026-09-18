@@ -371,8 +371,13 @@ def test_dv24_web_patchbay_wire_menu_and_drag(stack):
             ch.eval(DRAG_JS.replace("SRC", src), False)
             def inputs(): return next(c for c in _status(stack)["channels"] if c["Slug"] == "voice")["Inputs"]
             assert wait_for(lambda: any(src in i for i in inputs()), 8), "dragging a wire must call AddInput: %s" % inputs()
-            ch.wait("document.querySelectorAll('.wire').length > %d" % n0, 8)
-            ch.eval("[...document.querySelectorAll('.wire.input')].find(w => w.dataset.probe.includes('dev/%s') && w.dataset.probe.includes('ch/voice')).dispatchEvent(new MouseEvent('click', {bubbles: true}))" % src, False)
+            # wait for THAT wire, not for the count: the count may rise from another patch a render tick earlier (flaked 1/12 in the full suite)
+            find = "[...document.querySelectorAll('.wire.input')].find(w => w.dataset.probe.includes('dev/%s') && w.dataset.probe.includes('ch/voice'))" % src
+            ch.wait(find, 8)
+            assert ch.eval("document.querySelectorAll('.wire').length", False) > n0
+            # find + click in ONE eval: the patchbay re-renders on every patch and the node found a tick ago may be gone
+            r = ch.eval("(() => { const w = " + find + "; if (!w) return 'gone: ' + JSON.stringify({ wires: [...document.querySelectorAll('.wire')].map(x => x.dataset.probe), inputs: window.kmixdeck.state.objects['/org/kmixdeck1/channel/voice'].Inputs }); w.dispatchEvent(new MouseEvent('click', {bubbles: true})); return 'ok'; })()", False)
+            assert r == 'ok', r
             _menu_click(ch, "^Remove wire")
             assert wait_for(lambda: not any(src in i for i in inputs()), 8), "wire menu remove"
             ch.close()
