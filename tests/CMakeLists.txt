@@ -19,7 +19,7 @@ find_program(WIREPLUMBER_EXECUTABLE wireplumber)
 find_program(FFMPEG_EXECUTABLE ffmpeg)
 if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMPEG_EXECUTABLE)
     # One ctest per file so they run in parallel (ctest -j) and a failure names the area, not "everything".
-    foreach(suite service_cli audio_graph lifecycle routing fx presentation ports frontends_sync streamdeck)
+    foreach(suite service_cli audio_graph lifecycle routing fx presentation ports frontends_sync streamdeck web)
         add_test(NAME integration-${suite}
             COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_${suite}.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)

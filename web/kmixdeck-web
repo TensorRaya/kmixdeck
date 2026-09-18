@@ -1,0 +1,268 @@
+#!/usr/bin/python3
+"""kmixdeck-web — the browser frontend's bridge (ADR 0011, AR-8/AR-9).
+
+Speaks ONLY D-Bus to the daemon (AR-6: no PipeWire here) and serves the web UI plus one WebSocket per browser tab.
+
+Wire protocol (JSON text frames, one object per frame):
+  client → server   {"op":"hello","token":"…"}                      first frame; token required when bound to the LAN
+                    {"op":"set","path":"/org/kmixdeck1/channels/mic","property":"Trim","value":0.7}
+                    {"op":"call","path":"/org/kmixdeck1","method":"AddChannel","args":["Music"],"id":7}
+  server → client   {"op":"snapshot","state":{…}}                    the whole view model once, right after hello
+                    {"op":"patch","state":{…}}                       RFC 7386 merge patch — apply over the last state
+                    {"op":"meters","peaks":{"channel/mic":0.31,…}}   the daemon's 25 Hz Peaks signal, forwarded
+                    {"op":"result","id":7,"ok":true,"value":…}       reply to a call
+                    {"op":"error","id":7,"message":"…"}
+
+The view model is the D-Bus object tree, verbatim: `state.objects[path][Property] = value`, plus `state.root` for
+the Mixer root object — the same names the KDE window, the tray popover and the Stream Deck plugin read (AR-9).
+A feature added to the daemon shows up here with no bridge work at all.
+
+Only org.kmixdeck1.* interfaces are reachable, and only their writable properties and declared methods: there is no
+"call anything on the bus" endpoint (ADR 0011 §2). The allowlist is read from the daemon's own introspection.
+"""
+import argparse, asyncio, hashlib, json, os, secrets, signal, sys, threading, xml.etree.ElementTree as ET
+from http import HTTPStatus
+from pathlib import Path
+
+import gi
+gi.require_version("Gio", "2.0"); gi.require_version("GLib", "2.0")
+from gi.repository import Gio, GLib  # noqa: E402
+
+import websockets  # noqa: E402
+from websockets.asyncio.server import serve  # noqa: E402
+from websockets.datastructures import Headers  # noqa: E402
+from websockets.http11 import Response  # noqa: E402
+
+BUS_NAME = "org.kmixdeck1"
+ROOT = "/org/kmixdeck1"
+WEB_DIR = Path(os.environ.get("KMIXDECK_WEB_DIR", Path(__file__).resolve().parent / "static"))
+IFACES = ("org.kmixdeck1.Mixer", "org.kmixdeck1.Channel", "org.kmixdeck1.Mix", "org.kmixdeck1.Cell", "org.kmixdeck1.App",
+          "org.kmixdeck1.Levels")
+
+
+def unwrap(v):
+    """GLib.Variant → plain JSON-able Python."""
+    if isinstance(v, GLib.Variant):
+        return unwrap(v.unpack())
+    if isinstance(v, dict):
+        return {str(k): unwrap(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [unwrap(x) for x in v]
+    return v
+
+
+class Daemon:
+    """Everything that touches the bus. Runs on the GLib main loop in its own thread; publishes to asyncio via `emit`."""
+
+    def __init__(self, emit):
+        self.emit = emit                      # callable(dict) — thread-safe hand-over into the asyncio loop
+        self.state = {"root": {}, "objects": {}, "connected": False}
+        self.settled = False                  # first name-watch callback (up OR down) has run
+        self.allow = {}                       # iface → {"props": {name: (sig, writable)}, "methods": {name: [in-sigs]}}
+        self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        self.loop = GLib.MainLoop()
+        self.bus.signal_subscribe(BUS_NAME, "org.freedesktop.DBus.Properties", "PropertiesChanged", None, None,
+                                  Gio.DBusSignalFlags.NONE, self._on_props_changed)
+        self.bus.signal_subscribe(BUS_NAME, "org.freedesktop.DBus.ObjectManager", "InterfacesAdded", ROOT, None,
+                                  Gio.DBusSignalFlags.NONE, self._on_added)
+        self.bus.signal_subscribe(BUS_NAME, "org.freedesktop.DBus.ObjectManager", "InterfacesRemoved", ROOT, None,
+                                  Gio.DBusSignalFlags.NONE, self._on_removed)
+        self.bus.signal_subscribe(BUS_NAME, "org.kmixdeck1.Levels", "Peaks", ROOT, None,
+                                  Gio.DBusSignalFlags.NONE, self._on_peaks)
+        Gio.bus_watch_name_on_connection(self.bus, BUS_NAME, Gio.BusNameWatcherFlags.NONE,
+                                         self._on_daemon_up, self._on_daemon_down)
+
+    # ---- bus thread
+    def run(self):
+        self.loop.run()
+
+    def _call(self, path, iface, method, params=None, reply_sig=None):
+        return self.bus.call_sync(BUS_NAME, path, iface, method, params, GLib.VariantType(reply_sig) if reply_sig else None,
+                                  Gio.DBusCallFlags.NONE, 5000, None)
+
+    def _introspect(self, path):
+        xml = self._call(path, "org.freedesktop.DBus.Introspectable", "Introspect", None, "(s)").unpack()[0]
+        for iface in ET.fromstring(xml).iter("interface"):
+            name = iface.get("name")
+            if name not in IFACES or name in self.allow: continue
+            props = {p.get("name"): (p.get("type"), p.get("access") == "readwrite") for p in iface.iter("property")}
+            methods = {m.get("name"): [a.get("type") for a in m.iter("arg") if a.get("direction", "in") == "in"]
+                       for m in iface.iter("method")}
+            self.allow[name] = {"props": props, "methods": methods}
+
+    def _on_daemon_up(self, _bus, _name, _owner):
+        self._introspect(ROOT)
+        managed = unwrap(self._call(ROOT, "org.freedesktop.DBus.ObjectManager", "GetManagedObjects", None, "(a{oa{sa{sv}}})")[0])
+        objects = {}
+        for path, ifaces in managed.items():
+            for iface, props in ifaces.items():
+                if iface.startswith(BUS_NAME):
+                    objects[path] = {"interface": iface, **props}
+        if objects and any(p not in self.allow for p in {o["interface"] for o in objects.values()}):
+            for path in objects: self._introspect(path)   # child interfaces are only declared on the children
+        root = unwrap(self._call(ROOT, "org.freedesktop.DBus.Properties", "GetAll", GLib.Variant("(s)", ("org.kmixdeck1.Mixer",)), "(a{sv})")[0])
+        self.state = {"root": root, "objects": objects, "connected": True}
+        self._call(ROOT, "org.kmixdeck1.Levels", "Subscribe")
+        self.settled = True
+        self.emit({"op": "snapshot", "state": self.state})
+
+    def _on_daemon_down(self, _bus, _name):
+        self.state = {"root": {}, "objects": {}, "connected": False}
+        self.settled = True
+        self.emit({"op": "snapshot", "state": self.state})
+
+    def _on_props_changed(self, _bus, _sender, path, _iface, _sig, params):
+        iface, changed, invalidated = unwrap(params)
+        if iface == "org.kmixdeck1.Mixer" and path == ROOT:
+            self.state["root"].update(changed); patch = {"root": changed}
+        elif iface == "org.kmixdeck1.Levels":
+            return
+        else:
+            obj = self.state["objects"].setdefault(path, {"interface": iface})
+            obj.update(changed); patch = {"objects": {path: changed}}
+        self.emit({"op": "patch", "state": patch})
+
+    def _on_added(self, _bus, _sender, _path, _iface, _sig, params):
+        path, ifaces = unwrap(params)
+        for iface, props in ifaces.items():
+            if not iface.startswith(BUS_NAME): continue
+            if iface not in self.allow: self._introspect(path)
+            self.state["objects"][path] = {"interface": iface, **props}
+            self.emit({"op": "patch", "state": {"objects": {path: self.state["objects"][path]}}})
+
+    def _on_removed(self, _bus, _sender, _path, _iface, _sig, params):
+        path, _ = unwrap(params)
+        if self.state["objects"].pop(path, None) is not None:
+            self.emit({"op": "patch", "state": {"objects": {path: None}}})   # RFC 7386: null deletes
+
+    def _on_peaks(self, _bus, _sender, _path, _iface, _sig, params):
+        self.emit({"op": "meters", "peaks": unwrap(params)[0]})
+
+    # ---- called from the asyncio thread via GLib.idle_add; returns through `done`
+    def set_property(self, path, prop, value, done):
+        def go():
+            try:
+                iface = "org.kmixdeck1.Mixer" if path == ROOT else self.state["objects"][path]["interface"]
+                sig, writable = self.allow[iface]["props"][prop]
+                if not writable: raise PermissionError(f"{prop} is read-only")
+                self._call(path, "org.freedesktop.DBus.Properties", "Set",
+                           GLib.Variant("(ssv)", (iface, prop, GLib.Variant(sig, value))))
+                done(True, None)
+            except Exception as e:  # noqa: BLE001 — every failure is reported to the client, none crashes the bridge
+                done(False, str(e))
+            return False
+        GLib.idle_add(go)
+
+    def call_method(self, path, method, args, done):
+        def go():
+            try:
+                iface = "org.kmixdeck1.Mixer" if path == ROOT else self.state["objects"][path]["interface"]
+                sigs = self.allow[iface]["methods"][method]        # KeyError → not allowlisted
+                if len(sigs) != len(args): raise TypeError(f"{method} takes {len(sigs)} arguments")
+                params = GLib.Variant("(" + "".join(sigs) + ")", tuple(args)) if sigs else None
+                out = self._call(path, iface, method, params)
+                done(True, unwrap(out)[0] if out and out.n_children() == 1 else unwrap(out) or None)
+            except Exception as e:  # noqa: BLE001
+                done(False, str(e))
+            return False
+        GLib.idle_add(go)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+class Bridge:
+    def __init__(self, token):
+        self.token = token
+        self.clients = set()
+        self.aloop = None
+        self.daemon = Daemon(self._emit_from_bus)
+
+    def _emit_from_bus(self, msg):
+        if self.aloop: self.aloop.call_soon_threadsafe(self._broadcast, msg)
+
+    def _broadcast(self, msg):
+        data = json.dumps(msg, separators=(",", ":"))
+        for ws in list(self.clients):
+            try: asyncio.ensure_future(ws.send(data))
+            except Exception: self.clients.discard(ws)  # noqa: BLE001
+
+    async def handle(self, ws):
+        try:
+            first = json.loads(await asyncio.wait_for(ws.recv(), 10))
+            if first.get("op") != "hello": await ws.close(4000, "hello first"); return
+            if self.token and not secrets.compare_digest(str(first.get("token", "")), self.token):
+                await ws.close(4001, "bad token"); return
+        except Exception:  # noqa: BLE001
+            await ws.close(4000, "hello first"); return
+        self.clients.add(ws)
+        await ws.send(json.dumps({"op": "snapshot", "state": self.daemon.state}, separators=(",", ":")))
+        try:
+            async for raw in ws:
+                try: msg = json.loads(raw)
+                except ValueError: continue
+                op, rid = msg.get("op"), msg.get("id")
+                fut = self.aloop.create_future()
+                def done(ok, val, fut=fut): self.aloop.call_soon_threadsafe(fut.set_result, (ok, val))
+                if op == "set":
+                    self.daemon.set_property(msg["path"], msg["property"], msg["value"], done)
+                elif op == "call":
+                    self.daemon.call_method(msg["path"], msg["method"], msg.get("args", []), done)
+                else:
+                    await ws.send(json.dumps({"op": "error", "id": rid, "message": f"unknown op {op!r}"})); continue
+                ok, val = await fut
+                await ws.send(json.dumps({"op": "result", "id": rid, "ok": True, "value": val} if ok else
+                                         {"op": "error", "id": rid, "message": val}, separators=(",", ":")))
+        finally:
+            self.clients.discard(ws)
+
+    async def http(self, connection, request):
+        """Static files for anything that is not a WebSocket upgrade."""
+        if request.headers.get("Upgrade", "").lower() == "websocket": return None
+        path = request.path.split("?", 1)[0]
+        if path == "/": path = "/index.html"
+        target = (WEB_DIR / path.lstrip("/")).resolve()
+        if not str(target).startswith(str(WEB_DIR.resolve())) or not target.is_file():
+            return connection.respond(HTTPStatus.NOT_FOUND, "not found\n")
+        ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".json": "application/json",
+                 ".svg": "image/svg+xml", ".png": "image/png"}.get(target.suffix, "application/octet-stream")
+        body = target.read_bytes()
+        headers = Headers([("Content-Type", ctype), ("Content-Length", str(len(body))), ("Cache-Control", "no-cache")])
+        return Response(HTTPStatus.OK.value, HTTPStatus.OK.phrase, headers, body)
+
+    async def serve(self, host, port, ready=None):
+        self.aloop = asyncio.get_running_loop()
+        threading.Thread(target=self.daemon.run, daemon=True, name="gio-bus").start()
+        # do not accept browsers before the first look at the bus is done — a tab that connects in that window would
+        # get an empty "disconnected" snapshot although the daemon is right there (test_web, first run)
+        for _ in range(100):
+            if self.daemon.settled: break
+            await asyncio.sleep(0.05)
+        async with serve(self.handle, host, port, process_request=self.http, max_size=1 << 20) as server:
+            actual = server.sockets[0].getsockname()[1]
+            print(f"kmixdeck-web: http://{host}:{actual}/" + (f"#token={self.token}" if self.token else ""), flush=True)
+            if ready: ready(actual)
+            stop = self.aloop.create_future()
+            for s in (signal.SIGINT, signal.SIGTERM): self.aloop.add_signal_handler(s, lambda: stop.done() or stop.set_result(None))
+            await stop
+
+
+def load_or_make_token():
+    d = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "kmixdeck"; d.mkdir(parents=True, exist_ok=True)
+    f = d / "web-token"
+    if f.exists(): return f.read_text().strip()
+    tok = secrets.token_urlsafe(24); f.write_text(tok + "\n"); f.chmod(0o600); return tok
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="kmixdeck-web", description=__doc__.split("\n")[0])
+    ap.add_argument("--lan", action="store_true", help="bind every interface (requires the token; default: localhost only)")
+    ap.add_argument("--port", type=int, default=int(os.environ.get("KMIXDECK_WEB_PORT", "7420")), help="0 = pick a free port")
+    ap.add_argument("--token", help="override the stored token (testing)")
+    a = ap.parse_args(argv)
+    host = "0.0.0.0" if a.lan else "127.0.0.1"
+    token = a.token if a.token is not None else (load_or_make_token() if a.lan else "")
+    if a.lan: print("kmixdeck-web: listening on the LAN — anyone with the token controls your audio; keep it private.", file=sys.stderr, flush=True)
+    asyncio.run(Bridge(token).serve(host, a.port))
+
+
+if __name__ == "__main__":
+    main()
