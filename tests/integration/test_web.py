@@ -106,6 +106,9 @@ def test_ar8_bridge_refuses_what_the_allowlist_does_not_name(stack):
                 ({"op": "set", "path": game, "property": "Trim", "value": "loud", "id": 4}, ""),
                 ({"op": "call", "path": "/org/kmixdeck1", "method": "AddChannel", "args": [], "id": 5}, "takes 1"),
                 ({"op": "shell", "cmd": "id", "id": 6}, "unknown op"),
+                # field missing: answered, connection lives on. A hand-written latency probe sent "prop" instead of
+                # "property" and took the whole handler down (2026-09-18) — a stale tab must never kill the bridge.
+                ({"op": "set", "path": game, "prop": "Trim", "value": 0.5, "id": 7}, "malformed"),
             ]
             for msg, needle in cases:
                 await ws.send(json.dumps(msg))

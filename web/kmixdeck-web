@@ -206,15 +206,19 @@ class Bridge:
             async for raw in ws:
                 try: msg = json.loads(raw)
                 except ValueError: continue
+                if not isinstance(msg, dict): continue
                 op, rid = msg.get("op"), msg.get("id")
                 fut = self.aloop.create_future()
                 def done(ok, val, fut=fut): self.aloop.call_soon_threadsafe(fut.set_result, (ok, val))
-                if op == "set":
-                    self.daemon.set_property(msg["path"], msg["property"], msg["value"], done)
-                elif op == "call":
-                    self.daemon.call_method(msg["path"], msg["method"], msg.get("args", []), done)
-                else:
-                    await ws.send(json.dumps({"op": "error", "id": rid, "message": f"unknown op {op!r}"})); continue
+                try:
+                    if op == "set":
+                        self.daemon.set_property(msg["path"], msg["property"], msg["value"], done)
+                    elif op == "call":
+                        self.daemon.call_method(msg["path"], msg["method"], msg.get("args", []), done)
+                    else:
+                        await ws.send(json.dumps({"op": "error", "id": rid, "message": f"unknown op {op!r}"})); continue
+                except (KeyError, TypeError) as e:   # malformed frame: answer, do not drop the client (a stale tab must not kill the session)
+                    await ws.send(json.dumps({"op": "error", "id": rid, "message": f"malformed {op} frame: {e!r}"})); continue
                 ok, val = await fut
                 await ws.send(json.dumps({"op": "result", "id": rid, "ok": True, "value": val} if ok else
                                          {"op": "error", "id": rid, "message": val}, separators=(",", ":")))
