@@ -22,7 +22,12 @@ jobs:
             libkf6statusnotifieritem-dev libkf6notifications-dev libkf6dbusaddons-dev libkf6crash-dev \
             libkf6iconthemes-dev libkf6qqc2desktopstyle-dev libkf6colorscheme-dev \
             libpipewire-0.3-dev pipewire pipewire-audio wireplumber pipewire-bin \
-            ffmpeg python3-pytest python3-gi appstream dbus dbus-daemon systemd swh-plugins
+            ffmpeg python3-pytest python3-gi python3-websockets chromium appstream dbus dbus-daemon systemd swh-plugins ruff
+      - name: Lint (BP-4 — the build is -Werror, this is the same gate for Python and the workflow itself)
+        run: |
+          ruff check .
+          python3 tools/sot-audit.py
+          python3 tools/dbus-doc.py
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
       - name: Build
@@ -30,7 +35,9 @@ jobs:
       - name: Unit tests
         run: ctest --test-dir build -LE integration --output-on-failure
       - name: Integration tests (private PipeWire daemon, no sound card)
-        run: ctest --test-dir build -L integration -j4 --output-on-failure
+        # serial, like the release gate locally (BP-6): the suites measure audio levels and timing; four PipeWire
+        # daemons on one runner made green/red depend on scheduling, not on the code
+        run: ctest --test-dir build -L integration --output-on-failure --timeout 900
       - name: Smoke-start the app offscreen
         run: |
           export XDG_RUNTIME_DIR=/tmp/xdg && mkdir -p $XDG_RUNTIME_DIR && chmod 700 $XDG_RUNTIME_DIR

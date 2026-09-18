@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // kmixdeckd — the service. No UI, no widgets: QCoreApplication + PipeWire + D-Bus.
 #include <QCoreApplication>
+#include "../logging.h"
 #include <QCommandLineParser>
 #include <QDebug>
 #include <csignal>
@@ -22,6 +23,6 @@ int main(int argc, char *argv[]) {
     // nothing runs in signal context — QCoreApplication::quit() is not async-signal-safe by contract.
     KSignalHandler::self()->watchSignal(SIGTERM); KSignalHandler::self()->watchSignal(SIGINT);
     QObject::connect(KSignalHandler::self(), &KSignalHandler::signalReceived, &app, [](int) { QCoreApplication::quit(); });
-    qInfo() << "kmixdeckd" << KMIXDECK_VERSION_STRING << "on" << kmixdeck::daemon::kBusName;
+    qCInfo(lcDbus) << "kmixdeckd" << KMIXDECK_VERSION_STRING << "on" << kmixdeck::daemon::kBusName;
     return app.exec();
 }

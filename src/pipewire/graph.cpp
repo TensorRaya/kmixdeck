@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "graph.h"
+#include "../logging.h"
 
 #include <pipewire/pipewire.h>
 #include <pipewire/impl.h>
@@ -238,7 +239,7 @@ struct Graph::Impl {
         // majority target of this node's outgoing links (a stereo stream has 2 links to the same sink). Our own level
         // meter (UX-13) is a second consumer of every metered app node — 2 links, same as the real sink — and won the
         // tie by hash order: "routed → kmixdeck.meter" cleared App.Channels, and the next drop REPLACED instead of
-        // adding (test_ux11 red 1 in 3 in the suite, 2026-09-17). The meter is a tap, never a route.
+        // adding (test_ux11 red 1 in 3 in the suite). The meter is a tap, never a route.
         QHash<uint32_t, int> count;
         for (const auto &l : links) if (l.out == outNode && !isMeterNode(l.in)) count[l.in]++;
         uint32_t best = 0; int n = 0;
@@ -258,7 +259,7 @@ struct Graph::Impl {
 
     static void onCoreError(void *data, uint32_t id, int seq, int res, const char *message) {
         auto *impl = static_cast<Impl *>(data);
-        qWarning() << "pipewire core error id" << id << "seq" << seq << spa_strerror(res) << message;
+        qCWarning(lcPipewire) << "pipewire core error id" << id << "seq" << seq << spa_strerror(res) << message;
         if (id == PW_ID_CORE && res == -EPIPE) {
             QMetaObject::invokeMethod(impl->q, [q = impl->q] { Q_EMIT q->disconnected(QStringLiteral("core EPIPE")); }, Qt::QueuedConnection);
         }
@@ -462,7 +463,7 @@ void Graph::setStreamTarget(uint32_t streamId, uint32_t sinkSerial) {
         const QByteArray v = QByteArray::number(sinkSerial);
         pw_metadata_set_property(d->metadata, streamId, "target.object", "Spa:Id", v.constData());
     } else {
-        qWarning() << "no 'default' metadata object yet; cannot route stream" << streamId;
+        qCWarning(lcPipewire) << "no 'default' metadata object yet; cannot route stream" << streamId;
     }
     pw_thread_loop_unlock(d->loop);
 }

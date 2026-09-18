@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #pragma once
 #include <QObject>
+#include "../logging.h"
 #include <QDBusAbstractAdaptor>
 #include <QDBusConnection>
 #include <QDBusObjectPath>
@@ -37,7 +38,7 @@ protected:
     /// `busctl set-property … Trim d 5.0`). QtDBus answers the Set call itself; the most we can do is refuse the
     /// value and say why in the log. Value-range checks that MUST surface to the client belong on methods
     /// (SetVolumeDb, ToggleMute, MoveTo …), which do have a context.
-    void rejectProperty(const QString &name, const QString &why) const { qWarning().noquote() << QStringLiteral("%1: refused %2 (%3)").arg(m_path, name, why); }
+    void rejectProperty(const QString &name, const QString &why) const { qCWarning(lcDbus).noquote() << QStringLiteral("%1: refused %2 (%3)").arg(m_path, name, why); }
     QString m_path;
 };
 

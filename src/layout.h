@@ -42,8 +42,8 @@ struct DeviceRef {
         int arrow = ref.lastIndexOf(QLatin1Char('>')); if (arrow < 0) arrow = ref.lastIndexOf(QLatin1Char('<'));
         if (arrow > 0) { r.side = ref.mid(arrow + 1).trimmed().toUpper(); ref = ref.left(arrow); }
         const int c = ref.indexOf(QLatin1Char(':'));
-        if (c < 0) { r.node = ref; return r; }
-        r.node = ref.left(c);
+        if (c < 0) { r.node = ref.trimmed(); return r; }
+        r.node = ref.left(c).trimmed();   // positions and side are trimmed too — a pasted "dev : AUX3" must not yield node "dev "
         for (const auto &p : ref.mid(c + 1).split(QLatin1Char(','), Qt::SkipEmptyParts)) r.positions << p.trimmed();
         return r;
     }

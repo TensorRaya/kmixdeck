@@ -65,7 +65,7 @@ QQC2.Control {
         LevelMeter {
             id: mixMeter
             horizontal: true
-            // inside the card, above the hairline — on the laptop (2026-09-16) the 2 px margin let it read as a stray
+            // inside the card, above the hairline — on the laptop  the 2 px margin let it read as a stray
             // bar hanging out of the header
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: Kirigami.Units.largeSpacing; rightMargin: Kirigami.Units.largeSpacing; bottomMargin: 5 }
             height: 3

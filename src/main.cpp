@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include <QApplication>
+#include "logging.h"
 #include <QQmlApplicationEngine>
 #include <QQmlError>
 #include <QElapsedTimer>
@@ -70,7 +71,7 @@ int main(int argc, char *argv[])
     about.processCommandLine(&parser);
 
     // one instance; a second launch raises the window — except for the headless modes, which must run next to a
-    // live UI (2026-09-16: --screenshot silently exited 0 because Unique handed the call to the running instance)
+    // live UI (--screenshot once silently exited 0 because Unique handed the call to the running instance)
     const bool headless = parser.isSet(selfTest) || parser.isSet(shot) || parser.isSet(gestureArg) || parser.isSet(probeArg);
     KDBusService service(headless ? KDBusService::Multiple | KDBusService::NoExitOnFailure : KDBusService::Unique);
 
@@ -81,11 +82,11 @@ int main(int argc, char *argv[])
     if (headless) client->setHideToTray(false);
 
     QQmlApplicationEngine engine;
-    // --self-test also fails on QML *warnings* (ReferenceError, TypeError, unresolved bindings): the 2026-09-16
+    // --self-test also fails on QML *warnings* (ReferenceError, TypeError, unresolved bindings): the
     // `band is not defined` in Fader.qml loaded fine and only broke at runtime — exit 0 would have hidden it.
     int qmlWarnings = 0;
     // Only OUR files count (org/kmixdeck/); Kirigami's own binding-loop notices are not ours to fix.
-    QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [&qmlWarnings](const QList<QQmlError> &w) { for (const auto &e : w) { qWarning().noquote() << "QML:" << e.toString(); if (e.url().toString().contains(QLatin1String("/org/kmixdeck/"))) ++qmlWarnings; } });
+    QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [&qmlWarnings](const QList<QQmlError> &w) { for (const auto &e : w) { qCWarning(lcFrontend).noquote() << "QML:" << e.toString(); if (e.url().toString().contains(QLatin1String("/org/kmixdeck/"))) ++qmlWarnings; } });
     auto *l10n = new KLocalizedContext(&engine);
     l10n->setTranslationDomain(QStringLiteral("kmixdeck"));   // UX-5: without this the QML i18n() calls look in the empty default domain
     engine.rootContext()->setContextObject(l10n);
@@ -93,7 +94,7 @@ int main(int argc, char *argv[])
     engine.loadFromModule("org.kmixdeck", "Main");
     if (!engine.rootObjects().isEmpty()) kde.setMainWindow(qobject_cast<QQuickWindow *>(engine.rootObjects().first()));
     // --self-test: load every QML file, then quit — ctest runs this offscreen so a broken binding
-    // (2026-09-16: a duplicate `font` assignment made the UI exit 1 without a message) fails the build, not the user.
+    // (a duplicate `font` assignment once made the UI exit 1 without a message) fails the build, not the user.
     if (parser.isSet(selfTest)) {
         if (engine.rootObjects().isEmpty()) return 1;
         auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
@@ -182,7 +183,7 @@ int main(int argc, char *argv[])
         });
         // Leave only after the bus has ROUND-TRIPPED: every gesture ends in asyncCall()s, and under load the 1 s that
         // used to remain before exit was not enough — the calls died with the process (ux14 red in the suite, green
-        // alone, 2026-09-17). A blocking Ping after the gestures is ordered behind our own calls on the same connection.
+        // alone). A blocking Ping after the gestures is ordered behind our own calls on the same connection.
         if (!parser.isSet(probeArg)) QTimer::singleShot(1500, &app, [] {
             QDBusInterface(QStringLiteral("org.kmixdeck1"), QStringLiteral("/org/kmixdeck1"), QStringLiteral("org.freedesktop.DBus.Peer"), QDBusConnection::sessionBus()).call(QStringLiteral("Ping"));
             QCoreApplication::exit(0);
@@ -225,7 +226,7 @@ int main(int argc, char *argv[])
                 QTimer::singleShot(900, win, [win, file] {
                     QVariant v = win->property("trayOverview"); auto *pop = v.value<QQuickWindow *>();
                     const bool ok = pop && pop->grabWindow().save(file);
-                    qInfo("%s %s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file));
+                    qCInfo(lcFrontend, "%s %s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file));
                     QCoreApplication::exit(ok ? 0 : 1);
                 });
                 return;
@@ -233,7 +234,7 @@ int main(int argc, char *argv[])
             else if (!open.isEmpty()) QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, open));
             QTimer::singleShot(900, win, [win, file] {
                 const bool ok = win->grabWindow().save(file);
-                qInfo("%s %s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file));
+                qCInfo(lcFrontend, "%s %s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file));
                 QCoreApplication::exit(ok ? 0 : 1);
             });
         });

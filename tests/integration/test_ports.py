@@ -15,6 +15,7 @@ import pytest
 
 from test_service_cli import BIN, Stack, destroy_node
 from pw_sandbox import start_private_pipewire
+from waiting import wait_for
 
 HOT, SILENT = -30.0, -60.0
 POS = "[ AUX1 AUX2 AUX3 AUX4 ]"
@@ -189,9 +190,7 @@ def test_dv21_side_bound_input_feeds_only_that_side(stack):
     choice, no mono device needed. Two ports into one side is refused (PipeWire cannot fold them; measured)."""
     node = stack.cli("devices", "virtual", "add", "Side Ui24R").stdout.strip()
     stack.pw.wait_node(node)
-    for _ in range(50):
-        if node in stack.cli("devices", "in", json_out=True): break
-        time.sleep(0.1)
+    wait_for(lambda: node in stack.cli("devices", "in", json_out=True), timeout=5.0, what="node in stack.cli('devices', 'in', json_out=True)")
     stack.cli("channel", "add", "Right Only"); stack.cli("channel", "input", "right_only", f"{node}:AUX1>R")
     stack.pw.wait_node("kmixdeck.in.right_only.in"); time.sleep(0.8)
     p = stack.pw.play_into_port(node, "input_AUX1")
@@ -219,9 +218,7 @@ def test_dv21_side_bound_output_sends_only_that_side_of_the_mix(stack):
     a side takes the whole mix (PipeWire folds stereo→one port fine; it is the other direction it cannot do)."""
     node = stack.cli("devices", "virtual", "add", "Out Ui24R").stdout.strip()
     stack.pw.wait_node(node + ".out")
-    for _ in range(50):
-        if node + ".out" in stack.cli("devices", "out", json_out=True): break
-        time.sleep(0.1)
+    wait_for(lambda: node + ".out" in stack.cli("devices", "out", json_out=True), timeout=5.0, what="node + '.out' in stack.cli('devices', 'out', json_out=True)")
     # one output port WITHOUT a side = the whole mix folded into that port (measured: works, unlike the input direction)
     stack.cli("mix", "output", "stream", f"{node}.out:AUX5"); time.sleep(1.2)
     stack.cli("cell", "set", "game", "stream", "1.0")
@@ -325,9 +322,7 @@ def test_dv24_patchbay_gestures_reach_the_daemon(stack):
     if not kde.exists(): pytest.skip("kmixdeck-kde not built")
     ui = stack.cli("devices", "virtual", "add", "Gesture Ui24R", "--in", "4", "--out", "4").stdout.strip()
     stack.pw.wait_node(ui); stack.pw.wait_node(ui + ".out")
-    for _ in range(50):
-        if ui in stack.cli("devices", "in", json_out=True) and (ui + ".out") in stack.cli("devices", json_out=True): break
-        time.sleep(0.1)
+    wait_for(lambda: ui in stack.cli("devices", "in", json_out=True) and (ui + ".out") in stack.cli("devices", json_out=True), timeout=5.0, what="ui in stack.cli('devices', 'in', json_out=True) and (ui + '.out') in s")
     stack.cli("channel", "add", "Deck")
     env = dict(stack.env); env["QT_QPA_PLATFORM"] = "offscreen"
 
@@ -428,9 +423,7 @@ def test_dv22_pan_moves_a_mono_source_between_the_sides_and_persists(stack):
     hard right = left silent, centre = both equal; pan survives a daemon restart and is applied when the node returns."""
     ui = stack.cli("devices", "virtual", "add", "Pan Ui24R", "--in", "2", "--out", "2").stdout.strip()
     stack.pw.wait_node(ui)
-    for _ in range(50):
-        if ui in stack.cli("devices", "in", json_out=True): break
-        time.sleep(0.1)
+    wait_for(lambda: ui in stack.cli("devices", "in", json_out=True), timeout=5.0, what="ui in stack.cli('devices', 'in', json_out=True)")
     stack.cli("channel", "add", "Panner"); stack.cli("channel", "input", "panner", f"{ui}:AUX1")
     stack.pw.wait_node("kmixdeck.in.panner.in"); time.sleep(0.8)
     stack.cli("cell", "set", "panner", "stream", "1.0"); stack.cli("cell", "mute", "panner", "stream", "off")
@@ -478,12 +471,8 @@ def test_dv14_wire_trim_and_mute_live_on_the_wire_not_on_the_device(stack):
     stack.cli("channel", "input-add", "trimmed", f"{dev}:AUX1")
     stack.pw.wait_node("kmixdeck.in.trimmed")
     stack.cli("mix", "output-add", "stream", f"{sink}:AUX1,AUX2")
-    for _ in range(50):
-        if sink in stack.cli("mix", "outputs", "stream", json_out=True)[0] if stack.cli("mix", "outputs", "stream", json_out=True) else False: break
-        time.sleep(0.1)
-    for _ in range(80):
-        if stack.pw.node("kmixdeck.out.stream") or stack.pw.node("kmixdeck.out.stream.1"): break
-        time.sleep(0.1)
+    wait_for(lambda: sink in stack.cli("mix", "outputs", "stream", json_out=True)[0] if stack.cli("mix", "outputs", "stream", json_out=True) else False, timeout=5.0, what="sink in stack.cli('mix', 'outputs', 'stream', json_out=True)[0] if sta")
+    wait_for(lambda: stack.pw.node("kmixdeck.out.stream") or stack.pw.node("kmixdeck.out.stream.1"), timeout=8.0, what="stack.pw.node('kmixdeck.out.stream') or stack.pw.node('kmixdeck.out.st")
     hw_before = (stack.pw.props(dev), stack.pw.props(sink))
 
     def ch_level(): return stack.pw.level_at_port("kmixdeck.channel.trimmed", "monitor_FL")
@@ -576,9 +565,7 @@ def test_dv28_ui24r_scale_32_in_32_out_every_port_routable_and_fast(stack):
     for i in range(1, 33): stack.cli("channel", "remove", f"in_{i}", check=False)
     stack.cli("mix", "output", "stream", "none"); stack.cli("mix", "output", "monitor", "none")
     stack.cli("devices", "virtual", "remove", "ui24r", check=False)
-    for _ in range(100):
-        if not any(n.startswith("kmixdeck.in.in_") for n in stack.pw.node_names()): break
-        time.sleep(0.1)
+    wait_for(lambda: not any(n.startswith("kmixdeck.in.in_") for n in stack.pw.node_names()), timeout=10.0, what="not any(n.startswith('kmixdeck.in.in_') for n in stack.pw.node_names()")
 
 
 def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(stack):
@@ -635,9 +622,7 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
         # --- sleep: every device vanishes in one go (the virtual interface too — it is a "device" to the daemon)
         destroy_node(stack, "fake.speakers"); destroy_node(stack, "fake.cans")
         stack.cli("devices", "virtual", "remove", "interface", check=False)   # the USB interface is gone as well
-        for _ in range(50):
-            if not any(n in stack.pw.node_names() for n in ("fake.speakers", "fake.cans", iface)): break
-            time.sleep(0.1)
+        wait_for(lambda: not any(n in stack.pw.node_names() for n in ("fake.speakers", "fake.cans", iface)), timeout=5.0, what="not any(n in stack.pw.node_names() for n in ('fake.speakers', 'fake.ca")
         # the daemon learns of the removal from PipeWire's registry — under a full ctest run that took > 1 s (ctest26/28)
         for _ in range(100):
             st = stack.cli("status", json_out=True)

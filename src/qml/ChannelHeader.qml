@@ -163,7 +163,7 @@ Item {
         ColumnLayout {
             spacing: -2
             Layout.alignment: Qt.AlignVCenter
-            Layout.maximumHeight: header.height - Kirigami.Units.smallSpacing   // never taller than the row: the dial pushed its label under the next channel (seen 2026-09-17)
+            Layout.maximumHeight: header.height - Kirigami.Units.smallSpacing   // never taller than the row: the dial pushed its label under the next channel (seen)
             QQC2.Dial {
                 id: trimDial
                 objectName: "channelTrim/" + header.channel
@@ -221,7 +221,7 @@ Item {
         }
         // the channel's level (ADR 0006) — gain lives in the crosspoints (ADR 0002), so no fader here.
         // Vertical and clearly a meter: the 3 px horizontal bar read as a broken/empty fader on the laptop
-        // screenshot (2026-09-16) whenever the channel was silent.
+        // screenshot  whenever the channel was silent.
         LevelMeter {
             id: chMeter
             objectName: "channelMeter/" + header.channel
@@ -238,7 +238,7 @@ Item {
 
         // UX-12 listen: hold = only this channel reaches the main output, release restores everything.
         // Headphones like in the mix header — it sat next to the mute button with the SAME speaker glyph (laptop
-        // screenshot 2026-09-16: two identical icons, one of them meaning "solo").
+        // screenshot: two identical icons, one of them meaning "solo").
         QQC2.ToolButton {
             icon.name: "audio-headphones"
             display: QQC2.AbstractButton.IconOnly

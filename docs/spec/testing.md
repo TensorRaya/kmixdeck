@@ -26,7 +26,7 @@ static library. Covers: slugging (DV-7), node naming (ADR 0002), the cubic↔lin
 (UX-7). No PipeWire process is involved. Runs on every `ctest`.
 
 ### 2. Integration (Python + pytest, ~40 s, no sound card)
-`tests/integration/` starts a **private PipeWire + WirePlumber** with the prototype config and
+`tests/integration/` starts a **private PipeWire + WirePlumber** with the generated starter config (`tests/unit/golden/starter.conf`) and
 proves requirements acoustically:
 
 - A 1 kHz tone is played into a channel with `pw-play` **with autoconnect off**, then linked by

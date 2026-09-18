@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "layout.h"
+#include "logging.h"
 #include "mixer.h"
 #include <QStandardPaths>
 #include <QDir>
@@ -144,7 +145,7 @@ bool Layout::load(const QString &path) {
     if (version > kLayoutVersion) {
         const QString aside = path + QStringLiteral(".v%1-from-newer-kmixdeck").arg(version);
         QFile::remove(aside); QFile::rename(path, aside);
-        qWarning("kmixdeck: %s is layout version %d, this build writes version %d — moved it to %s and starting with the default layout",
+        qCWarning(lcMixer, "kmixdeck: %s is layout version %d, this build writes version %d — moved it to %s and starting with the default layout",
                  qUtf8Printable(path), version, kLayoutVersion, qUtf8Printable(aside));
         return false;
     }
@@ -159,7 +160,7 @@ bool Layout::save(const QString &path) const {
 static QString q(const QString &s) { QString r = s; r.replace(QLatin1Char('\\'), QLatin1String("\\\\")).replace(QLatin1Char('"'), QLatin1String("\\\"")); return QLatin1Char('"') + r + QLatin1Char('"'); }
 // ADR 0009 D2/D3: the device-side stream carries the selected port positions; PipeWire links a stream port to the
 // device port with the same audio.channel, so this alone selects the subset (AUX3 AUX4 → playback_AUX3/_AUX4,
-// first named = the stream's left, second = right; measured 2026-09-16 on a fake 4-port sink).
+// first named = the stream's left, second = right; measured on a fake 4-port sink).
 static QString pos(const QStringList &p) { return p.isEmpty() ? QStringLiteral("[ FL FR ]") : QStringLiteral("[ ") + p.join(QLatin1Char(' ')) + QStringLiteral(" ]"); }
 
 QString loopbackArgs(const QString &description,
@@ -171,12 +172,12 @@ QString loopbackArgs(const QString &description,
     // Cell playbacks: dont-reconnect (a cell must never wander); mix outputs must NOT have it (they follow retargets).
     // One-port (mono) device on the capture side: the port name (AUX3) is nothing the channel mixer can spread, so
     // the playback half is declared [MONO] and the far sink's own channelmix puts it on FL and FR (DV-19; with
-    // [FL FR] on that side the tone landed on FL only, measured 2026-09-16).
+    // [FL FR] on that side the tone landed on FL only — measured).
     const bool sideCap = capturePositions.size() == 1 && (capturePositions[0] == QLatin1String("FL") || capturePositions[0] == QLatin1String("FR"));
     const bool monoIn = capturePositions.size() == 1 && !sideCap;   // one named side of a stereo node is not "mono"
     // ADR 0009 A2: playback bound to ONE side (FL or FR) — a 1-port capture lands on exactly that side. A 2-port
     // capture into one side is NOT offered: PipeWire 1.6's loopback does not fold two named positions into one
-    // (measured 2026-09-16: AUX3+AUX4→[FL] silent in every variant — upmix, dont-remix, MONO capture); the daemon
+    // (measured: AUX3+AUX4→[FL] silent in every variant — upmix, dont-remix, MONO capture); the daemon
     // refuses that ref (validateDeviceRef) instead of building a silent edge.
     const QString capPos = pos(capturePositions);
     QString cap = QStringLiteral("capture.props = { node.name = %1 media.name = %1 node.target = %2 audio.position = %3 node.passive = true node.dont-fallback = true %4%5}")
@@ -244,7 +245,7 @@ QString Layout::toPipewireConf() const {
                          EdgeNames::inputNode(i.slug), channelEntry(i.channel), i.device.channelSidePositions(), false, true));
     for (const auto &a : apps) {   // CH-12: extra channels of a multi-assigned app hear it via relay loopbacks.
         // Capture side sits on the APP's own output node (not the primary channel's monitor — that would carry
-        // every other app on that channel too, measured on the dev machine 2026-09-16). linger: the app may not run yet.
+        // every other app on that channel too, measured on the dev machine). linger: the app may not run yet.
         if (a.channels.isEmpty() || a.nodeName.isEmpty()) continue;
         for (int n = 1; n < a.channels.size(); ++n) {
             const LayoutChannel *to = channel(a.channels[n]);

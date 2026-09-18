@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "mixer.h"
+#include "logging.h"
 #include <climits>
 #include <algorithm>
 #include <QSet>
@@ -34,7 +35,7 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     QObject::connect(&m_graph, &pw::Graph::defaultDevicesChanged, this, [this](const QString &sinkIn, const QString &sourceIn) {
         // our own nodes (parking sink, channel/mix sinks, monitor sources) are never a sensible "default device" to
         // wire the desk to — WirePlumber picks kmixdeck.null as default sink on a machine with no hardware yet
-        // (seen in the sandbox screenshot 2026-09-17: wizard offered "Monitor mix plays on: kmixdeck.null")
+        // (seen in the sandbox screenshot: wizard offered "Monitor mix plays on: kmixdeck.null")
         auto ours = [](const QString &n) { return n.startsWith(QLatin1String("kmixdeck.")); };
         const QString sink = ours(sinkIn) ? QString() : sinkIn, source = ours(sourceIn) ? QString() : sourceIn;
         if (sink == m_defaultSink && source == m_defaultSource) return;
@@ -47,7 +48,7 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     // AR-4: PipeWire restarted under us → drop everything (nodeRemoved for each → layout/app objects vanish on
     // the bus), then reconnect with backoff; the registry replays the graph and objects reappear.
     QObject::connect(&m_graph, &pw::Graph::disconnected, this, [this](const QString &why) {
-        qWarning() << "PipeWire disconnected:" << why;
+        qCWarning(lcMixer) << "PipeWire disconnected:" << why;
         m_graph.teardown();
         m_channels.clear(); m_mixes.clear(); m_cells.clear(); m_sinks.clear(); m_devices.clear(); m_edges.clear(); m_idToName.clear();
         Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged();
@@ -58,12 +59,12 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     });
     m_reconnect.setSingleShot(true);
     QObject::connect(&m_reconnect, &QTimer::timeout, this, [this] {
-        if (m_graph.connect()) { qInfo() << "PipeWire: reconnected"; return; }
+        if (m_graph.connect()) { qCInfo(lcMixer) << "PipeWire: reconnected"; return; }
         m_reconnectMs = std::min(m_reconnectMs * 2, 10000);
-        qWarning() << "PipeWire: reconnect failed, retry in" << m_reconnectMs << "ms";
+        qCWarning(lcMixer) << "PipeWire: reconnect failed, retry in" << m_reconnectMs << "ms";
         m_reconnect.start(m_reconnectMs);
     });
-    if (!m_graph.connect()) { qWarning() << "PipeWire: connect failed, retrying"; m_reconnect.start(m_reconnectMs); }
+    if (!m_graph.connect()) { qCWarning(lcMixer) << "PipeWire: connect failed, retrying"; m_reconnect.start(m_reconnectMs); }
 }
 
 bool Mixer::loadLayout() {
@@ -73,7 +74,7 @@ bool Mixer::loadLayout() {
     m_firstRun = !ok;   // UX-3: nothing on disk → the starter layout is in use and the wizard is worth showing
     // The layout IS the list of channels and mixes — publish them now, not when PipeWire happens to confirm their
     // nodes. Before this, `channel list` right after the bus name came up could miss channels whose null-sink had
-    // not been replayed yet (ctest15/16, and the hotplug test on 2026-09-16: "no channel 'hot'" after a restart).
+    // not been replayed yet (ctest15/16, and the hotplug test on: "no channel 'hot'" after a restart).
     for (const auto &c : m_layout.channels) { bool f = false; for (const auto &ch : m_channels) if (ch.slug == c.slug) f = true; if (!f) m_channels.push_back({c.slug, c.name, c.icon, true}); }
     for (const auto &m : m_layout.mixes)    { bool f = false; for (const auto &mx : m_mixes)    if (mx.slug == m.slug) f = true; if (!f) m_mixes.push_back({m.slug, m.name, m.icon, true}); }
     return ok;
@@ -135,7 +136,7 @@ void Mixer::reconcile() {
     // a test left kmixdeck.link.game.stream.in at 0.0156 → the stream mix was 36 dB down with the fader at 0 dB).
     for (const auto &n : m_graph.nodes())
         if (n.name.startsWith(QLatin1String("kmixdeck.")) && n.name.endsWith(QLatin1String(".in")) && (n.volume != 1.0f || n.mute)) {
-            qInfo() << "resetting capture side" << n.name << "to 1.0/unmuted (was" << n.volume << n.mute << ")";
+            qCInfo(lcMixer) << "resetting capture side" << n.name << "to 1.0/unmuted (was" << n.volume << n.mute << ")";
             m_graph.setVolume(n.id, 1.0f, false);
         }
     // Config fragment on disk must match what THIS binary renders — a stale one (older renderer, or written by
@@ -143,7 +144,7 @@ void Mixer::reconcile() {
     if (!m_pwConfPath.isEmpty()) {
         QFile f(m_pwConfPath);
         const bool same = f.open(QIODevice::ReadOnly) && f.readAll() == m_layout.toPipewireConf().toUtf8();
-        if (!same) { qInfo() << "pipewire fragment differs from layout, rewriting" << m_pwConfPath; saveLayout(); }
+        if (!same) { qCInfo(lcMixer) << "pipewire fragment differs from layout, rewriting" << m_pwConfPath; saveLayout(); }
     }
     applyFallbacks();
     m_reconciled = true;
@@ -168,7 +169,7 @@ fx::Chain *chainOf(Layout &l, const QString &slug) {
 
 QJsonObject Mixer::fxChain(const QString &slug) const {
     // The chain as configured — including a bypassed one (FX-5: enabled=false keeps the effects, routes around them).
-    // Until 2026-09-18 this returned {} whenever the chain was not *active*, so a bypassed chain looked like "no
+    // Until this returned {} whenever the chain was not *active*, so a bypassed chain looked like "no
     // effects" to every frontend and could not be re-enabled from any UI (found by the web FX-8 test). Only a chain
     // with no effects at all is reported as {}.
     const fx::Chain *c = nullptr;
@@ -178,16 +179,16 @@ QJsonObject Mixer::fxChain(const QString &slug) const {
 }
 
 bool Mixer::setFxChain(const QString &slug, const QJsonObject &chainJson) {
-    qInfo() << "fx: setFxChain" << slug;
+    qCInfo(lcMixer) << "fx: setFxChain" << slug;
     fx::Chain *chain = chainOf(m_layout, slug);
     if (!chain) return false;
     const fx::Chain next = fx::Chain::fromJson(chainJson);
     const QString why = fx::validate(next);
-    if (!why.isEmpty()) { qWarning() << "kmixdeck: refusing fx chain:" << why; return false; }
+    if (!why.isEmpty()) { qCWarning(lcMixer) << "kmixdeck: refusing fx chain:" << why; return false; }
     // Same topology (types, order, enabled flags) and only parameter values differ → this is a control tweak, not a
     // rebuild: write the controls live (glitch-free Props write, ADR 0008 finding 2) and keep the nodes. Every frontend
     // saves the whole chain JSON after a slider move (FxPanel.qml onMoved, web fx.js onchange); before this the node
-    // was torn down and re-created on each of those saves (found by the web FX-8 test, 2026-09-18).
+    // was torn down and re-created on each of those saves (found by the web FX-8 test).
     const bool sameTopology = chain->enabled == next.enabled && chain->effects.size() == next.effects.size() &&
         std::equal(chain->effects.cbegin(), chain->effects.cend(), next.effects.cbegin(),
                    [](const fx::Effect &a, const fx::Effect &b) { return a.type == b.type && a.enabled == b.enabled && a.plugin == b.plugin && a.label == b.label; });
@@ -264,7 +265,7 @@ QJsonArray Mixer::fxTypes() const {
 /// Rebuild one chain live: replace the filter-chain module, keep everything else. Streams that were
 /// linked to the plain sink move onto the new entry so effects take effect without restarting PipeWire.
 void Mixer::applyFx(const QString &slug) {
-    qInfo() << "fx: applyFx" << slug << "connected" << m_connected;
+    qCInfo(lcMixer) << "fx: applyFx" << slug << "connected" << m_connected;
     if (!m_connected) return;
     fx::Chain chain;
     QString desc, entry, exit, plainName;
@@ -274,7 +275,7 @@ void Mixer::applyFx(const QString &slug) {
 
     // Streams currently on the entry (fx node) or the plain sink: remembered BEFORE the old chain goes away — with
     // node.dont-fallback a stream whose sink vanishes ends up unlinked, and nothing would find it afterwards.
-    // (Measured 2026-09-16: SetFx while playing → −inf on the mix until the app reconnected.) FX-5.
+    // (Measured: SetFx while playing → −inf on the mix until the app reconnected.) FX-5.
     QList<uint32_t> streams;
     {
         const auto e = m_graph.node(entry); const auto p = m_graph.node(plainName);
@@ -294,7 +295,7 @@ void Mixer::applyFx(const QString &slug) {
     }
     if (!m_graph.node(plainName)) m_graph.createNullSink(plainName, desc, true);   // tail for the chain
     const QString args = fx::renderFilterChainArgs(chain, desc, entry, exit, plainName, plainName, slug);
-    qInfo() << "fx: rendered" << args.length() << "chars";
+    qCInfo(lcMixer) << "fx: rendered" << args.length() << "chars";
     if (args.isEmpty()) return;
     m_graph.loadLoopback(args, "libpipewire-module-filter-chain");
     // the module's node appears asynchronously — retarget the remembered streams once it is there
@@ -347,7 +348,7 @@ bool Mixer::setCellFollows(const QString &ch, const QString &mix, const QString 
 }
 void Mixer::breakLink(const QString &ch, const QString &mix) {
     const int n = m_layout.links.removeIf([&](const LayoutLink &l) { return l.channel == ch && l.mix == mix; });
-    if (n) { saveLayout(); qInfo() << "cell" << ch << mix << "unlinked (touched directly)"; }
+    if (n) { saveLayout(); qCInfo(lcMixer) << "cell" << ch << mix << "unlinked (touched directly)"; }
 }
 void Mixer::propagateLinks(const QString &ch, const QString &sourceMix) {
     const auto src = m_cells.constFind(Names::cellNode(ch, sourceMix)); if (src == m_cells.constEnd()) return;
@@ -375,7 +376,7 @@ bool   Mixer::channelMuted(const QString &slug) const { auto it = m_sinks.constF
 // applied: pan 0 leaves both sides at trim, so an un-panned channel measures exactly as before).
 // "Balance" law: the side you pan TOWARDS stays at trim, the other side fades with cos — centre = both at trim,
 // hard L = [1, 0], hard R = [0, 1], −0.5 = [1, 0.71]. Symmetric by construction (the earlier ×√2-clamped
-// constant-power version read [0, 0.54] at hard right — measured 2026-09-16).
+// constant-power version read [0, 0.54] at hard right, measured).
 static void panGains(double pan, float &l, float &r) {
     const double p = std::clamp(pan, -1.0, 1.0);
     l = p <= 0 ? 1.f : static_cast<float>(std::cos(p * M_PI / 2.0));
@@ -526,7 +527,7 @@ QString Mixer::validateDeviceRef(const DeviceRef &ref, bool wantSource) const {
 // pre-MX-9 UI must not clobber each other).
 void Mixer::setMixOutputDevice(const QString &slug, const QString &nodeName) {
     QVector<DeviceRef> outs = mixOutputs(slug);
-    // "" means NO output — every one goes, not just Outputs[0]. Until 2026-09-18 this dropped only the first entry, so
+    // "" means NO output — every one goes, not just Outputs[0]. Until this dropped only the first entry, so
     // `mix output <mix> none` on a mix with two outputs left one behind, OutputDevice read back non-empty and the CLI
     // reported "daemon refused" for a write the daemon had accepted (test_ports DV-28 red depending on test order).
     if (nodeName.isEmpty()) outs.clear();
@@ -829,8 +830,8 @@ void Mixer::applyFallbacks() {
         if (target.isEmpty() && !m.fallbackOutput.node.isEmpty() && m_devices.contains(m.fallbackOutput.node)) target = m.fallbackOutput.node;
         if (target.isEmpty()) target = QStringLiteral("kmixdeck.null");
         if (out->target != target) {
-            if (m_graph.moveStream(out->id, target)) qInfo() << "mix output" << m.slug << "retargeted to" << target;
-            else qWarning() << "output device not found:" << target;
+            if (m_graph.moveStream(out->id, target)) qCInfo(lcMixer) << "mix output" << m.slug << "retargeted to" << target;
+            else qCWarning(lcMixer) << "output device not found:" << target;
         }
     }
 }
@@ -864,10 +865,10 @@ bool Mixer::assignApp(uint32_t id, const QStringList &wantedIn, bool cumulative)
     LayoutApp *la = m_layout.app(key);
     // addOn merges with what the app is on NOW — its layout entry if it has one, else the channel CH-5 auto-routed
     // it to (which is in it->channels but not yet in the layout). Before: the first drop onto a second channel
-    // REPLACED the auto-routed one (test_ux11_drop_on_channel_row_assigns_the_app, 2026-09-16).
+    // REPLACED the auto-routed one (test_ux11_drop_on_channel_row_assigns_the_app).
     // Merge with what the app is on NOW — that is it->channels (the live list: layout entry if it has one, else the
     // channel CH-5 auto-routed it to). NOT la->channels alone: a stale layout entry from an earlier session/test can
-    // name channels the app is not on any more and miss the one it IS on (ux11 red in the suite only, 2026-09-17).
+    // name channels the app is not on any more and miss the one it IS on (ux11 red in the suite only).
     if (cumulative) { QStringList merged = it->channels; if (la) for (const QString &s : la->channels) if (!merged.contains(s)) merged << s; for (const QString &s : want) if (!merged.contains(s)) merged << s; want = merged; }
     if (want.isEmpty()) {                                   // un-route: back to wherever WirePlumber puts it
         if (la) { removeAppRelays(*la); m_layout.apps.removeIf([&](const LayoutApp &a) { return a.key == key; }); }
@@ -878,7 +879,7 @@ bool Mixer::assignApp(uint32_t id, const QStringList &wantedIn, bool cumulative)
     m_pendingAutoRoute.remove(id);   // an explicit assignment wins over CH-5 auto-routing that may still be pending
     // Only tear relays down when the set of EXTRA channels actually changes. removeAppRelays + ensureAppRelays back
     // to back does not work: pw_registry_destroy is asynchronous — the ".in" half is still visible when ensure looks,
-    // it says "keep", and a moment later the relay is gone for good (voice silent after a re-drop, 2026-09-17).
+    // it says "keep", and a moment later the relay is gone for good (voice silent after a re-drop).
     if (la) { if (la->channels.mid(1) != want.mid(1)) removeAppRelays(*la); la->channels = want; la->nodeName = it->nodeName; }
     else { m_layout.apps.push_back({key, it->nodeName, want}); la = m_layout.app(key); }
     if (!m_layout.knownApps.contains(key)) m_layout.knownApps << key;   // CH-5: this app has an explicit home now
@@ -890,18 +891,18 @@ bool Mixer::assignApp(uint32_t id, const QStringList &wantedIn, bool cumulative)
 }
 // Relay per extra channel, same loopbackArgs shape as the config renderer (ADR 0002) so runtime and fragment
 // stay identical. Capture side sits on the app's OWN output node: capturing the primary channel's monitor would
-// relay every other app on that channel as well (measured on the dev machine 2026-09-16: voice heard all of game).
+// relay every other app on that channel as well (measured on the dev machine: voice heard all of game).
 // Trade-off: the app's node passes to the second channel unprocessed by the primary channel's fx (FX-3).
 void Mixer::ensureAppRelays(const LayoutApp &a) {
     if (a.channels.size() < 2 || a.nodeName.isEmpty()) return;
     // Only while the app's node exists. A relay whose capture side lingers on an absent node is not "silent":
     // its playback half stays linked to the channel while the capture half is suspended, and that half-open
-    // loopback stalled the whole channel→mix path (monitor recordings empty, 2026-09-16). The relay is layout,
+    // loopback stalled the whole channel→mix path (monitor recordings empty). The relay is layout,
     // so it comes back the moment the app node appears (onNode → ensureAppRelays).
     if (!m_graph.node(a.nodeName)) { removeAppRelays(a); return; }
     for (int n = 1; n < a.channels.size(); ++n) {
         const QString node = EdgeNames::relayNode(a.key, a.channels[n]);
-        // Until 2026-09-16 `NodeInfo::target` only read target.object, never node.target → this test was always
+        // Until `NodeInfo::target` only read target.object, never node.target → this test was always
         // false, the relay was destroyed and re-created on EVERY daemon start, and that churn left the channel's
         // monitor ports silent for downstream captures (test_ux12_* red after test_ch12_* in one session).
         if (const auto in = m_graph.node(node + QStringLiteral(".in")); in && (in->target == a.nodeName || in->configuredTarget == a.nodeName) && m_graph.node(node)) continue;
@@ -926,7 +927,7 @@ void Mixer::autoRouteNewApp(const App &a) {
     if (key.isEmpty() || m_layout.knownApps.contains(key)) return;
     // Decide only once WirePlumber has linked the stream (its first onStreamRouted). Before that we cannot
     // tell a restored target from "nowhere yet", and moving a node WirePlumber has not registered is
-    // linked but never remembered (state-stream.lua returns early) — broke CH-4 on 2026-09-15.
+    // linked but never remembered (state-stream.lua returns early) — broke CH-4 on.
     m_pendingAutoRoute.insert(a.id);
 }
 
@@ -941,9 +942,9 @@ void Mixer::finishAutoRoute(uint32_t id) {
         m_layout.knownApps << key; saveLayout();
         // The app IS on the default channel from now on — say so immediately. WirePlumber's relink comes a moment
         // later; until then App.Channels read [] and a drop onto a second channel merged with nothing and REPLACED
-        // the default (test_ux11 red in the suite only, 2026-09-16: the first run of a fake app hit this window).
+        // the default (test_ux11 red in the suite only,: the first run of a fake app hit this window).
         it->channels = QStringList{m_layout.defaultChannel}; Q_EMIT appChanged(id);
-        qInfo() << "new application" << key << "→ default channel" << m_layout.defaultChannel;
+        qCInfo(lcMixer) << "new application" << key << "→ default channel" << m_layout.defaultChannel;
     }
 }
 void Mixer::setListeningDevice(const QString &node) {
@@ -965,7 +966,7 @@ void Mixer::startAudition(const QString &kind, const QString &slug) {
     if (kind != QLatin1String("channel") && kind != QLatin1String("mix")) return;
     const bool isCh = kind == QLatin1String("channel");
     m_audition.kind = kind; m_audition.slug = slug;
-    // Only the entity's OWN tier is soloed. Bug until 2026-09-16: both tiers were silenced against `slug`, so
+    // Only the entity's OWN tier is soloed. Bug until: both tiers were silenced against `slug`, so
     // auditioning a mix muted every channel (a mix of muted channels is silence — "ist alles stumm") and auditioning
     // a channel muted every mix including the one on the headphones.
     auto snapAndSilence = [&](const QStringList &slugs, QHash<QString, QPair<float, bool>> &saved,
@@ -1004,7 +1005,7 @@ QString Mixer::slugForSinkId(uint32_t sinkId) const {
         if (it->id == sinkId && it.key().startsWith(QLatin1String("kmixdeck.channel."))) return it.key().mid(17);
     // ADR 0008: a channel with effects is entered through kmixdeck.fx.<slug> — that IS the channel for routing
     // purposes. Without this, CH-5 saw such a stream as "nowhere" and dragged it onto the default channel
-    // (measured 2026-09-16: fx test tone ended up on system instead of the voice chain).
+    // (measured: fx test tone ended up on system instead of the voice chain).
     static const QString fxP = QStringLiteral("kmixdeck.fx.");
     for (const auto &n : m_graph.nodes())
         if (n.id == sinkId && n.name.startsWith(fxP) && !n.name.startsWith(fxP + QLatin1String("mix.")) && !n.name.endsWith(QLatin1String(".out")))
@@ -1121,7 +1122,7 @@ QString Mixer::duplicateMix(const QString &from, const QString &displayName, QSt
     if (m_layout.mix(slug)) { if (error) *error = QStringLiteral("mix '%1' already exists").arg(slug); return {}; }
     // levels FIRST: master and every cell of the source → pending for the copy's nodes. reconcile() below creates the
     // nodes and onNode() applies the pending state as each one appears — the order matters (addMix() first would
-    // reconcile before the pending entries exist and the copy came up at unity, 2026-09-17).
+    // reconcile before the pending entries exist and the copy came up at unity).
     if (auto s = m_sinks.constFind(Names::mixNode(from)); s != m_sinks.constEnd()) m_pendingCellState.insert(Names::mixNode(slug), {s->volume, s->mute});
     for (const auto &c : m_layout.channels)
         if (auto cell = m_cells.constFind(Names::cellNode(c.slug, from)); cell != m_cells.constEnd()) m_pendingCellState.insert(Names::cellNode(c.slug, slug), {cell->volume, cell->mute});
@@ -1189,7 +1190,7 @@ bool Mixer::undo() {
         m_pendingCellState.insert(isCh ? Names::channelNode(slug) : Names::mixNode(slug), {static_cast<float>(u.value(QStringLiteral("trim")).toDouble(1.0)), u.value(QStringLiteral("muted")).toBool()});
     saveLayout(); reconcile();
     restorePendingCellStates();
-    qInfo() << "undo:" << u.value(QStringLiteral("what")).toString() << "restored";
+    qCInfo(lcMixer) << "undo:" << u.value(QStringLiteral("what")).toString() << "restored";
     Q_EMIT undoChanged(); if (isCh) Q_EMIT defaultChannelChanged();
     return true;
 }
@@ -1228,7 +1229,7 @@ bool Mixer::importSettings(const QJsonObject &doc, QString *error) {
     Q_EMIT layoutChanged(); Q_EMIT defaultChannelChanged(); Q_EMIT listeningDeviceChanged(); Q_EMIT inputsChanged();
     for (const auto &c : m_layout.channels) Q_EMIT channelChanged(c.slug);
     for (const auto &m : m_layout.mixes) Q_EMIT mixChanged(m.slug);
-    qInfo() << "import: layout replaced," << l.channels.size() << "channels," << l.mixes.size() << "mixes";
+    qCInfo(lcMixer) << "import: layout replaced," << l.channels.size() << "channels," << l.mixes.size() << "mixes";
     return true;
 }
 void Mixer::restorePendingCellStates() {
@@ -1239,7 +1240,7 @@ void Mixer::restorePendingCellStates() {
         if (!n) { ++it; continue; }
         if (it.key().startsWith(QLatin1String("kmixdeck.channel."))) {
             // a channel sink carries trim × pan (DV-22): write the pair, then let applyChannelGain() split it L/R —
-            // a plain setVolume() here silently dropped the pan after undo/import (CT-7 measured −6 dB off, 2026-09-17)
+            // a plain setVolume() here silently dropped the pan after undo/import (CT-7 measured −6 dB off)
             auto s = m_sinks.find(it.key()); if (s != m_sinks.end()) { s->volume = it->first; s->mute = it->second; }
             applyChannelGain(it.key().mid(17));
         } else {
@@ -1296,10 +1297,10 @@ bool Mixer::enforceIntent(const pw::NodeInfo &n) {
     // 5 s and we stop, log, and let the peer have the node rather than loop.
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (now - in->lastRewriteMs > 5000) in->rewrites = 0;
-    if (in->rewrites >= 3 && now - in->lastRewriteMs > 1000) { qWarning() << "node" << n.name << "keeps being overwritten by someone else; giving up on intent" << in->volume << in->mute; m_intent.erase(in); return false; }
+    if (in->rewrites >= 3 && now - in->lastRewriteMs > 1000) { qCWarning(lcMixer) << "node" << n.name << "keeps being overwritten by someone else; giving up on intent" << in->volume << in->mute; m_intent.erase(in); return false; }
     if (now - in->lastRewriteMs > 1000) ++in->rewrites;
     in->lastRewriteMs = now;
-    qInfo() << "node" << n.name << "echoed" << n.volume << n.mute << "but intent is" << in->volume << in->mute << "- rewriting";
+    qCInfo(lcMixer) << "node" << n.name << "echoed" << n.volume << n.mute << "but intent is" << in->volume << in->mute << "- rewriting";
     m_graph.setVolume(n.id, in->volume, in->mute);
     return true;
 }
@@ -1381,7 +1382,7 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         if (isNew) if (LayoutApp *la = m_layout.app(appKey(a)); la && la->channels.size() > 1) {
             // CH-6: the app may be back under a NEW node.name (pid/counter in the name — Sonusmix #38). The relay
             // captures from the node by name, so the layout entry follows the node, else ensureAppRelays() looks for
-            // the old name, finds nothing and builds no relay (second channel silent, 2026-09-17).
+            // the old name, finds nothing and builds no relay (second channel silent).
             if (la->nodeName != a.nodeName) { removeAppRelays(*la); la->nodeName = a.nodeName; saveLayout(); }
             ensureAppRelays(*la);
         }

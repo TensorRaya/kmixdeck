@@ -58,7 +58,7 @@ QQC2.Slider {
         implicitHeight: fader.knobD
         x: 0; width: fader.width
         Rectangle {   // track — spans the knob's travel plus half a knob on each side, and STAYS inside the item.
-            // Before 2026-09-16 it was `width: parent.width + knobD`, i.e. it stuck out knobD/2 on both sides and ran
+            // Before it was `width: parent.width + knobD`, i.e. it stuck out knobD/2 on both sides and ran
             // into the neighbouring icon (visible in every mix header and cell row on the laptop).
             id: track
             anchors.verticalCenter: parent.verticalCenter

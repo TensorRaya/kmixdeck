@@ -1,5 +1,6 @@
 # --- core: PipeWire layer + mixer model (QML-free, used by the daemon and by unit tests)
 add_library(kmixdeck_core STATIC
+    logging.cpp logging.h
     mixer.cpp mixer.h
     layout.cpp layout.h
     fx.cpp fx.h

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from test_service_cli import Stack, BIN
 from pw_sandbox import start_private_pipewire
+from waiting import wait_for
 
 
 @pytest.fixture(scope="module")
@@ -174,9 +175,7 @@ def test_ux10_app_row_shows_its_icon_and_running_state(stack):
         assert float(got[f"appRunning/{name}.opacity"]) >= 0.5, f"a playing app must not be shown as silent: {got}"
     finally:
         p.kill(); p.wait()
-    for _ in range(50):
-        if not any(a.get("Running") for a in stack.cli("app", "list", json_out=True) if a.get("Name") == name): break
-        time.sleep(0.1)
+    wait_for(lambda: not any(a.get("Running") for a in stack.cli("app", "list", json_out=True) if a.get("Name") == name), timeout=5.0, what="not any(a.get('Running') for a in stack.cli('app', 'list', json_out=Tr")
     got = kde(stack, "--probe", f"appRunning/{name}.opacity", open_page="apps")
     # after the app is gone the row either disappears (not found) or shows silent (≤ 0.25)
     v = got.get(f"appRunning/{name}.opacity", "<not found>")
@@ -215,9 +214,7 @@ def test_dv27_monitors_column_is_hidden_by_default_and_shows_listening_device_wi
     make_fake_sink(stack, "fake.cans", "Fake Cans")
     stack.cli("listen", "fake.cans")
     stack.cli("mix", "output", "stream", "fake.cans"); stack.cli("mix", "volume", "stream", "0.5")
-    for _ in range(50):
-        if "fake.cans" in stack.cli("mix", "outputs", "stream", json_out=True): break
-        time.sleep(0.1)
+    wait_for(lambda: "fake.cans" in stack.cli("mix", "outputs", "stream", json_out=True), timeout=5.0, what="'fake.cans' in stack.cli('mix', 'outputs', 'stream', json_out=True)")
     got = kde(stack, "--gesture", "monitors:on", "--probe", "monitorsDevice.text", "--probe", "monitorsMix/stream.text", "--probe", "monitorsVolume/stream.value", "--probe", "monitorsMix/monitor.text", open_page="patchbay")
     assert got["monitorsDevice.text"] == "Fake Cans", got
     assert got["monitorsMix/stream.text"] == "Stream", got
@@ -234,9 +231,7 @@ def test_dv14_wire_popover_shows_trim_and_mute_of_that_wire(stack):
     from test_service_cli import make_fake_sink
     make_fake_sink(stack, "fake.pop", "Pop Sink")
     stack.cli("mix", "output-add", "stream", "fake.pop")
-    for _ in range(50):
-        if "fake.pop" in stack.cli("mix", "outputs", "stream", json_out=True): break
-        time.sleep(0.1)
+    wait_for(lambda: "fake.pop" in stack.cli("mix", "outputs", "stream", json_out=True), timeout=5.0, what="'fake.pop' in stack.cli('mix', 'outputs', 'stream', json_out=True)")
     stack.cli("mix", "wire", "stream", "fake.pop", "trim", "-6dB", "mute", "on")
     got = kde(stack, "--gesture", "wirepopup:output|stream|fake.pop", "--probe", "wirePopup.visible", "--probe", "wireTrim.value", "--probe", "wireTrimText.text", "--probe", "wireMute.checked", "--probe", "wireRemove.visible", open_page="patchbay")
     assert got["wirePopup.visible"] == "true", got
@@ -263,9 +258,7 @@ def test_ux14_mix_end_to_end_from_the_ui_alone(stack):
     stack.cli("listen", "none", check=False)
     # 1) "I hear:" → pick the speakers (routes the heard mix there and remembers the device)
     hear_out = kde(stack, "--gesture", "hear:fake.phones", "--probe", "hearingBar.device", "--probe", "hearingBar.hearingMixes")
-    for _ in range(50):
-        if stack.cli("listen").stdout.strip().startswith("fake.phones"): break
-        time.sleep(0.1)
+    wait_for(lambda: stack.cli("listen").stdout.strip().startswith("fake.phones"), timeout=5.0, what="stack.cli('listen').stdout.strip().startswith('fake.phones')")
     assert stack.cli("listen").stdout.strip().startswith("fake.phones"), hear_out
     heard = [m for m in stack.cli("status", json_out=True)["mixes"] if "fake.phones" in m["Outputs"]]
     assert heard, "no mix plays to the chosen device"
@@ -285,16 +278,12 @@ def test_ux14_mix_end_to_end_from_the_ui_alone(stack):
     try:
         path = next(a["Path"] for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")
         assert kde(stack, "--gesture", f"drop:{path}|voice")[0].endswith("-> ok")
-        for _ in range(50):
-            if "voice" in next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")["Channels"]: break
-            time.sleep(0.1)
+        wait_for(lambda: "voice" in next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")["Channels"], timeout=5.0, what="'voice' in next(a for a in stack.cli('app', 'list', json_out=True) if ")
         trail.append(("after drop", outs()))
         # the app now plays on system (CH-5 auto-route) AND voice (the drop) — both into stream. To hear ONE fader,
         # mute the system channel via the UI first; that is also the "mute" step of the walk-through.
         assert kde(stack, "--gesture", "mute:channel|system")[0].endswith("-> ok")
-        for _ in range(50):
-            if next(c for c in stack.cli("status", json_out=True)["channels"] if c["Slug"] == "system")["Muted"]: break
-            time.sleep(0.1)
+        wait_for(lambda: next(c for c in stack.cli("status", json_out=True)["channels"] if c["Slug"] == "system")["Muted"], timeout=5.0, what="next(c for c in stack.cli('status', json_out=True)['channels'] if c['S")
         trail.append(("after mute system", outs()))
         # baseline: the app's tone at the stream mix with the voice cell at unity
         base = wait_level(lambda: stack.pw.level_at("kmixdeck.mix.stream"), lambda v: v > SILENT + 10, tries=15)
