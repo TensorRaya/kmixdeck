@@ -105,10 +105,16 @@ export function render(root) {
   }
   page.append(...cols, svg);
   root.append(page);
-  // wires need the cards laid out first
-  requestAnimationFrame(() => drawWires(page, svg, wires, jacks));
+  // The cards are in the document now, so getBoundingClientRect() forces layout and the wires can be drawn in the SAME
+  // render — no wire-less frame. (Until 2026-09-18 this waited for requestAnimationFrame; a burst of patches — AddInput
+  // → Inputs, InputPresent, node names — re-rendered several times in a row and every render started with an empty
+  // svg: visible flicker, and a test that clicked a wire found none.) A resize still needs a redraw: the jacks move.
+  drawWires(page, svg, wires, jacks);
   wireDrag(page, jacks);
   page._wires = wires;
+  page._redraw = () => drawWires(page, svg, wires, jacks);
+  if (!render._ro) { render._ro = new ResizeObserver(() => document.querySelector(".patchbay")?._redraw?.()); }
+  render._ro.disconnect(); render._ro.observe(page);
 }
 
 function centre(elm, page) { const r = elm.getBoundingClientRect(), p = page.getBoundingClientRect(); return [r.left + r.width / 2 - p.left + page.scrollLeft, r.top + r.height / 2 - p.top + page.scrollTop]; }
