@@ -11,7 +11,11 @@ class Chrome:
         self.tmp = tempfile.mkdtemp(prefix="kmix-chrome-")
         self.proc = subprocess.Popen([CHROME, "--headless=new", "--remote-debugging-port=0", f"--user-data-dir={self.tmp}", "--no-first-run",
                                       "--disable-gpu", "--hide-scrollbars", "--force-dark-mode", "--enable-features=WebContentsForceDark:inversion_method/cielab_based/image_behavior/none", f"--window-size={size[0]},{size[1]}", "--remote-allow-origins=*", url],
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                     # own process group: chrome is a tree (launcher, zygote, renderers, gpu) — terminate() on the
+                                     # launcher left the children alive and the profile dir busy; 61 orphaned chrome processes and
+                                     # 8 × ~100 MB profiles after one ctest run filled /tmp (tmpfs) on 2026-09-18
+                                     start_new_session=True)
         port = None; t0 = time.time()
         while time.time() - t0 < 15:
             line = self.proc.stderr.readline()
@@ -64,7 +68,16 @@ class Chrome:
         asyncio.run(go()); return path
 
     def close(self):
-        self.proc.terminate()
+        import os, signal
+        try: os.killpg(self.proc.pid, signal.SIGTERM)
+        except ProcessLookupError: pass
         try: self.proc.wait(5)
-        except subprocess.TimeoutExpired: self.proc.kill()
-        shutil.rmtree(self.tmp, ignore_errors=True)
+        except subprocess.TimeoutExpired:
+            try: os.killpg(self.proc.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            self.proc.wait(5)
+        for _ in range(20):                          # renderers may take a moment to let go of the profile
+            shutil.rmtree(self.tmp, ignore_errors=True)
+            if not os.path.exists(self.tmp): break
+            time.sleep(0.1)
+        assert not os.path.exists(self.tmp), f"chrome profile {self.tmp} could not be removed — a chrome process is still holding it"
