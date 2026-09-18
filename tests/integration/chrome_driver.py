@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Raya Elena Solano
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Drive the web UI in headless Chrome over CDP (no selenium/playwright — python `websockets` + chrome's own protocol).
 
 Lifecycle matters here: chrome is a process TREE (launcher, zygote, renderers, gpu). `terminate()` on the launcher alone

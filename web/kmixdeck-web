@@ -1,4 +1,6 @@
 #!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Raya Elena Solano
+# SPDX-License-Identifier: GPL-3.0-or-later
 """kmixdeck-web — the browser frontend's bridge (ADR 0011, AR-8/AR-9).
 
 Speaks ONLY D-Bus to the daemon (AR-6: no PipeWire here) and serves the web UI plus one WebSocket per browser tab.
@@ -227,7 +229,14 @@ class Bridge:
 
     async def http(self, connection, request):
         """Static files for anything that is not a WebSocket upgrade."""
-        if request.headers.get("Upgrade", "").lower() == "websocket": return None
+        if request.headers.get("Upgrade", "").lower() == "websocket":
+            # Same-origin only. A browser always sends Origin on a WebSocket upgrade; a page from another site (or a
+            # local file) must not be able to drive the mixer just because the bridge is on localhost without a token.
+            # Non-browser clients (tests, scripts) send no Origin and are allowed — the token is their gate on the LAN.
+            origin, host = request.headers.get("Origin"), request.headers.get("Host", "")
+            if origin is not None and origin.lower() not in (f"http://{host}".lower(), f"https://{host}".lower()):
+                return connection.respond(HTTPStatus.FORBIDDEN, "cross-origin WebSocket refused\n")
+            return None
         path = request.path.split("?", 1)[0]
         if path == "/": path = "/index.html"
         target = (WEB_DIR / path.lstrip("/")).resolve()

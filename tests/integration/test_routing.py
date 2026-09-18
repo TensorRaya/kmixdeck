@@ -311,7 +311,7 @@ def test_mx7_cell_link_stream_follows_monitor_and_breaks_when_touched(stack, ton
 
 def test_ch12_multi_assign_relays_only_that_app(stack):
     """CH-12: an app on game+voice is heard in both channels — but the relay must carry ONLY that app.
-    Measured on boreas 2026-09-16: a relay capturing the primary channel's monitor dragged every other app of
+    Measured on the dev machine 2026-09-16: a relay capturing the primary channel's monitor dragged every other app of
     that channel along. So: A → game+voice, B → game only; mute A; voice must go silent while game stays hot."""
     from test_service_cli import FAKE_APP, current_sink_of
     b_props = FAKE_APP.replace("FakeGame", "OtherGame").replace("fakegame", "othergame")
@@ -336,7 +336,7 @@ def test_ch12_multi_assign_relays_only_that_app(stack):
         assert v < SILENT, f"relay leaked another app of the primary channel into voice: {v:.1f} dBFS"
         assert g > HOT, f"game must still carry OtherGame: {g:.1f} dBFS"
         # persisted like CH-4 (layout, not PipeWire state) — and the relay comes back after a daemon restart,
-        # capturing the app node (a fragment from an older renderer captured the channel sink — boreas 2026-09-16)
+        # capturing the app node (a fragment from an older renderer captured the channel sink — dev machine 2026-09-16)
         layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
         assert any(x["key"] == "FakeGame" and x["channels"] == ["game", "voice"] for x in layout["apps"]), layout.get("apps")
         conf = (Path(stack.pw.runtime_dir) / "config" / "pipewire" / "pipewire.conf.d" / "90-kmixdeck.conf").read_text()

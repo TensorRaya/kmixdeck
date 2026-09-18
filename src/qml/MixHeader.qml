@@ -25,7 +25,7 @@ QQC2.Control {
     property string iconName: Mixer.mixIcon(mix)
     padding: 0
     // Narrow card (laptop, 3 mixes): the FX button folds into the ⋮ menu (it is there anyway) so the device line keeps
-    // room. The listen button NEVER folds — hold-to-listen is a primary control (Michel, 2026-09-16).
+    // room. The listen button NEVER folds — hold-to-listen is a primary control (UX-12).
     readonly property bool compact: width < Kirigami.Units.gridUnit * 24
     // Folded header (many mixes on a normal screen): two rows — icon+name+⋮ over mute+master+listen. Same controls,
     // same objectNames, so every gesture and probe keeps working; only the arrangement changes.

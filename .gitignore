@@ -5,3 +5,4 @@ __pycache__/
 
 streamdeck/**/plugin.log
 streamdeck/**/__pycache__/
+*.mo

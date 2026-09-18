@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Raya Elena Solano
+# SPDX-License-Identifier: GPL-3.0-or-later
 """AR-12 / ADR 0010 D5: a core-tier feature is done only when EVERY frontend shows it.
 
 One table row per core feature: the change is made through the CLI (rule 1: the API is the feature), then read
@@ -278,7 +280,7 @@ def test_mx5_eight_mixes_all_faders_visible_and_bad_colour_refused(stack):
         hidden = [p for p in probes if p.endswith(".visible") and g.get(p) != "true"]
         flat = [p for p in probes if (p.endswith(".width") or p.endswith(".height")) and float(g.get(p, "0") or 0) < 8]
         assert not hidden and not flat, f"hidden: {hidden} flat: {flat}"
-        # "Scrollbalken? Mix 2 3 4 5 6 ??" (Michel 2026-09-17): columns share the width instead of scrolling. At 1280 px
+        # MX-5: columns share the width instead of scrolling. At 1280 px
         # six mixes fit without a scrollbar (headers fold to two rows), at 1600 px all eight do; the folded header keeps
         # every control (mute, master, listen, ⋮) and the master fader stays wide enough to grab.
         for sl in slugs[-2:]: stack.cli("mix", "remove", sl)

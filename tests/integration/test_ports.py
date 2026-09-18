@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Raya Elena Solano
+# SPDX-License-Identifier: GPL-3.0-or-later
 """ADR 0009 — port-based virtual devices (DV-13, DV-17…20), measured at the ports.
 
 A fake 4-port source ("Ui24R") and a fake 4-port sink ("RØDECaster out") stand in for the hardware. Ports are
@@ -357,7 +359,7 @@ def test_dv24_patchbay_gestures_reach_the_daemon(stack):
 
 
 def test_dv13_hotplug_new_multiport_device_is_listed_wired_replugged_and_persisted(stack):
-    """Michel 2026-09-16: 'Wird sauber erkannt wenn man was Neues anschließt? Beim Unplug/Replug wieder wie vorher?
+    """DV-9/DV-12: is a newly plugged device recognised cleanly, and does unplug/replug come back as before?
     Sauber persistiert?' — the golden rule, measured on a device that appears from OUTSIDE the daemon (like a USB
     console), with a port-level wire on it, through unplug, replug and a daemon restart. Audio is measured, not
     only properties."""
@@ -534,8 +536,8 @@ def test_dv14_wire_trim_and_mute_live_on_the_wire_not_on_the_device(stack):
 
 
 def test_dv28_ui24r_scale_32_in_32_out_every_port_routable_and_fast(stack):
-    """DV-28 (Michel 2026-09-17: "bei UI24R alle Eingänge und Ausgänge sauber konfigurierbar / routbar?"): a 32-in/32-out
-    device (the Ui24R's USB shape, measured on aether) — 32 mono channels on AUX1..32, mixes on AUX1+2 and AUX31+32,
+    """DV-28 (every input and output of a Ui24R-class device configurable and routable): a 32-in/32-out
+    device (the Ui24R's USB shape, measured on a headless box with the Ui24R on USB) — 32 mono channels on AUX1..32, mixes on AUX1+2 and AUX31+32,
     a second side-wire on a high port; every edge exists within a few seconds (not 0.7 s each: that was the test's own
     per-name polling, 2026-09-17), audio on port 32 reaches only channel 32, the mixes reach exactly their ports,
     and everything is back after a daemon restart."""

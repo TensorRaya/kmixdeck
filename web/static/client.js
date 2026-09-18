@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Raya Elena Solano
+// SPDX-License-Identifier: GPL-3.0-or-later
 // client.js — the WebSocket side of the web UI (ADR 0011). One connection, one state object, RFC 7386 patches.
 // Nothing in here knows what a channel is; it knows paths, properties and methods — the same the KDE window uses.
 

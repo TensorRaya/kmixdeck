@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Raya Elena Solano
+// SPDX-License-Identifier: GPL-3.0-or-later
 // patchbay.js — UX-15/DV-24: the whole signal path as one picture. Four columns of cards (sources · channels · mixes ·
 // outputs), wires as S-curves between jacks. The model is derived here from the object tree with exactly the rules of
 // MixerClient::patchbay() (AR-9) — same card ids, same wire kinds, same meter keys.

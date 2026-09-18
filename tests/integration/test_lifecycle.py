@@ -225,15 +225,19 @@ def test_rebuild_from_empty_and_default_layout_on_missing_file(stack):
 
 def test_corrupt_layout_file_does_not_take_the_daemon_down(stack):
     p = Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json"
+    if not status(stack).get("mixes") or "extra" not in {m["Slug"] for m in status(stack)["mixes"]}: stack.cli("mix", "add", "Extra")   # order independence: this test used to rely on an earlier one
+    assert p.exists()
     good = p.read_text()
-    p.write_text("{ this is not json")
-    stack.restart_daemon()
-    assert stack.cli("status", check=False).returncode == 0, "daemon must come up with a corrupt layout (CT-7)"
-    # the graph in PipeWire is still the truth → objects are rebuilt from it
-    st = status(stack)
-    assert {m["Slug"] for m in st["mixes"]} >= {"monitor", "stream", "extra"}
-    p.write_text(good)
-    stack.restart_daemon()   # the daemon must reload the restored file — leaving it running on the rebuilt-from-graph state would desync layout.json from the daemon
+    try:
+        p.write_text("{ this is not json")
+        stack.restart_daemon()
+        assert stack.cli("status", check=False).returncode == 0, "daemon must come up with a corrupt layout (CT-7)"
+        # the graph in PipeWire is still the truth → objects are rebuilt from it
+        st = status(stack)
+        assert {m["Slug"] for m in st["mixes"]} >= {"monitor", "stream", "extra"}
+    finally:
+        p.write_text(good)
+        stack.restart_daemon()   # the daemon must reload the restored file — leaving it running on the rebuilt-from-graph state would desync layout.json from the daemon
 
 
 # ---------------------------------------------------------------- CH-5: default channel for never-seen apps
@@ -447,3 +451,26 @@ def test_ch6_assignment_survives_node_id_name_and_metadata_churn(stack):
             names = stack.pw.node_names()
             assert any(n.startswith("kmixdeck.relay.FakeGame.") for n in names), "CH-12 relay did not come back for the renamed node"
     finally: p.kill(); p.wait()
+
+
+def test_ps2_layout_from_a_newer_kmixdeck_is_kept_aside_not_downgraded(stack):
+    """A layout.json with a version this build does not know must not be read as the old format and written back
+    (that would silently drop the newer keys). The daemon moves it aside, starts with the default layout and says so."""
+    p = Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json"
+    if not p.exists(): stack.cli("mix", "add", "Probe For File")
+    assert p.exists()
+    good = p.read_text()
+    aside = p.with_name("layout.json.v99-from-newer-kmixdeck")
+    try:
+        doc = json.loads(good); doc["version"] = 99; doc["fromTheFuture"] = {"keep": "me"}
+        p.write_text(json.dumps(doc))
+        stack.restart_daemon()
+        assert stack.cli("status", check=False).returncode == 0, "daemon must come up"
+        assert aside.exists(), "the newer file must be preserved next to layout.json"
+        assert json.loads(aside.read_text())["fromTheFuture"] == {"keep": "me"}, "preserved in content"
+        # whatever the daemon writes now is the version it understands — not a v99 with keys missing
+        stack.cli("mix", "add", "Future Probe")
+        assert json.loads(p.read_text())["version"] == 2
+    finally:
+        if aside.exists(): aside.unlink()
+        p.write_text(good); stack.restart_daemon()

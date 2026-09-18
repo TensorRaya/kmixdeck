@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Raya Elena Solano
+// SPDX-License-Identifier: GPL-3.0-or-later
 // widgets.js — fader, meter, small buttons. DOM only, no framework (ADR 0011 §4).
 import { peaks, dbLabel, cubicToLin, linToCubic } from "./client.js";
 

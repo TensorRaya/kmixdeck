@@ -57,6 +57,10 @@ struct DeviceRef {
     }
 };
 
+/// Format version written by this build (`"version"` in layout.json). Older files are read with defaults for what they
+/// lack; a NEWER file is moved aside and the daemon starts fresh (Layout::load) — never read-as-old and saved back.
+constexpr int kLayoutVersion = 2;
+
 struct LayoutChannel { QString slug, name, icon; fx::Chain fx; double pan = 0.0; QString color; QString group; };   // CH-8: group = free name, "" = none   // MX-5: color = "#rrggbb" or empty (theme)   // DV-22: −1 = left … 0 = centre … +1 = right
 /// A physical input feeding a channel (mic, capture card, BT headset mic) — ADR 0007 D2.
 struct LayoutInput   { QString slug, name; DeviceRef device; QString channel; };

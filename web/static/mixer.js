@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Raya Elena Solano
+// SPDX-License-Identifier: GPL-3.0-or-later
 // mixer.js — UX-1: channels as rows against mixes as panels, one fader per cell. Same layout rules as MixerPage.qml.
 import * as C from "./client.js";
 import { fader, meter, button, el, toast, knob, iconButton } from "./widgets.js";

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Raya Elena Solano
+# SPDX-License-Identifier: GPL-3.0-or-later
 """AR-8/AR-9 — the web bridge speaks only D-Bus, serves one JSON view model over a WebSocket, and refuses everything
 that is not an allowlisted org.kmixdeck1 property/method (ADR 0011).
 
@@ -470,4 +472,25 @@ def test_dv1_web_input_picker_and_ux8_icon_from_the_browser(stack):
             assert wait_for(lambda: next(c for c in _status(stack)["channels"] if c["Slug"] == "voice")["Icon"] == "", 8), "empty → default"
     finally:
         stack.cli("mix", "icon", "stream", "none", check=False)
+        web.close()
+
+
+def test_bp1_websocket_refuses_a_foreign_origin_and_takes_its_own(stack):
+    """A page from another site must not get a WebSocket to the bridge (it would drive the mixer from any tab on
+    localhost, where no token is required). Same-origin and non-browser clients (no Origin header) are fine."""
+    import websockets
+    web = Web(stack, token="")
+    try:
+        async def attempt(origin):
+            kw = {"additional_headers": {"Origin": origin}} if origin else {}
+            try:
+                async with websockets.connect(f"ws://127.0.0.1:{web.port}/ws", **kw) as ws:
+                    await ws.send(json.dumps({"op": "hello"})); return json.loads(await asyncio.wait_for(ws.recv(), 5))["op"]
+            except websockets.exceptions.InvalidStatus as e:
+                return e.response.status_code
+        assert asyncio.run(attempt("http://evil.example")) == 403
+        assert asyncio.run(attempt("null")) == 403                     # file:// pages send "null"
+        assert asyncio.run(attempt(f"http://127.0.0.1:{web.port}")) == "snapshot"
+        assert asyncio.run(attempt(None)) == "snapshot"                 # scripts, the tests themselves
+    finally:
         web.close()

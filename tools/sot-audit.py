@@ -7,7 +7,7 @@
    CORE table — that table drives the change through the CLI and reads it back from the KDE window AND the tray.
    A core feature without a row there is not done, whatever the daemon test says.
 Exit 1 on violations."""
-import re, sys, pathlib
+import re, sys, sys, pathlib
 root = pathlib.Path(__file__).resolve().parent.parent
 sot = (root / "docs/spec/requirements.md").read_text()
 have = set()
@@ -27,6 +27,15 @@ for line in sot.splitlines():
     if "tier:core" in line and rid not in core_covered: core_missing.append(rid)
 rows = [l for l in sot.splitlines() if re.match(r"\| [A-Z]{2}-\d+ \|", l)]
 core_rows = [l for l in rows if "tier:core" in l]
+# RQ-1 (review 2026-09-18): the count in the head of the SoT is not typed by hand — the audit fails when it disagrees,
+# and `--write` puts the current numbers there. A number that can go stale must have exactly one author.
+counts = f"{sum('✅' in r for r in rows)} ✅ · {sum('🔶' in r for r in rows)} 🔶 · {sum('📝' in r for r in rows)} 📝 ({len(rows)} rows)"
+head_re = re.compile(r"^\*\*Status:\*\* .*?\(\d+ rows\)", re.M)
+if "--write" in sys.argv:
+    new = head_re.sub(f"**Status:** {counts}", sot, count=1)
+    if new != sot: (root / "docs/spec/requirements.md").write_text(new); print("head updated:", counts)
+elif not head_re.search(sot) or f"**Status:** {counts}" not in sot:
+    bad.append("HEAD"); print(f"the head of requirements.md does not say '**Status:** {counts}' — run tools/sot-audit.py --write")
 print(f"{sum('✅' in r for r in rows)} ✅ · {sum('🔶' in r for r in rows)} 🔶 · {sum('📝' in r for r in rows)} 📝 ({len(rows)} rows; {len(core_rows)} core-tier, {len(core_covered)} proven in every frontend)")
 if bad: print("✅ without a test:", ", ".join(bad))
 if missing: print("named tests that do not exist:", ", ".join(f"{a}→{b}" for a, b in missing))

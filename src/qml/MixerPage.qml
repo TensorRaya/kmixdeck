@@ -25,8 +25,8 @@ Kirigami.ScrollablePage {
     readonly property var mixes: Mixer.mixSlugs
     readonly property int rowH: Kirigami.Units.gridUnit * 3.6          // ≈ 66 px @ 18 px gridUnit, like Wave Link
     readonly property int gap: narrow ? Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing * 2
-    // Columns share the width: no scrolling as long as every mix gets at least mixColMin (UX: "Scrollbalken? Mix 2 3 4
-    // 5 6 ??" — Michel 2026-09-17: eight mixes at 1280 px showed two and a scrollbar). Wide → full header in one row;
+    // Columns share the width: no scrolling as long as every mix gets at least mixColMin (MX-5: eight mixes at
+    // 1280 px must not become two visible columns and a scrollbar). Wide → full header in one row;
     // narrow (< mixColWide) → the header folds to two rows (icon+name+⋮ / mute+master+listen) and the channel column
     // shrinks with it. Only beyond mixColMin per mix does the strip scroll.
     readonly property int mixColWide: Kirigami.Units.gridUnit * 14

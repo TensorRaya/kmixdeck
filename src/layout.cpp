@@ -89,7 +89,7 @@ QJsonObject Layout::toJson() const {
     for (const auto &a : apps) appArr.append(QJsonObject{{QStringLiteral("key"), a.key}, {QStringLiteral("nodeName"), a.nodeName}, {QStringLiteral("channels"), QJsonArray::fromStringList(a.channels)}});
     QJsonArray virtArr;
     for (const auto &v : virtualDevices) virtArr.append(QJsonObject{{QStringLiteral("slug"), v.slug}, {QStringLiteral("name"), v.name}, {QStringLiteral("inputs"), v.inputs}, {QStringLiteral("outputs"), v.outputs}, {QStringLiteral("portPrefix"), v.portPrefix}});
-    return {{QStringLiteral("version"), 2}, {QStringLiteral("channels"), ch}, {QStringLiteral("mixes"), mx}, {QStringLiteral("inputs"), in},
+    return {{QStringLiteral("version"), kLayoutVersion}, {QStringLiteral("channels"), ch}, {QStringLiteral("mixes"), mx}, {QStringLiteral("inputs"), in},
             {QStringLiteral("apps"), appArr}, {QStringLiteral("virtualDevices"), virtArr},
             {QStringLiteral("defaultChannel"), defaultChannel}, {QStringLiteral("listeningDevice"), listeningDevice}, {QStringLiteral("knownApps"), QJsonArray::fromStringList(knownApps)}, {QStringLiteral("hiddenDevices"), QJsonArray::fromStringList(hiddenDevices)},
             {QStringLiteral("links"), [this] { QJsonArray a; for (const auto &l : links) a.append(QJsonObject{{QStringLiteral("channel"), l.channel}, {QStringLiteral("mix"), l.mix}, {QStringLiteral("follows"), l.follows}}); return a; }()}};
@@ -138,6 +138,16 @@ bool Layout::load(const QString &path) {
     QFile f(path); if (!f.open(QIODevice::ReadOnly)) return false;
     QJsonParseError err; const auto doc = QJsonDocument::fromJson(f.readAll(), &err);
     if (err.error != QJsonParseError::NoError || !doc.isObject()) return false;   // CT-7: corrupt config → caller keeps the old layout
+    // A file written by a NEWER kmixdeck is not corrupt — it is data we do not understand. Reading it as v2 would drop
+    // the unknown keys and the next save would write that loss back. Keep the file, step aside, start fresh.
+    const int version = doc.object().value(QStringLiteral("version")).toInt(1);
+    if (version > kLayoutVersion) {
+        const QString aside = path + QStringLiteral(".v%1-from-newer-kmixdeck").arg(version);
+        QFile::remove(aside); QFile::rename(path, aside);
+        qWarning("kmixdeck: %s is layout version %d, this build writes version %d — moved it to %s and starting with the default layout",
+                 qUtf8Printable(path), version, kLayoutVersion, qUtf8Printable(aside));
+        return false;
+    }
     *this = fromJson(doc.object()); return true;
 }
 bool Layout::save(const QString &path) const {
@@ -234,7 +244,7 @@ QString Layout::toPipewireConf() const {
                          EdgeNames::inputNode(i.slug), channelEntry(i.channel), i.device.channelSidePositions(), false, true));
     for (const auto &a : apps) {   // CH-12: extra channels of a multi-assigned app hear it via relay loopbacks.
         // Capture side sits on the APP's own output node (not the primary channel's monitor — that would carry
-        // every other app on that channel too, measured on boreas 2026-09-16). linger: the app may not run yet.
+        // every other app on that channel too, measured on the dev machine 2026-09-16). linger: the app may not run yet.
         if (a.channels.isEmpty() || a.nodeName.isEmpty()) continue;
         for (int n = 1; n < a.channels.size(); ++n) {
             const LayoutChannel *to = channel(a.channels[n]);

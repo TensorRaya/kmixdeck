@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Raya Elena Solano
+// SPDX-License-Identifier: GPL-3.0-or-later
 // app.js — shell: connection, tabs, hearing bar, undo, re-render on patches. Views live in mixer.js / apps.js / patchbay.js.
 import * as C from "./client.js";
 import * as Mixer from "./mixer.js";

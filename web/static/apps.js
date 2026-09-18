@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Raya Elena Solano
+// SPDX-License-Identifier: GPL-3.0-or-later
 // apps.js — UX-10/UX-11: every running application, its icon, whether it makes sound, and which channel it feeds.
 import * as C from "./client.js";
 import { meter, button, el, toast } from "./widgets.js";

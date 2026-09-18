@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Raya Elena Solano
+// SPDX-License-Identifier: GPL-3.0-or-later
 // fx.js — FX-1…FX-7 / ADR 0008: the effect chain of one channel or mix, as a drawer. Same model as FxPanel.qml:
 // chain = {enabled, chain:[{type, enabled, params:{key: value}}]}; the catalog (FxTypes) and presets (FxPresets) come
 // from the daemon — nothing about gates or compressors is known here.

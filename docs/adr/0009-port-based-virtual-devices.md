@@ -140,5 +140,5 @@ to:{card,pos}, ref}]}` — produced client-side from the D-Bus tree today, by `k
 
 **B3. Web UI (AR-8)** is a bridge, not a second daemon: `kmixdeck-web` (Python, aiohttp + dbus-next) subscribes to
 the object manager, pushes state + 25 Hz meters over one WebSocket, forwards actions to D-Bus. Static
-HTML/JS, no build step, no framework lock-in. Reason: aether runs headless with the Ui24R on USB; the stream is
+HTML/JS, no build step, no framework lock-in. Reason: the streaming box runs headless with the Ui24R on USB; the stream is
 mixed from wherever we sit.

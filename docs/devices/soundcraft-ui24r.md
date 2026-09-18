@@ -25,7 +25,7 @@ Consequences for kmixdeck (ADR 0009):
   --in 32 --out 32`) is a faithful stand-in.
 - 48 kHz is the only rate: the graph must run at 48 kHz when the Ui24R is present (PipeWire does that per
   default; do not force 44.1 in `default.clock.rate`).
-- No per-channel names from the device: connectors are numbered 1–32. Names ("Mic Michel", "Musik L") live in
+- No per-channel names from the device: connectors are numbered 1–32. Names ("Mic", "Music L") live in
   our layout, not in the device (DV-26 shows the number and our label).
 
 ## What the 32 capture channels carry
