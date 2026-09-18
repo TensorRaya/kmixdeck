@@ -96,3 +96,20 @@ Metering would flood a D-Bus connection at audio rate. Instead the daemon sample
 emits **one** `Peaks` signal per tick on `org.kmixdeck1.Levels` — and only while someone is
 subscribed. First `Subscribe()` starts the meter graph, the last `Unsubscribe()` stops it after a
 short grace period. Frontends never poll.
+
+## Logging
+
+Four Qt logging categories, filterable with the standard mechanism:
+
+| Category | What |
+|---|---|
+| `kmixdeck.mixer` | layout changes, routing decisions, persistence (`layout.json`, generated conf) |
+| `kmixdeck.pipewire` | connection state, node/link/param traffic |
+| `kmixdeck.dbus` | service export, refused calls |
+| `kmixdeck.frontend` | `MixerClient`, window, tray |
+
+```sh
+QT_LOGGING_RULES="kmixdeck.pipewire.debug=true" kmixdeckd          # one area verbose
+QT_LOGGING_RULES="kmixdeck.*.info=false" kmixdeck-kde              # quiet
+journalctl --user -u kmixdeckd -o cat | grep '^kmixdeck.mixer'      # with QT_MESSAGE_PATTERN="%{category}: %{message}"
+```

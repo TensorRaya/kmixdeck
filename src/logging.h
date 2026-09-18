@@ -10,4 +10,4 @@
 Q_DECLARE_LOGGING_CATEGORY(lcMixer)      // kmixdeck.mixer     — layout changes, routing decisions, persistence
 Q_DECLARE_LOGGING_CATEGORY(lcPipewire)   // kmixdeck.pipewire  — connection, node/link/param traffic
 Q_DECLARE_LOGGING_CATEGORY(lcDbus)       // kmixdeck.dbus      — service export, refused calls
-Q_DECLARE_LOGGING_CATEGORY(lcFrontend)   // kmixdeck.frontend  — MixerClient, window, tray
+Q_DECLARE_LOGGING_CATEGORY(lcFrontend)   // kmixdeck.frontend  — MixerClient, window, tray (defined in frontend/, which does not link the core)

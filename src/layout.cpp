@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "layout.h"
+#include "logging.h"
 #include "mixer.h"
 #include <QStandardPaths>
 #include <QDir>
@@ -144,7 +145,7 @@ bool Layout::load(const QString &path) {
     if (version > kLayoutVersion) {
         const QString aside = path + QStringLiteral(".v%1-from-newer-kmixdeck").arg(version);
         QFile::remove(aside); QFile::rename(path, aside);
-        qWarning("kmixdeck: %s is layout version %d, this build writes version %d — moved it to %s and starting with the default layout",
+        qCWarning(lcMixer, "kmixdeck: %s is layout version %d, this build writes version %d — moved it to %s and starting with the default layout",
                  qUtf8Printable(path), version, kLayoutVersion, qUtf8Printable(aside));
         return false;
     }

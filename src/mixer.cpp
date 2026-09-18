@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "mixer.h"
+#include "logging.h"
 #include <climits>
 #include <algorithm>
 #include <QSet>
@@ -47,7 +48,7 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     // AR-4: PipeWire restarted under us → drop everything (nodeRemoved for each → layout/app objects vanish on
     // the bus), then reconnect with backoff; the registry replays the graph and objects reappear.
     QObject::connect(&m_graph, &pw::Graph::disconnected, this, [this](const QString &why) {
-        qWarning() << "PipeWire disconnected:" << why;
+        qCWarning(lcMixer) << "PipeWire disconnected:" << why;
         m_graph.teardown();
         m_channels.clear(); m_mixes.clear(); m_cells.clear(); m_sinks.clear(); m_devices.clear(); m_edges.clear(); m_idToName.clear();
         Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged();
@@ -58,12 +59,12 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     });
     m_reconnect.setSingleShot(true);
     QObject::connect(&m_reconnect, &QTimer::timeout, this, [this] {
-        if (m_graph.connect()) { qInfo() << "PipeWire: reconnected"; return; }
+        if (m_graph.connect()) { qCInfo(lcMixer) << "PipeWire: reconnected"; return; }
         m_reconnectMs = std::min(m_reconnectMs * 2, 10000);
-        qWarning() << "PipeWire: reconnect failed, retry in" << m_reconnectMs << "ms";
+        qCWarning(lcMixer) << "PipeWire: reconnect failed, retry in" << m_reconnectMs << "ms";
         m_reconnect.start(m_reconnectMs);
     });
-    if (!m_graph.connect()) { qWarning() << "PipeWire: connect failed, retrying"; m_reconnect.start(m_reconnectMs); }
+    if (!m_graph.connect()) { qCWarning(lcMixer) << "PipeWire: connect failed, retrying"; m_reconnect.start(m_reconnectMs); }
 }
 
 bool Mixer::loadLayout() {
@@ -135,7 +136,7 @@ void Mixer::reconcile() {
     // a test left kmixdeck.link.game.stream.in at 0.0156 → the stream mix was 36 dB down with the fader at 0 dB).
     for (const auto &n : m_graph.nodes())
         if (n.name.startsWith(QLatin1String("kmixdeck.")) && n.name.endsWith(QLatin1String(".in")) && (n.volume != 1.0f || n.mute)) {
-            qInfo() << "resetting capture side" << n.name << "to 1.0/unmuted (was" << n.volume << n.mute << ")";
+            qCInfo(lcMixer) << "resetting capture side" << n.name << "to 1.0/unmuted (was" << n.volume << n.mute << ")";
             m_graph.setVolume(n.id, 1.0f, false);
         }
     // Config fragment on disk must match what THIS binary renders — a stale one (older renderer, or written by
@@ -143,7 +144,7 @@ void Mixer::reconcile() {
     if (!m_pwConfPath.isEmpty()) {
         QFile f(m_pwConfPath);
         const bool same = f.open(QIODevice::ReadOnly) && f.readAll() == m_layout.toPipewireConf().toUtf8();
-        if (!same) { qInfo() << "pipewire fragment differs from layout, rewriting" << m_pwConfPath; saveLayout(); }
+        if (!same) { qCInfo(lcMixer) << "pipewire fragment differs from layout, rewriting" << m_pwConfPath; saveLayout(); }
     }
     applyFallbacks();
     m_reconciled = true;
@@ -178,12 +179,12 @@ QJsonObject Mixer::fxChain(const QString &slug) const {
 }
 
 bool Mixer::setFxChain(const QString &slug, const QJsonObject &chainJson) {
-    qInfo() << "fx: setFxChain" << slug;
+    qCInfo(lcMixer) << "fx: setFxChain" << slug;
     fx::Chain *chain = chainOf(m_layout, slug);
     if (!chain) return false;
     const fx::Chain next = fx::Chain::fromJson(chainJson);
     const QString why = fx::validate(next);
-    if (!why.isEmpty()) { qWarning() << "kmixdeck: refusing fx chain:" << why; return false; }
+    if (!why.isEmpty()) { qCWarning(lcMixer) << "kmixdeck: refusing fx chain:" << why; return false; }
     // Same topology (types, order, enabled flags) and only parameter values differ → this is a control tweak, not a
     // rebuild: write the controls live (glitch-free Props write, ADR 0008 finding 2) and keep the nodes. Every frontend
     // saves the whole chain JSON after a slider move (FxPanel.qml onMoved, web fx.js onchange); before this the node
@@ -264,7 +265,7 @@ QJsonArray Mixer::fxTypes() const {
 /// Rebuild one chain live: replace the filter-chain module, keep everything else. Streams that were
 /// linked to the plain sink move onto the new entry so effects take effect without restarting PipeWire.
 void Mixer::applyFx(const QString &slug) {
-    qInfo() << "fx: applyFx" << slug << "connected" << m_connected;
+    qCInfo(lcMixer) << "fx: applyFx" << slug << "connected" << m_connected;
     if (!m_connected) return;
     fx::Chain chain;
     QString desc, entry, exit, plainName;
@@ -294,7 +295,7 @@ void Mixer::applyFx(const QString &slug) {
     }
     if (!m_graph.node(plainName)) m_graph.createNullSink(plainName, desc, true);   // tail for the chain
     const QString args = fx::renderFilterChainArgs(chain, desc, entry, exit, plainName, plainName, slug);
-    qInfo() << "fx: rendered" << args.length() << "chars";
+    qCInfo(lcMixer) << "fx: rendered" << args.length() << "chars";
     if (args.isEmpty()) return;
     m_graph.loadLoopback(args, "libpipewire-module-filter-chain");
     // the module's node appears asynchronously — retarget the remembered streams once it is there
@@ -347,7 +348,7 @@ bool Mixer::setCellFollows(const QString &ch, const QString &mix, const QString 
 }
 void Mixer::breakLink(const QString &ch, const QString &mix) {
     const int n = m_layout.links.removeIf([&](const LayoutLink &l) { return l.channel == ch && l.mix == mix; });
-    if (n) { saveLayout(); qInfo() << "cell" << ch << mix << "unlinked (touched directly)"; }
+    if (n) { saveLayout(); qCInfo(lcMixer) << "cell" << ch << mix << "unlinked (touched directly)"; }
 }
 void Mixer::propagateLinks(const QString &ch, const QString &sourceMix) {
     const auto src = m_cells.constFind(Names::cellNode(ch, sourceMix)); if (src == m_cells.constEnd()) return;
@@ -829,8 +830,8 @@ void Mixer::applyFallbacks() {
         if (target.isEmpty() && !m.fallbackOutput.node.isEmpty() && m_devices.contains(m.fallbackOutput.node)) target = m.fallbackOutput.node;
         if (target.isEmpty()) target = QStringLiteral("kmixdeck.null");
         if (out->target != target) {
-            if (m_graph.moveStream(out->id, target)) qInfo() << "mix output" << m.slug << "retargeted to" << target;
-            else qWarning() << "output device not found:" << target;
+            if (m_graph.moveStream(out->id, target)) qCInfo(lcMixer) << "mix output" << m.slug << "retargeted to" << target;
+            else qCWarning(lcMixer) << "output device not found:" << target;
         }
     }
 }
@@ -943,7 +944,7 @@ void Mixer::finishAutoRoute(uint32_t id) {
         // later; until then App.Channels read [] and a drop onto a second channel merged with nothing and REPLACED
         // the default (test_ux11 red in the suite only, 2026-09-16: the first run of a fake app hit this window).
         it->channels = QStringList{m_layout.defaultChannel}; Q_EMIT appChanged(id);
-        qInfo() << "new application" << key << "→ default channel" << m_layout.defaultChannel;
+        qCInfo(lcMixer) << "new application" << key << "→ default channel" << m_layout.defaultChannel;
     }
 }
 void Mixer::setListeningDevice(const QString &node) {
@@ -1189,7 +1190,7 @@ bool Mixer::undo() {
         m_pendingCellState.insert(isCh ? Names::channelNode(slug) : Names::mixNode(slug), {static_cast<float>(u.value(QStringLiteral("trim")).toDouble(1.0)), u.value(QStringLiteral("muted")).toBool()});
     saveLayout(); reconcile();
     restorePendingCellStates();
-    qInfo() << "undo:" << u.value(QStringLiteral("what")).toString() << "restored";
+    qCInfo(lcMixer) << "undo:" << u.value(QStringLiteral("what")).toString() << "restored";
     Q_EMIT undoChanged(); if (isCh) Q_EMIT defaultChannelChanged();
     return true;
 }
@@ -1228,7 +1229,7 @@ bool Mixer::importSettings(const QJsonObject &doc, QString *error) {
     Q_EMIT layoutChanged(); Q_EMIT defaultChannelChanged(); Q_EMIT listeningDeviceChanged(); Q_EMIT inputsChanged();
     for (const auto &c : m_layout.channels) Q_EMIT channelChanged(c.slug);
     for (const auto &m : m_layout.mixes) Q_EMIT mixChanged(m.slug);
-    qInfo() << "import: layout replaced," << l.channels.size() << "channels," << l.mixes.size() << "mixes";
+    qCInfo(lcMixer) << "import: layout replaced," << l.channels.size() << "channels," << l.mixes.size() << "mixes";
     return true;
 }
 void Mixer::restorePendingCellStates() {
@@ -1296,10 +1297,10 @@ bool Mixer::enforceIntent(const pw::NodeInfo &n) {
     // 5 s and we stop, log, and let the peer have the node rather than loop.
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (now - in->lastRewriteMs > 5000) in->rewrites = 0;
-    if (in->rewrites >= 3 && now - in->lastRewriteMs > 1000) { qWarning() << "node" << n.name << "keeps being overwritten by someone else; giving up on intent" << in->volume << in->mute; m_intent.erase(in); return false; }
+    if (in->rewrites >= 3 && now - in->lastRewriteMs > 1000) { qCWarning(lcMixer) << "node" << n.name << "keeps being overwritten by someone else; giving up on intent" << in->volume << in->mute; m_intent.erase(in); return false; }
     if (now - in->lastRewriteMs > 1000) ++in->rewrites;
     in->lastRewriteMs = now;
-    qInfo() << "node" << n.name << "echoed" << n.volume << n.mute << "but intent is" << in->volume << in->mute << "- rewriting";
+    qCInfo(lcMixer) << "node" << n.name << "echoed" << n.volume << n.mute << "but intent is" << in->volume << in->mute << "- rewriting";
     m_graph.setVolume(n.id, in->volume, in->mute);
     return true;
 }

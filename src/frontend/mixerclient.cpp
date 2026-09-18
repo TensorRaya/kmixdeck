@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "mixerclient.h"
+#include "../logging.h"
+Q_LOGGING_CATEGORY(lcFrontend, "kmixdeck.frontend")
 #include <QFile>
 #include <KLocalizedString>
 #include <QDBusInterface>
@@ -47,7 +49,7 @@ void MixerClient::refresh() {
     m_channels.clear(); m_mixes.clear(); m_cells.clear(); m_apps.clear(); m_channelOrder.clear(); m_mixOrder.clear();
     m_outputDevices.clear(); m_inputDevices.clear();
     if (!r.isValid()) {
-        m_available = false; qWarning() << "kmixdeckd not reachable:" << r.error().message();
+        m_available = false; qCWarning(lcFrontend) << "kmixdeckd not reachable:" << r.error().message();
     } else {
         m_available = true; bool layout = false;
         for (auto it = r.value().cbegin(); it != r.value().cend(); ++it)
@@ -200,7 +202,7 @@ void MixerClient::callReportingErrors(const QString &method, const QVariant &arg
     auto *w = new QDBusPendingCallWatcher(arg2.isValid() ? iface.asyncCall(method, arg, arg2) : arg.isValid() ? iface.asyncCall(method, arg) : iface.asyncCall(method), this);
     connect(w, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w) {
         QDBusPendingReply<> r = *w;
-        if (r.isError()) { qWarning() << "kmixdeck: request refused:" << r.error().message(); Q_EMIT errorOccurred(r.error().message()); }
+        if (r.isError()) { qCWarning(lcFrontend) << "kmixdeck: request refused:" << r.error().message(); Q_EMIT errorOccurred(r.error().message()); }
         w->deleteLater();
     });
 }
@@ -211,7 +213,7 @@ void MixerClient::addChannelWithSource(const QString &name, const QString &kind,
     auto *w = new QDBusPendingCallWatcher(iface.asyncCall(QStringLiteral("AddChannel"), name), this);
     connect(w, &QDBusPendingCallWatcher::finished, this, [this, kind, ref](QDBusPendingCallWatcher *w) {
         QDBusPendingReply<QDBusObjectPath> r = *w; w->deleteLater();
-        if (r.isError()) { qWarning() << "kmixdeck: request refused:" << r.error().message(); Q_EMIT errorOccurred(r.error().message()); return; }
+        if (r.isError()) { qCWarning(lcFrontend) << "kmixdeck: request refused:" << r.error().message(); Q_EMIT errorOccurred(r.error().message()); return; }
         const QString path = r.value().path(), slug = path.section(QLatin1Char('/'), -1);
         if (kind == QLatin1String("app") && !ref.isEmpty()) assignApp(ref, {slug}, false);          // CH-4
         else if (kind == QLatin1String("device") && !ref.isEmpty()) setChannelDevice(slug, ref);   // DV-9

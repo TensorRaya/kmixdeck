@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include <QApplication>
+#include "logging.h"
 #include <QQmlApplicationEngine>
 #include <QQmlError>
 #include <QElapsedTimer>
@@ -85,7 +86,7 @@ int main(int argc, char *argv[])
     // `band is not defined` in Fader.qml loaded fine and only broke at runtime — exit 0 would have hidden it.
     int qmlWarnings = 0;
     // Only OUR files count (org/kmixdeck/); Kirigami's own binding-loop notices are not ours to fix.
-    QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [&qmlWarnings](const QList<QQmlError> &w) { for (const auto &e : w) { qWarning().noquote() << "QML:" << e.toString(); if (e.url().toString().contains(QLatin1String("/org/kmixdeck/"))) ++qmlWarnings; } });
+    QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [&qmlWarnings](const QList<QQmlError> &w) { for (const auto &e : w) { qCWarning(lcFrontend).noquote() << "QML:" << e.toString(); if (e.url().toString().contains(QLatin1String("/org/kmixdeck/"))) ++qmlWarnings; } });
     auto *l10n = new KLocalizedContext(&engine);
     l10n->setTranslationDomain(QStringLiteral("kmixdeck"));   // UX-5: without this the QML i18n() calls look in the empty default domain
     engine.rootContext()->setContextObject(l10n);
@@ -225,7 +226,7 @@ int main(int argc, char *argv[])
                 QTimer::singleShot(900, win, [win, file] {
                     QVariant v = win->property("trayOverview"); auto *pop = v.value<QQuickWindow *>();
                     const bool ok = pop && pop->grabWindow().save(file);
-                    qInfo("%s %s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file));
+                    qCInfo(lcFrontend, "%s %s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file));
                     QCoreApplication::exit(ok ? 0 : 1);
                 });
                 return;
@@ -233,7 +234,7 @@ int main(int argc, char *argv[])
             else if (!open.isEmpty()) QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, open));
             QTimer::singleShot(900, win, [win, file] {
                 const bool ok = win->grabWindow().save(file);
-                qInfo("%s %s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file));
+                qCInfo(lcFrontend, "%s %s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file));
                 QCoreApplication::exit(ok ? 0 : 1);
             });
         });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "service.h"
+#include "../logging.h"
 #include <cstring>
 #include "kmixdeck_version.h"
 #include <QDBusMessage>
@@ -383,7 +384,7 @@ void MixerAdaptor::RemoveMix(const QDBusObjectPath &p) {
     if (!p.path().startsWith(Service::mixPath(QString())) || !m_mixer->mixSlugs().contains(slug)) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no such mix")); return; }
     m_mixer->removeMix(slug);
 }
-void MixerAdaptor::Save() { if (!m_mixer->saveLayout()) qWarning() << "Save(): could not write layout"; }
+void MixerAdaptor::Save() { if (!m_mixer->saveLayout()) qCWarning(lcDbus) << "Save(): could not write layout"; }
 // DV-23
 QString MixerAdaptor::AddVirtualDevice(const QString &name, int inputs, int outputs) {
     QString err; const QString slug = m_mixer->addVirtualDevice(name, inputs, outputs, &err);
@@ -401,8 +402,8 @@ Service::Service(QObject *parent) : QObject(parent) {
     m_mixer.setLayoutPaths(Layout::defaultPath(), Layout::defaultPipewireConfPath());
     if (!m_mixer.loadLayout()) {
         // First run (or unreadable file → DV-6: never overwrite a corrupt file with defaults silently)
-        if (!QFile::exists(Layout::defaultPath())) { qInfo() << "no layout yet — writing starter layout to" << Layout::defaultPath(); }
-        else qWarning() << "layout.json unreadable; running with the starter layout, NOT overwriting the file";
+        if (!QFile::exists(Layout::defaultPath())) { qCInfo(lcDbus) << "no layout yet — writing starter layout to" << Layout::defaultPath(); }
+        else qCWarning(lcDbus) << "layout.json unreadable; running with the starter layout, NOT overwriting the file";
     }
     qDBusRegisterMetaType<InterfaceMap>();
     qDBusRegisterMetaType<ManagedObjects>();
@@ -454,16 +455,16 @@ Service::Service(QObject *parent) : QObject(parent) {
 
 bool Service::start() {
     auto bus = QDBusConnection::sessionBus();
-    if (!bus.isConnected()) { qCritical() << "no session bus"; return false; }
+    if (!bus.isConnected()) { qCCritical(lcDbus) << "no session bus"; return false; }
     m_mixerAdaptor = new MixerAdaptor(&m_mixer, &m_root);
     m_levelsAdaptor = new LevelsAdaptor(&m_mixer, &m_root);
     m_om = new ObjectManagerAdaptor(&m_root, [this] { return managedObjects(); });
-    if (!bus.registerObject(QLatin1String(kRootPath), &m_root, QDBusConnection::ExportAdaptors)) { qCritical() << "registerObject failed" << bus.lastError().message(); return false; }
+    if (!bus.registerObject(QLatin1String(kRootPath), &m_root, QDBusConnection::ExportAdaptors)) { qCCritical(lcDbus) << "registerObject failed" << bus.lastError().message(); return false; }
     // Export every channel/mix/cell/app object BEFORE claiming the bus name: the name is the "I am ready" signal
     // clients wait for. With the old order a client could see org.kmixdeck1 up and GetManagedObjects() still
     // empty — under full-suite load three tests hit exactly that window after a daemon restart (ctest15, 2026-09-16).
     syncObjects();
-    if (!bus.registerService(QLatin1String(kBusName))) { qCritical() << "bus name taken:" << kBusName; return false; }
+    if (!bus.registerService(QLatin1String(kBusName))) { qCCritical(lcDbus) << "bus name taken:" << kBusName; return false; }
     return true;
 }
 

@@ -5,4 +5,3 @@
 Q_LOGGING_CATEGORY(lcMixer,    "kmixdeck.mixer")
 Q_LOGGING_CATEGORY(lcPipewire, "kmixdeck.pipewire")
 Q_LOGGING_CATEGORY(lcDbus,     "kmixdeck.dbus")
-Q_LOGGING_CATEGORY(lcFrontend, "kmixdeck.frontend")

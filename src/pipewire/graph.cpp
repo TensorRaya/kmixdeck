@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "graph.h"
+#include "../logging.h"
 
 #include <pipewire/pipewire.h>
 #include <pipewire/impl.h>
@@ -258,7 +259,7 @@ struct Graph::Impl {
 
     static void onCoreError(void *data, uint32_t id, int seq, int res, const char *message) {
         auto *impl = static_cast<Impl *>(data);
-        qWarning() << "pipewire core error id" << id << "seq" << seq << spa_strerror(res) << message;
+        qCWarning(lcPipewire) << "pipewire core error id" << id << "seq" << seq << spa_strerror(res) << message;
         if (id == PW_ID_CORE && res == -EPIPE) {
             QMetaObject::invokeMethod(impl->q, [q = impl->q] { Q_EMIT q->disconnected(QStringLiteral("core EPIPE")); }, Qt::QueuedConnection);
         }
@@ -462,7 +463,7 @@ void Graph::setStreamTarget(uint32_t streamId, uint32_t sinkSerial) {
         const QByteArray v = QByteArray::number(sinkSerial);
         pw_metadata_set_property(d->metadata, streamId, "target.object", "Spa:Id", v.constData());
     } else {
-        qWarning() << "no 'default' metadata object yet; cannot route stream" << streamId;
+        qCWarning(lcPipewire) << "no 'default' metadata object yet; cannot route stream" << streamId;
     }
     pw_thread_loop_unlock(d->loop);
 }
