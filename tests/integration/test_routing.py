@@ -380,3 +380,30 @@ def test_ux12_audition_channel_keeps_mixes_alive(stack, tone):
     assert stack.pw.level_at("kmixdeck.mix.monitor") > HOT, "mix went silent while auditioning a channel"
     stack.cli("audition", "none"); settle()
     assert stack.pw.level_at("kmixdeck.mix.monitor") > HOT
+
+
+
+def test_mx2_cell_state_survives_a_foreign_writer(stack):
+    """A cell's volume/mute belongs to the user. WirePlumber's restore-stream (or any pw-cli) writing the node behind the
+    daemon's back is detected from the echo and undone — at any time, not only in a fixed window after creation
+    (ctest35: CT-7 lost a mute and DV-6 a volume seconds after a timed retry had fired). A later user change still wins."""
+    stack.cli("channel", "add", "Probe"); time.sleep(0.3)
+    stack.cli("cell", "set", "probe", "stream", "-6dB")
+    nid = stack.pw.node_id("kmixdeck.link.probe.stream")
+    def cell(): return next(c for c in stack.cli("status", json_out=True)["cells"] if c["Path"].endswith("/probe/stream"))
+    def foreign(props):
+        r = subprocess.run(["pw-cli", "set-param", str(nid), "Props", props], env=stack.env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+    try:
+        time.sleep(1.0)
+        foreign("{ volume: 1.0, channelVolumes: [1.0, 1.0], mute: false }"); time.sleep(1.0)
+        assert abs(cell()["Volume"] - 10 ** (-6 / 20)) < 0.01, cell()
+        time.sleep(2.0)   # a second event later — not the same burst
+        foreign("{ volume: 1.0, channelVolumes: [1.0, 1.0], mute: true }"); time.sleep(1.0)
+        c = cell(); assert abs(c["Volume"] - 10 ** (-6 / 20)) < 0.01 and c["Muted"] is False, c
+        stack.cli("cell", "set", "probe", "stream", "-12dB"); time.sleep(0.8)
+        assert abs(cell()["Volume"] - 10 ** (-12 / 20)) < 0.01, "the user's newer intent must win over the guard"
+        log = open(stack.daemon_log_path).read()
+        assert log.count("rewriting") >= 2, "the daemon must log what it undid"
+    finally:
+        stack.cli("channel", "remove", "probe", check=False)

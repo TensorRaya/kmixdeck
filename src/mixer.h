@@ -327,7 +327,7 @@ private:
     // in a quiet session, seconds later under load (ctest35: CT-7 import lost a mute, DV-6 lost a cell volume, both
     // AFTER the one-shot retry had fired). So instead of racing it with timers, onNode() compares every echo from
     // PipeWire against the intent and writes the intent back when the echo disagrees and did not come from us.
-    struct Intent { float volume; bool mute; int rewrites = 0; };
+    struct Intent { float volume; bool mute; int rewrites = 0; qint64 lastRewriteMs = 0; };
     QHash<QString, Intent> m_intent;
     void intend(const QString &node, float volume, bool mute) { m_intent[node] = {volume, mute}; }
     /// THE way to write a cell/mix node: records the intent, then writes PipeWire. Every path that changes a cell's

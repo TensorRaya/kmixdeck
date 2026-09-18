@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <QSet>
 #include <QTimer>
+#include <QDateTime>
 #include <QFile>
 #include <QRegularExpression>
 #include <QDebug>
@@ -1248,11 +1249,16 @@ void Mixer::destroyOurNodes(const std::function<bool(const QString &)> &match) {
 // Discover our objects from the live graph — the graph is the source of truth (DV-1).
 bool Mixer::enforceIntent(const pw::NodeInfo &n) {
     auto in = m_intent.find(n.name); if (in == m_intent.end()) return false;
-    if (std::abs(n.volume - in->volume) <= 1e-3f && n.mute == in->mute) { in->rewrites = 0; return false; }
-    // somebody else (WirePlumber restore-stream) wrote this node — put the user's intent back. Bounded so a genuinely
-    // fighting peer cannot make us loop forever; more than one rewrite has not been seen.
-    if (in->rewrites >= 3) return false;
-    ++in->rewrites;
+    if (std::abs(n.volume - in->volume) <= 1e-3f && n.mute == in->mute) return false;
+    // somebody else (WirePlumber restore-stream) wrote this node — put the user's intent back. One foreign write
+    // arrives as up to three param echoes (channelVolumes / volume / mute, each carrying the stale rest), so a burst of
+    // rewrites within a second is ONE event. The bound is against a genuinely fighting peer: more than 3 bursts in
+    // 5 s and we stop, log, and let the peer have the node rather than loop.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (now - in->lastRewriteMs > 5000) in->rewrites = 0;
+    if (in->rewrites >= 3 && now - in->lastRewriteMs > 1000) { qWarning() << "node" << n.name << "keeps being overwritten by someone else; giving up on intent" << in->volume << in->mute; m_intent.erase(in); return false; }
+    if (now - in->lastRewriteMs > 1000) ++in->rewrites;
+    in->lastRewriteMs = now;
     qInfo() << "node" << n.name << "echoed" << n.volume << n.mute << "but intent is" << in->volume << in->mute << "- rewriting";
     m_graph.setVolume(n.id, in->volume, in->mute);
     return true;
