@@ -147,3 +147,35 @@ live for a GUI.
 
 Within `org.kmixdeck1`, members are only ever **added**. A breaking change ships as
 `org.kmixdeck2` alongside, with `org.kmixdeck1` kept alive for at least one release cycle.
+
+
+## The browser frontend and the JSON view model (AR-8 / AR-9, ADR 0011)
+
+`kmixdeck-web` is the reference "thin frontend": ~250 lines of Python that turn the D-Bus object tree into JSON and
+back, and nothing else. If you write another remote frontend (an OBS dock, a phone widget), speak to the bridge, not to
+the bus — it is the same model with one fewer dependency.
+
+```
+kmixdeck-web                # http://127.0.0.1:7420/   (localhost only)
+kmixdeck-web --lan          # every interface; prints the URL with the token, creates ~/.config/kmixdeck/web-token (0600)
+```
+
+One WebSocket at `/ws`. First frame from the browser: `{"op":"hello","token":"…"}`. Then:
+
+| direction | frame | meaning |
+|---|---|---|
+| ← | `{"op":"snapshot","state":{root, objects, connected}}` | whole tree; `objects[path] = {interface, …properties}` |
+| ← | `{"op":"patch","state":{…}}` | RFC 7386 merge patch — apply over the last state; `null` deletes an object |
+| ← | `{"op":"meters","peaks":{"channel/mic":0.3,…}}` | the daemon's `Levels.Peaks`, 25 Hz, same keys as the window |
+| → | `{"op":"set","path","property","value","id"}` | `Properties.Set` on that object |
+| → | `{"op":"call","path","method","args":[…],"id"}` | a method of that object's own interface |
+| ← | `{"op":"result","id","ok":true,"value"}` / `{"op":"error","id","message"}` | reply |
+
+The bridge allowlists from the daemon's introspection: only `org.kmixdeck1.*`, only `readwrite` properties, only declared
+methods with the declared arity. There is deliberately no "call anything" op.
+
+The browser code (`web/static/*.js`, no build step, no dependencies) derives everything the KDE window derives —
+`channels()`, `mixes()`, `cell()`, the patchbay's cards and wires (`patchbay.js: model()`) — from that same tree, with the
+same names (`MixerClient` in C++ is the other implementation of the same derivation). Every control carries a
+`data-probe` attribute named like the QML `objectName` (`cellFader/game/stream`, `mixMute/stream`, `hearLabel`…), and
+`test_frontends_sync.py` asks the window, the tray and the browser the same questions.

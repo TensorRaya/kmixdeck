@@ -35,7 +35,14 @@ from websockets.http11 import Response  # noqa: E402
 
 BUS_NAME = "org.kmixdeck1"
 ROOT = "/org/kmixdeck1"
-WEB_DIR = Path(os.environ.get("KMIXDECK_WEB_DIR", Path(__file__).resolve().parent / "static"))
+def _web_dir():
+    if "KMIXDECK_WEB_DIR" in os.environ: return Path(os.environ["KMIXDECK_WEB_DIR"])
+    here = Path(__file__).resolve().parent / "static"                     # running from the source tree
+    if here.is_dir(): return here
+    for d in [Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))] + [Path(x) for x in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":")]:
+        if (d / "kmixdeck" / "web" / "index.html").exists(): return d / "kmixdeck" / "web"
+    return here
+WEB_DIR = _web_dir()
 IFACES = ("org.kmixdeck1.Mixer", "org.kmixdeck1.Channel", "org.kmixdeck1.Mix", "org.kmixdeck1.Cell", "org.kmixdeck1.App",
           "org.kmixdeck1.Levels")
 

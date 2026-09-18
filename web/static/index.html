@@ -1,1 +1,28 @@
-<!doctype html><title>kmixdeck</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>kmixdeck</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+</head>
+<body>
+<header id="topbar">
+  <h1><img src="icon.svg" alt="" width="22" height="22"> kmixdeck</h1>
+  <nav id="tabs" role="tablist">
+    <button role="tab" data-view="mixer" aria-selected="true">Mixer</button>
+    <button role="tab" data-view="apps">Apps</button>
+    <button role="tab" data-view="patchbay">Routing</button>
+  </nav>
+  <div id="hearing" data-probe="hearingBar" title="What am I hearing right now"></div>
+  <button id="undo" data-probe="undoAction" hidden></button>
+  <span id="conn" data-probe="connectionState" aria-live="polite"></span>
+</header>
+<main id="view"></main>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

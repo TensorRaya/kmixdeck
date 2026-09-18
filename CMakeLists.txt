@@ -39,6 +39,10 @@ ki18n_install(po)
 install(DIRECTORY streamdeck/me.kmixdeck.sdPlugin DESTINATION ${KDE_INSTALL_DATADIR}/kmixdeck/streamdeck
         USE_SOURCE_PERMISSIONS PATTERN "plugin.log" EXCLUDE PATTERN "__pycache__" EXCLUDE)
 
+# AR-8: browser frontend. The bridge is a python script (python3-gi + python3-websockets at runtime); the UI is static files.
+install(PROGRAMS web/kmixdeck-web DESTINATION ${KDE_INSTALL_BINDIR})
+install(DIRECTORY web/static/ DESTINATION ${KDE_INSTALL_DATADIR}/kmixdeck/web)
+
 add_subdirectory(src)
 add_subdirectory(data)
 

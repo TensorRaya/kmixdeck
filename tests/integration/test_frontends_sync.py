@@ -20,6 +20,25 @@ def window(stack, *probes, open_page=None):
     return kde(stack, *sum((["--probe", p] for p in probes), []), open_page=open_page)
 
 
+def browser(stack, *probes):
+    """The web UI's answer to the same question: 'probe.attr.path' → string, via headless Chrome against the bridge."""
+    from test_web import Web
+    from chrome_driver import Chrome, CHROME
+    if not CHROME: pytest.skip("no chrome/chromium for the web UI")
+    web = Web(stack, token="")
+    try:
+        ch = Chrome(web.url)
+        try:
+            ch.wait("window.kmixdeck && window.kmixdeck.state.connected && document.querySelector('[data-probe]')", 15); time.sleep(0.6)
+            out = {}
+            for p in probes:
+                name, attr = p.split(".", 1)
+                out[p] = ch.probe(name, attr)
+            return out
+        finally: ch.close()
+    finally: web.close()
+
+
 def _cubic(db): return (10 ** (db / 20)) ** (1 / 3)
 
 
@@ -29,27 +48,32 @@ CORE = [
      lambda s: s.cli("mix", "volume", "stream", "-6dB"),
      lambda s: abs(next(m for m in s.cli("status", json_out=True)["mixes"] if m["Slug"] == "stream")["Volume"] - 10 ** (-6 / 20)) < 0.01,
      ["mixFader/stream.value"], lambda g: abs(float(g["mixFader/stream.value"]) - _cubic(-6)) < 0.02,
-     ["trayMixVolume/stream.value"], lambda g: abs(float(g["trayMixVolume/stream.value"]) - _cubic(-6)) < 0.02),
+     ["trayMixVolume/stream.value"], lambda g: abs(float(g["trayMixVolume/stream.value"]) - _cubic(-6)) < 0.02,
+     ["mixFader/stream.dataset.value"], lambda g: abs(float(g["mixFader/stream.dataset.value"]) - 10 ** (-6 / 20)) < 0.02),
     ("MX-10 mix mute",
      lambda s: s.cli("mix", "mute", "stream", "on"),
      lambda s: next(m for m in s.cli("status", json_out=True)["mixes"] if m["Slug"] == "stream")["Muted"] is True,
      ["mixHeaderTitle/stream.text"], lambda g: "muted" in g["mixHeaderTitle/stream.text"].lower(),
-     ["trayMixMute/stream.checked"], lambda g: g["trayMixMute/stream.checked"] == "true"),
+     ["trayMixMute/stream.checked"], lambda g: g["trayMixMute/stream.checked"] == "true",
+     ["mixHeader/stream.className", "mixMute/stream.ariaPressed"], lambda g: "muted" in g["mixHeader/stream.className"] and g["mixMute/stream.ariaPressed"] == "true"),
     ("CH-7 channel mute",
      lambda s: s.cli("channel", "mute", "voice", "on"),
      lambda s: next(c for c in s.cli("status", json_out=True)["channels"] if c["Slug"] == "voice")["Muted"] is True,
      ["channelMute/voice.checked"], lambda g: g["channelMute/voice.checked"] == "true",
-     ["trayChannelMute/voice.checked"], lambda g: g["trayChannelMute/voice.checked"] == "true"),
+     ["trayChannelMute/voice.checked"], lambda g: g["trayChannelMute/voice.checked"] == "true",
+     ["channelMute/voice.ariaPressed"], lambda g: g["channelMute/voice.ariaPressed"] == "true"),
     ("CH-7 channel trim",
      lambda s: s.cli("channel", "trim", "game", "-12dB"),
      lambda s: abs(next(c for c in s.cli("status", json_out=True)["channels"] if c["Slug"] == "game")["Trim"] - 10 ** (-12 / 20)) < 0.01,
      ["channelTrim/game.value", "channelTrimText/game.text"], lambda g: abs(float(g["channelTrim/game.value"]) - _cubic(-12)) < 0.02 and g["channelTrimText/game.text"].startswith("-12"),
-     ["trayChannelTrim/game.value"], lambda g: abs(float(g["trayChannelTrim/game.value"]) - _cubic(-12)) < 0.02),
+     ["trayChannelTrim/game.value"], lambda g: abs(float(g["trayChannelTrim/game.value"]) - _cubic(-12)) < 0.02,
+     ["channelTrim/game.dataset.value", "channelTrim/game.ariaValueText"], lambda g: abs(float(g["channelTrim/game.dataset.value"]) - 10 ** (-12 / 20)) < 0.02 and g["channelTrim/game.ariaValueText"].startswith("-12")),
     ("UX-2 listening device",
      lambda s: (make_fake_sink(s, "fake.ears", "My Ears"), time.sleep(0.5), s.cli("listen", "fake.ears")),
      lambda s: s.cli("listen").stdout.strip().split()[0] == "fake.ears",
      ["listeningDeviceBox.displayText"], lambda g: "My Ears" in g["listeningDeviceBox.displayText"],
-     ["trayListening.text"], lambda g: "My Ears" in g["trayListening.text"]),
+     ["trayListening.text"], lambda g: "My Ears" in g["trayListening.text"],
+     ["hearLabel.textContent"], lambda g: "My Ears" in g["hearLabel.textContent"]),
     ("MX-5 colour code",
      lambda s: (s.cli("mix", "color", "stream", "#3daee9"), s.cli("channel", "color", "voice", "#E93D58")),
      lambda s: next(m for m in s.cli("status", json_out=True)["mixes"] if m["Slug"] == "stream")["Color"] == "#3daee9"
@@ -57,25 +81,30 @@ CORE = [
      ["mixColorStripe/stream.color", "mixColorStripe/stream.visible", "channelColorStripe/voice.color"],
      lambda g: g["mixColorStripe/stream.color"] == "#3daee9" and g["mixColorStripe/stream.visible"] == "true" and g["channelColorStripe/voice.color"] == "#e93d58",
      ["trayMixColor/stream.color", "trayChannelColor/voice.color", "trayMixColor/monitor.visible"],
-     lambda g: g["trayMixColor/stream.color"] == "#3daee9" and g["trayChannelColor/voice.color"] == "#e93d58" and g["trayMixColor/monitor.visible"] == "false"),
+     lambda g: g["trayMixColor/stream.color"] == "#3daee9" and g["trayChannelColor/voice.color"] == "#e93d58" and g["trayMixColor/monitor.visible"] == "false",
+     ["mixColorStripe/stream.computed.background-color", "channelColorStripe/voice.computed.background-color"],
+     lambda g: g["mixColorStripe/stream.computed.background-color"] == "rgb(61, 174, 233)" and g["channelColorStripe/voice.computed.background-color"] == "rgb(233, 61, 88)"),
     ("DV-11 unplugged device is visible as such",
      lambda s: (make_fake_sink(s, "fake.gone", "Gone Sink"), time.sleep(0.5), s.cli("mix", "output-add", "monitor", "fake.gone"), time.sleep(0.5),
                 __import__("test_service_cli").destroy_node(s, "fake.gone"), time.sleep(0.8)),
      lambda s: next(m for m in s.cli("status", json_out=True)["mixes"] if m["Slug"] == "monitor").get("OutputPresent") is False,
      ["mixIcon/monitor.devicePresent"], lambda g: g["mixIcon/monitor.devicePresent"] == "false",
-     ["trayMixIcon/monitor.opacity"], lambda g: float(g["trayMixIcon/monitor.opacity"]) < 1.0),
+     ["trayMixIcon/monitor.opacity"], lambda g: float(g["trayMixIcon/monitor.opacity"]) < 1.0,
+     ["mixOutput/monitor.textContent"], lambda g: "⚠" in g["mixOutput/monitor.textContent"]),
 ]
 
 
 @pytest.mark.parametrize("row", CORE, ids=[r[0] for r in CORE])
 def test_core_feature_reaches_cli_window_and_tray(stack, row):
-    name, setup, cli_ok, wprobes, wcheck, tprobes, tcheck = row
+    name, setup, cli_ok, wprobes, wcheck, tprobes, tcheck, bprobes, bcheck = row
     setup(stack); time.sleep(0.4)
     assert cli_ok(stack), f"{name}: CLI/bus does not show the change (rule 1 broken)"
     g = window(stack, *wprobes)
     assert wcheck(g), f"{name}: KDE window does not show it: {g}"
     g = tray(stack, *tprobes)
     assert tcheck(g), f"{name}: tray does not show it: {g}"
+    g = browser(stack, *bprobes)
+    assert bcheck(g), f"{name}: web UI does not show it (AR-8/AR-9): {g}"
 
 
 def test_tray_click_opens_overview_double_click_opens_window(stack):
