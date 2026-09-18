@@ -5,6 +5,10 @@ include(ECMAddTests)
 ecm_add_test(unit/mixerlogictest.cpp
     TEST_NAME mixerlogictest
     LINK_LIBRARIES kmixdeck_core Qt6::Test)
+# UT-1/UT-2: persistence format round trip, legacy/partial/newer documents, DeviceRef grammar, golden PipeWire conf.
+ecm_add_test(unit/layouttest.cpp
+    TEST_NAME layouttest
+    LINK_LIBRARIES kmixdeck_core Qt6::Test)
 
 # Frontend smoke: every QML file must load (offscreen, no daemon needed — the client shows "not reachable").
 add_test(NAME frontend-qml-loads COMMAND kmixdeck-kde --self-test)
