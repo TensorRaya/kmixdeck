@@ -135,9 +135,15 @@ class PwDaemon:
         No hard `timeout` around pw-record: under load (full ctest run, 2026-09-16) it was killed before the ports
         were linked and the file stayed empty — six routing tests went red although the audio path was fine."""
         env = dict(self.env, PW_LATENCY="1024/48000")
-        rec = subprocess.Popen(["pw-record", "-P", "{ node.autoconnect = false }",
+        # A unique node.name per recorder. The links below address the recorder BY NAME; with the default name
+        # "pw-record" a previous recorder that PipeWire has not yet torn down (terminate() returns before the node is
+        # gone) is an equally valid target — and two back-to-back measurements then read the SAME stream. Seen 2026-09-18
+        # as two different ports reporting the identical -24.206796 dB (ctest44, DV-21).
+        name = f"kmixdeck-rec-{time.time_ns()}"
+        rec = subprocess.Popen(["pw-record", "-P", "{ node.autoconnect = false node.name = %s }" % name,
                                 "--rate", "48000", "--channels", str(channels), "--format", "s16", str(out)],
                                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        links = [(src, dst.replace("pw-record:", name + ":", 1)) for src, dst in links]
         linked = False
         for _ in range(80):
             time.sleep(0.1)
