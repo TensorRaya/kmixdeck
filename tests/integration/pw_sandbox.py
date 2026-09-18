@@ -11,7 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-PROTOTYPE_CONF = REPO / "prototype" / "kmixdeck-prototype.conf"
+# The starter graph every sandbox boots with. It is the daemon's OWN rendering of Layout::starter(), pinned as the unit-test
+# golden (tests/unit/layouttest.cpp) — so the integration suite starts from exactly what a fresh install writes, and a
+# change to the generator shows up in the unit test first. (Until v0.2 this was a hand-written prototype conf.)
+PROTOTYPE_CONF = REPO / "tests" / "unit" / "golden" / "starter.conf"
 
 
 @dataclass

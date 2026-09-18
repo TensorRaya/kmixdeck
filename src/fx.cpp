@@ -108,13 +108,16 @@ QString validate(const Chain &c) {
     for (const auto &e : c.effects) {
         if (e.type == QLatin1String("ladspa")) {
             if (e.plugin.isEmpty()) return QStringLiteral("ladspa effect needs a plugin name");
-            if (!ladspaAvailable(e.plugin))
+            // Library presence matters only for effects that will be rendered. A bypassed effect whose library is missing
+            // on THIS machine must not make the whole chain unloadable — FX-7 (copy/import from another machine) and FX-5
+            // (bypass = the user's way of saying "not now") both depend on that. Found by tests/unit/fxtest.cpp.
+            if (e.enabled && !ladspaAvailable(e.plugin))
                 return QStringLiteral("LADSPA '%1' not installed — %2").arg(e.plugin, packageHint(e.plugin));
             continue;   // arbitrary controls: anything the plugin exposes is fine
         }
         const TypeSpec *spec = typeSpec(e.type);
         if (!spec) return QStringLiteral("unknown effect type '%1'").arg(e.type);
-        if (!ladspaAvailable(spec->ladspaFile))
+        if (e.enabled && !ladspaAvailable(spec->ladspaFile))
             return QStringLiteral("effect '%1' needs %2 — %3").arg(e.type, spec->ladspaFile, packageHint(spec->ladspaFile));
         for (auto it = e.params.constBegin(); it != e.params.constEnd(); ++it) {
             const ParamSpec *ps = nullptr;

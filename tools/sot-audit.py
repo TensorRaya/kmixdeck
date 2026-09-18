@@ -13,6 +13,9 @@ sot = (root / "docs/spec/requirements.md").read_text()
 have = set()
 for f in (root / "tests/integration").glob("*.py"):
     have |= set(re.findall(r"def (test_[a-z0-9_]+)", f.read_text()))
+# unit tests count too (v0.2): a row may cite `tests/unit/<name>.cpp` — the file must exist and be a registered ctest
+unit_files = {p.name for p in (root / "tests/unit").glob("*.cpp")}
+unit_registered = set(re.findall(r"ecm_add_test\(unit/([a-z0-9_]+\.cpp)", (root / "tests/CMakeLists.txt").read_text()))
 sync = (root / "tests/integration/test_frontends_sync.py").read_text()
 core_covered = set(re.findall(r'^\s*\("([A-Z]{2}-\d+)\b', sync, re.M))
 bad, missing, core_missing = [], [], []
@@ -21,9 +24,12 @@ for line in sot.splitlines():
     if not m or "✅" not in line: continue
     rid = m.group(1)
     refs = re.findall(r"test_[a-z0-9_]+", line)
-    if not refs and not re.search(r"enforced by|ctest|rule;", line): bad.append(rid); continue
+    unit_refs = re.findall(r"tests/unit/([a-z0-9_]+\.cpp)", line)
+    if not refs and not unit_refs and not re.search(r"enforced by|ctest|rule;", line): bad.append(rid); continue
     for r in refs:
         if r not in have and not any(h.startswith(r) for h in have): missing.append((rid, r))
+    for u in unit_refs:
+        if u not in unit_files or u not in unit_registered: missing.append((rid, "tests/unit/" + u))
     if "tier:core" in line and rid not in core_covered: core_missing.append(rid)
 rows = [l for l in sot.splitlines() if re.match(r"\| [A-Z]{2}-\d+ \|", l)]
 core_rows = [l for l in rows if "tier:core" in l]

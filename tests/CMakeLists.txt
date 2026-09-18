@@ -9,6 +9,10 @@ ecm_add_test(unit/mixerlogictest.cpp
 ecm_add_test(unit/layouttest.cpp
     TEST_NAME layouttest
     LINK_LIBRARIES kmixdeck_core Qt6::Test)
+# UT-3: fx catalog, validation, rendered filter-chain args, live-control names — no LADSPA library needed.
+ecm_add_test(unit/fxtest.cpp
+    TEST_NAME fxtest
+    LINK_LIBRARIES kmixdeck_core Qt6::Test)
 
 # Frontend smoke: every QML file must load (offscreen, no daemon needed — the client shows "not reachable").
 add_test(NAME frontend-qml-loads COMMAND kmixdeck-kde --self-test)
