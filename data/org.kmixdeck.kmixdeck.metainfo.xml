@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component type="desktop-application">
+  <id>org.kmixdeck.kmixdeck</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>kmixdeck</name>
+  <summary>A streamer's audio mixer for KDE Plasma on PipeWire</summary>
+  <description>
+    <p>Route every application into its own channel, build as many output mixes as you need (what you hear vs. what the stream hears), and set each channel's level independently per mix.</p>
+  </description>
+  <launchable type="desktop-id">org.kmixdeck.kmixdeck.desktop</launchable>
+  <url type="homepage">https://github.com/TensorRaya/kmixdeck</url>
+  <url type="bugtracker">https://github.com/TensorRaya/kmixdeck/issues</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-09-18">
+      <description>
+        <p>First release. Channels × mixes with independent per-mix levels on PipeWire; per-mix hardware outputs and capture sources; port-level routing for multi-channel interfaces; effect chains (builtin and LADSPA); devices that survive unplug, replug and sleep; live meters everywhere.</p>
+        <p>Five frontends on one D-Bus service: Plasma window with tray and global shortcuts, web UI for phones and headless boxes, CLI, Stream Deck plugin, and your own. 102 numbered requirements, 101 proven by automated tests against a private PipeWire.</p>
+      </description>
+    </release>
+  </releases>
+</component>

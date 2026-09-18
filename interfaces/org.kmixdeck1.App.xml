@@ -1,0 +1,33 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <!-- /org/kmixdeck1/app/<node-id> : a running application audio stream (Stream/Output/Audio) -->
+  <interface name="org.kmixdeck1.App">
+    <property name="Name" type="s" access="read"/>
+    <property name="Binary" type="s" access="read"/>
+    <!-- media.name / media.role of the stream: WirePlumber keys its "remember the target" state by
+         media.role first, then application.id, application.name, media.name, node.name (state-stream.lua). -->
+    <property name="MediaName" type="s" access="read"/>
+    <property name="MediaRole" type="s" access="read"/>
+    <property name="NodeId" type="u" access="read"/>
+    <!-- UX-10: application.icon-name of the stream (XDG icon name, empty = frontend default) -->
+    <property name="Icon" type="s" access="read"/>
+    <!-- true while the stream is producing sound (PipeWire node state running) -->
+    <property name="Running" type="b" access="read"/>
+    <!-- CH-12: every channel slug this app currently plays into; Channel is the primary (= first).
+         Qt marshals QStringList as "as"; the slugs match the last section of the channel object path. -->
+    <property name="Channels" type="as" access="read"/>
+    <!-- object path of the channel it is routed to, or "/" if it plays to a non-kmixdeck sink -->
+    <property name="Channel" type="o" access="read"/>
+    <!-- move the stream (and remember the choice via WirePlumber restore-target, CH-4) -->
+    <method name="MoveTo"><arg name="channel" type="o" direction="in"/></method>
+    <!-- CH-12: assign to several channels at once; first = primary target, the rest hear it via relays.
+         `channels` are channel OBJECT PATHS (/org/kmixdeck1/channel/<slug>), not slugs — the read-only Channels
+         property above returns slugs, this method does not accept them (InvalidArgs "not a channel path").
+         AddOn=true keeps the existing assignment and appends (drop-on-row semantics). Empty list = un-route. -->
+    <method name="Assign">
+      <arg name="channels" type="as" direction="in"/>
+      <arg name="add_on" type="b" direction="in"/>
+    </method>
+  </interface>
+</node>

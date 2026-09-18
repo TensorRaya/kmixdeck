@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.kmixdeck1
+Exec=@KDE_INSTALL_FULL_LIBEXECDIR@/kmixdeckd
+SystemdService=kmixdeckd.service

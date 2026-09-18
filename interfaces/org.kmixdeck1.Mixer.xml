@@ -1,0 +1,109 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  kmixdeck D-Bus API, major version 1 (ADR 0005).
+  This file IS the contract between kmixdeckd and every frontend. Rules:
+  - additions are fine within version 1; removing or changing a member = org.kmixdeck2.
+  - volumes on the bus are LINEAR 0..1 (PipeWire's unit). Cubic/dB mapping is presentation.
+  - slugs are stable identifiers ([a-z0-9_]+, the D-Bus object-path alphabet), display names may change (DV-7).
+-->
+<node>
+  <!-- Root object: /org/kmixdeck1 -->
+  <interface name="org.kmixdeck1.Mixer">
+    <property name="Version" type="s" access="read"/>
+    <!-- true while the service has a live PipeWire connection -->
+    <property name="Connected" type="b" access="read"/>
+    <!-- hardware sinks a Mix.OutputDevice may point to: node.name → human description -->
+    <property name="OutputDevices" type="a{ss}" access="read"/>
+    <!-- hardware sources a channel may be fed by (ADR 0007): node.name → human description -->
+    <property name="InputDevices" type="a{ss}" access="read"/>
+    <!-- ADR 0009 D4: node.name → ordered list of "POSITION|port.name|port.alias" for every non-monitor port of that
+         device (sinks: playback ports, sources: capture ports). A device reference anywhere on this bus is
+         "node" or "node:POS[,POS]" (mono / stereo subset); POS is one of these POSITION values. -->
+    <property name="DevicePorts" type="a{sas}" access="read"/>
+    <!-- CH-11: devices the user hid from the pickers. They stay in InputDevices/OutputDevices and stay routable; the
+         daemon owns the flag so the window, the tray and the CLI leave out the same ones. -->
+    <property name="HiddenDevices" type="as" access="read"/>
+    <method name="SetDeviceHidden">
+      <arg name="node" type="s" direction="in"/>
+      <arg name="hidden" type="b" direction="in"/>
+    </method>
+    <!-- CH-5: never-seen applications are moved here on first appearance. "/" disables auto-routing. -->
+    <property name="DefaultChannel" type="o" access="readwrite"/>
+    <!-- UX-2: the device (node.name) the user listens on; "" = not chosen. The mix whose Outputs contain it is
+         "what I hear". Persisted in the layout so every frontend shows the same answer. -->
+    <property name="ListeningDevice" type="s" access="readwrite"/>
+    <!-- CH-9: the last RemoveChannel/RemoveMix can be undone (layout, links, inputs, outputs AND every fader).
+         UndoDescription is "" when there is nothing, else a human string like: channel “Music”. -->
+    <property name="UndoDescription" type="s" access="read"/>
+    <!-- FX-4: built-in effect catalog as JSON [{type,label,description,params:[{key,label,unit,min,max,def}]}] -->
+    <property name="FxTypes" type="s" access="read"/>
+    <!-- FX-4: one-click chains as JSON {name: chain}; a preset is just a starting point, editable afterwards -->
+    <property name="FxPresets" type="s" access="read"/>
+    <method name="Undo"/>
+    <!-- CT-7 backup/restore. Export: the complete layout plus every fader, trim and mute as one JSON document (what
+         layout.json holds, plus "levels"). Import: replaces the layout with the document, rebuilds the graph, applies
+         the levels; rejects anything that is not a kmixdeck export and leaves the running config untouched then. -->
+    <method name="Export"><arg name="json" type="s" direction="out"/></method>
+    <!-- UX-3 first run: Plan describes (default sink/source, running apps and where they would go), Apply does it:
+         Monitor mix -> default sink, listening device = default sink, Voice <- default source, unassigned running
+         apps -> Game/System/Voice by media.role. Frontends show the plan and call Apply; no logic in the wizard. -->
+    <method name="FirstRunPlan"><arg name="json" type="s" direction="out"/></method>
+    <method name="FirstRunApply"><arg name="json" type="s" direction="out"/></method>
+    <property name="FirstRun" type="b" access="read"/>
+    <property name="DefaultSink" type="s" access="read"/>
+    <property name="DefaultSource" type="s" access="read"/>
+    <method name="Import"><arg name="json" type="s" direction="in"/></method>
+    <!-- UX-12 solo audition: pass a channel/mix path to hold exactly that entity on the main output,
+         "/" to stop and restore the previous state. Hold semantics = the frontend calls this on
+         press and again with "/" on release. -->
+    <method name="Audition">
+      <arg name="path" type="o" direction="in"/>
+    </method>
+    <!-- UX-9: display order of channels and mixes (slugs). Moving is a presentation change: slugs, nodes and
+         volumes stay; the order is part of the layout and survives restarts. index is clamped to the list. -->
+    <property name="ChannelOrder" type="as" access="read"/>
+    <property name="MixOrder" type="as" access="read"/>
+    <method name="MoveChannel">
+      <arg name="path" type="o" direction="in"/>
+      <arg name="index" type="i" direction="in"/>
+    </method>
+    <method name="MoveMix">
+      <arg name="path" type="o" direction="in"/>
+      <arg name="index" type="i" direction="in"/>
+    </method>
+    <!-- Create a channel (input group). Returns the new object path. Slug derived from name. -->
+    <method name="AddChannel">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="path" type="o" direction="out"/>
+    </method>
+    <method name="AddMix">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="path" type="o" direction="out"/>
+    </method>
+    <!-- MX-8: a new mix that starts as a copy of `source` (icon, colour, FX, master and every cell fader/mute).
+         Outputs are not copied — two mixes on one device would play the same audio twice. -->
+    <method name="DuplicateMix">
+      <arg name="source" type="o" direction="in"/>
+      <arg name="name" type="s" direction="in"/>
+      <arg name="path" type="o" direction="out"/>
+    </method>
+    <!-- DV-23: persistent virtual multichannel device (Ui24R stand-in). Creates "<node>" (Audio/Source/Virtual, `inputs`
+         ports AUX1..n — channels capture from it, feeding its input_* ports emulates a mic) and "<node>.out" (Audio/Sink,
+         `outputs` ports — apps/mixes play into it). Returns the input-side node.name. -->
+    <method name="AddVirtualDevice">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="inputs" type="i" direction="in"/>
+      <arg name="outputs" type="i" direction="in"/>
+      <arg name="node" type="s" direction="out"/>
+    </method>
+    <method name="RemoveVirtualDevice">
+      <arg name="slugOrNode" type="s" direction="in"/>
+    </method>
+    <property name="VirtualDevices" type="as" access="read"/>
+    <method name="RemoveChannel"><arg name="path" type="o" direction="in"/></method>
+    <method name="RemoveMix"><arg name="path" type="o" direction="in"/></method>
+    <!-- Persist the layout (channels, mixes) to the service's config; cell levels persist in WirePlumber anyway. -->
+    <method name="Save"/>
+  </interface>
+</node>

@@ -1,0 +1,8 @@
+build/
+*.wav
+__pycache__/
+.pytest_cache/
+
+streamdeck/**/plugin.log
+streamdeck/**/__pycache__/
+*.mo

@@ -1,0 +1,200 @@
+/* kmixdeck web — one stylesheet, dark by default, follows the system. Touch targets ≥ 44 px (ADR 0011 §4). */
+:root {
+  --bg: #1b1e24; --panel: #242830; --panel-2: #2c313a; --text: #e6e8ec; --muted: #9aa3b2; --line: #363c47;
+  --accent: #4f8cff; --green: #3ddc84; --amber: #ffb547; --red: #ff5c5c; --hear: #7bd88f;
+  --handle: 44px; --radius: 10px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: #f2f3f6; --panel: #ffffff; --panel-2: #eef0f4; --text: #1b1e24; --muted: #5d6570; --line: #d8dce3; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; touch-action: manipulation; }
+button { font: inherit; color: inherit; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; min-height: 36px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:focus-visible, [role=slider]:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button[aria-pressed=true] { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.mute[aria-pressed=true] { background: var(--red); border-color: var(--red); }
+button.listen.on, button.listen[aria-pressed=true] { background: var(--hear); color: #10301a; border-color: var(--hear); }
+button.add { min-width: 44px; font-size: 20px; }
+button.menu { padding: 6px 8px; }
+button.danger, .menu button.danger { color: var(--red); }
+.icon-img { width: 1.2em; height: 1.2em; vertical-align: -0.25em; }
+
+/* ---- top bar */
+#topbar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+#topbar h1 { font-size: 17px; margin: 0; display: flex; align-items: center; gap: 6px; }
+#tabs { display: flex; gap: 4px; }
+#tabs [role=tab] { background: transparent; border-color: transparent; }
+#tabs [role=tab][aria-selected=true] { background: var(--panel-2); border-color: var(--line); }
+#hearing { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--hear); font-weight: 500; }
+#hearing .hear-label.none { color: var(--muted); }
+#hearing select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px; min-height: 36px; }
+#conn[data-state=offline] { color: var(--amber); }
+#toast { position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 20px); background: var(--panel-2); border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; opacity: 0; transition: .2s; pointer-events: none; z-index: 20; }
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast.error { border-color: var(--red); }
+main { padding: 12px; overflow: auto; }
+.empty { color: var(--muted); text-align: center; padding: 40px 16px; }
+
+/* ---- mixer grid (MixerPage.qml / Wave Link): first column = channel headers, one column per mix; every row is one
+   channel, every cell one horizontal fader whose track is the meter. Rows are 2 gridUnits tall, not a fader's height. */
+.mixer { display: grid; grid-template-columns: minmax(230px, 260px) repeat(var(--mixes), minmax(170px, 1fr)); gap: 6px; align-items: stretch; }
+.corner { display: flex; align-items: flex-end; }
+.corner.bottom { align-items: flex-start; }
+.channel-header, .mix-header, .cell { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); position: relative; overflow: hidden; }
+.channel-header, .mix-header { padding: 5px 8px 4px 12px; display: flex; flex-direction: column; }
+.stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--accent); }
+/* one row per header, like a Wave Link channel card: [name+source block][controls…] */
+.hbody { display: flex; flex-direction: row; align-items: center; gap: 8px; min-height: 40px; }
+.hbody .head-row { flex: 1 1 auto; display: flex; flex-direction: column; align-items: flex-start; gap: 0; min-width: 0; }
+.name-line { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.hbody .hrow { flex: 0 0 auto; }
+.mix-header .hbody { flex-wrap: wrap; }
+.mix-header .hbody .head-row { flex: 1 1 100%; flex-direction: row; align-items: center; }
+.mix-header .hbody .hrow { flex: 1 1 100%; }
+.head-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.name { background: none; border: none; font-weight: 600; font-size: 15px; padding: 0; text-align: left; min-height: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.source { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: none; border: none; text-align: left; padding: 0; min-height: 0; }
+.source.link:hover { color: var(--accent); }
+.gone { color: var(--amber); }
+.badge { display: inline-block; font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; }
+.spacer { flex: 1; }
+.hrow { display: flex; align-items: center; gap: 4px; min-height: 36px; }
+.hrow .fader { flex: 1; }
+.hrow button, .cell button { min-width: 36px; min-height: 36px; padding: 4px; }
+.mix-header.muted { background: color-mix(in srgb, var(--red) 22%, var(--panel)); border-color: var(--red); }
+.mix-header.hearing { border-color: var(--hear); }
+.mix-header .outmeter, .channel-header .hmeter { position: relative; height: 4px; margin: 6px 2px 2px; border-radius: 2px; }
+
+/* ---- cell: [mute][fader][link] */
+.cell { display: flex; align-items: center; gap: 4px; padding: 5px 8px; }
+.cell .fader { flex: 1; }
+.cell.linked .link { border-color: var(--accent); }
+.cell.muted .fader .fill { background: var(--muted); }
+.pending { color: var(--muted); }
+
+/* ---- fader: horizontal pill, gain fill + live level inside (Fader.qml), unity tick, round knob */
+.fader { position: relative; touch-action: none; user-select: none; -webkit-user-select: none; height: 36px; min-width: 80px; }
+.fader.disabled { opacity: .5; }
+.fader .track { position: absolute; top: 50%; left: 4px; right: 4px; height: 10px; transform: translateY(-50%); background: color-mix(in srgb, var(--text) 16%, transparent); border-radius: 5px; overflow: hidden; }
+.fader .fill { position: absolute; inset: 0; transform-origin: left; background: var(--green); opacity: .4; }
+.fader .live { position: absolute; inset: 0; transform-origin: left; transform: scaleX(0); background: var(--green); }
+.fader[data-band="1"] .live { background: var(--amber); }
+.fader[data-band="2"] .live { background: var(--red); }
+.fader .tick { position: absolute; top: -2px; bottom: -2px; width: 2px; background: color-mix(in srgb, var(--text) 55%, transparent); transform: translateX(-50%); }
+.fader .handle { position: absolute; top: 50%; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); border: 2px solid var(--panel); box-shadow: 0 1px 4px rgba(0,0,0,.5); transform: translate(-50%, -50%); left: calc(14px + (100% - 28px) * var(--pos, 1)); }
+.fader.dragging .handle, .fader:focus-visible .handle { transform: translate(-50%, -50%) scale(1.15); }
+.fader .db { position: absolute; right: 0; top: -14px; font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; opacity: 0; transition: .15s; }
+.fader:hover .db, .fader.dragging .db, .fader:focus-visible .db { opacity: 1; }
+.fader.vertical { display: none; }   /* not used on the mixer page any more */
+
+/* ---- meter (standalone): channel header has a short vertical one, mix header a thin horizontal one at the bottom */
+.meter { position: relative; width: 6px; height: 28px; background: rgba(127,127,127,.15); border-radius: 3px; overflow: hidden; }
+
+.meter.horizontal { width: auto; height: 6px; }
+.meter .bar { position: absolute; inset: 0; transform-origin: bottom; transform: scaleY(0); background: var(--green); }
+.meter.horizontal .bar { transform-origin: left; transform: scaleX(0); }
+.meter[data-band="1"] .bar { background: var(--amber); }
+.meter[data-band="2"] .bar { background: var(--red); }
+.meter .hold { position: absolute; left: 0; right: 0; height: 2px; background: var(--text); bottom: 0; }
+.meter.horizontal .hold { top: 0; bottom: 0; width: 2px; height: auto; left: 0; }
+
+/* pan knob (QQC2.Dial in ChannelHeader.qml) */
+.knob { display: flex; flex-direction: column; align-items: center; width: 36px; touch-action: none; user-select: none; cursor: ns-resize; }
+.knob svg { display: block; width: 30px; height: 26px; }
+.knob .arc { stroke: color-mix(in srgb, var(--text) 35%, transparent); stroke-width: 4; stroke-linecap: round; }
+.knob .val { stroke: var(--accent); stroke-width: 4; stroke-linecap: round; }
+.knob .pointer { stroke: var(--text); stroke-width: 3; stroke-linecap: round; }
+.knob.dragging .pointer, .knob:focus-visible .pointer { stroke: var(--accent); }
+.knob output { font-size: 9px; color: var(--muted); line-height: 1; font-variant-numeric: tabular-nums; }
+button svg.i { width: 18px; height: 18px; display: block; margin: 0 auto; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---- apps */
+.apps { display: flex; flex-direction: column; gap: 8px; max-width: 900px; margin: 0 auto; }
+.app { display: grid; grid-template-columns: 44px 1fr auto; gap: 12px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; }
+.app.idle { opacity: .6; }
+.icon.big { font-size: 28px; text-align: center; }
+.app .title { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.app .sub { color: var(--muted); font-size: 13px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); display: inline-block; }
+.dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.target { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 320px; }
+.chip { border-radius: 999px; padding: 4px 12px; }
+.unassigned { color: var(--amber); font-size: 13px; align-self: center; }
+
+/* ---- patchbay */
+.patchbay { position: relative; display: grid; grid-template-columns: repeat(4, minmax(190px, 1fr)); gap: 44px; align-items: start; min-width: 900px; }
+.pb-col { display: flex; flex-direction: column; gap: 10px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 0; }
+.card.off { opacity: .55; }
+.card.absent { border-style: dashed; }
+.card-title { font-weight: 600; padding: 4px 12px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jack-row { display: grid; grid-template-columns: 16px 1fr 16px; align-items: center; height: 26px; }
+.jack-label { font-size: 13px; color: var(--muted); padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jack-label small { color: var(--accent); }
+.jack { width: 12px; height: 12px; border-radius: 50%; background: var(--text); border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--line); justify-self: center; cursor: crosshair; }
+.jack.in { margin-left: -12px; }
+.jack.out { margin-right: -12px; }
+.jack.none { visibility: hidden; }
+svg.wires { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+svg.wires .wire { fill: none; stroke: var(--accent); stroke-width: 2.5px; pointer-events: stroke; cursor: pointer; opacity: .9; }
+svg.wires .wire.app { stroke: var(--green); }
+svg.wires .wire.input { stroke: var(--amber); }
+svg.wires .wire.output { stroke: var(--hear); }
+svg.wires .wire.capture { stroke: #c58cff; stroke-dasharray: 6 4; }
+svg.wires .wire.muted { stroke: var(--muted); stroke-dasharray: 3 5; opacity: .5; }
+svg.wires .wire.ghost { stroke: var(--text); stroke-dasharray: 4 4; }
+svg.wires .wire:hover { stroke-width: 5px; opacity: 1; }
+
+/* ---- popovers */
+.popover { position: fixed; z-index: 10; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.45); padding: 6px; min-width: 200px; }
+.popover.menu { display: flex; flex-direction: column; }
+.popover.menu button { background: none; border: none; text-align: left; min-height: 40px; padding: 8px 12px; border-radius: 6px; }
+.popover.menu button:hover { background: var(--panel-2); }
+.popover:not(.menu) { top: 60px; left: 50%; transform: translateX(-50%); max-height: 70vh; overflow: auto; }
+.popover h3 { margin: 6px 8px 10px; font-size: 15px; }
+.popover .row { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px; }
+
+/* ---- phone: one mix per screen width, headers stack */
+@media (max-width: 720px) {
+  .mixer { grid-template-columns: minmax(150px, 180px) repeat(var(--mixes), minmax(140px, 1fr)); gap: 4px; }
+  #hearing { order: 5; width: 100%; margin-left: 0; }
+  .app { grid-template-columns: 36px 1fr; }
+  .app .target { grid-column: 1 / -1; justify-content: flex-start; max-width: none; }
+}
+
+/* ---- FX drawer (FxPanel.qml as a side sheet) */
+body.fx-open #view { margin-right: 380px; }
+#fx-drawer { position: fixed; top: 48px; right: 0; bottom: 0; width: 380px; max-width: 100vw; background: var(--panel); border-left: 1px solid var(--line); padding: 12px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; z-index: 20; }
+#fx-drawer[hidden] { display: none; }
+.fx-head { display: flex; align-items: center; gap: 10px; }
+.fx-head h2 { font-size: 15px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.switch input { width: 18px; height: 18px; accent-color: var(--green); margin: 0; }
+.fx-list { display: flex; flex-direction: column; gap: 8px; }
+.fx-card { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.fx-card.off { opacity: .55; }
+.fx-card-head { display: flex; align-items: center; gap: 6px; }
+.fx-card-head button { min-width: 32px; min-height: 32px; padding: 2px; }
+.fx-desc { margin: 0; color: var(--muted); font-size: 12px; }
+.fx-param { display: grid; grid-template-columns: 110px 1fr 64px; align-items: center; gap: 8px; font-size: 12px; }
+.fx-param input[type=range] { width: 100%; accent-color: var(--accent); min-height: 28px; }
+.fx-param output { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.fx-add select { width: 100%; min-height: 40px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; font: inherit; }
+.fx-presets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.fx-presets .muted { color: var(--muted); font-size: 12px; }
+button.fx.on { color: var(--green); border-color: var(--green); }
+button.danger { color: var(--red); }
+@media (max-width: 900px) {
+  body.fx-open #view { margin-right: 0; }
+  #fx-drawer { width: 100vw; top: 0; }
+}
+
+header .spacer { flex: 1; }
+header .icon-btn { background: none; border: 1px solid var(--line); color: var(--fg-dim); width: 30px; height: 30px; border-radius: 6px; font-size: 16px; line-height: 1; }
+header .icon-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
+
+.channel-header button.source { background: none; border: 0; padding: 0; color: var(--fg-dim); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.channel-header button.source:hover { color: var(--fg); text-decoration: underline dotted; }
+.popover .hint { color: var(--fg-dim); font-size: 11px; margin: 6px 0 0; }

@@ -1,0 +1,73 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <!-- /org/kmixdeck1/channel/<slug> : an input group applications play into (PipeWire null sink) -->
+  <interface name="org.kmixdeck1.Channel">
+    <property name="Slug" type="s" access="read"/>
+    <property name="Name" type="s" access="readwrite"/>
+    <!-- UX-8: freedesktop icon name (theme lookup) or an absolute file path; persisted in the layout. "" = frontend default -->
+    <property name="Icon" type="s" access="readwrite"/>
+    <!-- MX-5 colour code: "#rrggbb", or "" for the theme default. Rejected otherwise. -->
+    <property name="Color" type="s" access="readwrite"/>
+    <!-- CH-8: channels sharing a Group name move together: trim changes are applied as the same dB delta to every
+         member (balance survives), mute is mirrored. "" = no group. -->
+    <property name="Group" type="s" access="readwrite"/>
+    <!-- channel-wide trim before all mixes, linear 0..1 (CH-7); NOT the per-mix fader -->
+    <property name="Trim" type="d" access="readwrite"/>
+    <!-- DV-22: stereo position of the channel, -1 (left) … 0 (centre) … +1 (right); constant-power law on the channel sink; persisted -->
+    <property name="Pan" type="d" access="readwrite"/>
+    <property name="Muted" type="b" access="readwrite"/>
+    <!-- PipeWire node.name, for tools that want to link things themselves -->
+    <property name="NodeName" type="s" access="read"/>
+    <!-- device reference of a hardware source feeding this channel, or empty (CH-3, ADR 0007/0009):
+         "node" (whole device) or "node:POS[,POS]" (one port = mono, two = stereo, first is left). node is a key of
+         Mixer.InputDevices, POS a position from Mixer.DevicePorts[node]. Bad refs are refused (value unchanged). -->
+    <property name="InputDevice" type="s" access="readwrite"/>
+    <!-- false while InputDevice is set but the device is unplugged: grey the row out, keep the value (DV-9) -->
+    <property name="InputPresent" type="b" access="read"/>
+    <!-- ADR 0009 B1 / DV-25 — wires: ALL refs feeding this channel, in wire order; InputDevice is Inputs[0].
+         Each ref may carry a side (">L" / ">R"); several wires into the same side sum in the channel. -->
+    <property name="Inputs" type="as" access="read"/>
+    <!-- add / remove one wire. Refused (false) for unknown devices/ports; adding an existing wire is a no-op (true). -->
+    <!-- DV-14: each wire has its own trim (cubic 0..1, 1 = unity) and mute inside kmixdeck, applied to the edge loopback node,
+         never to the hardware device (CT-5). Persisted with the wire; survives unplug/replug and restarts. ref as listed in Inputs. -->
+    <method name="SetWireTrim">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="trim" type="d" direction="in"/>
+      <arg name="muted" type="b" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
+    <method name="WireTrim">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="trim" type="d" direction="out"/>
+    </method>
+    <method name="WireMuted">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="muted" type="b" direction="out"/>
+    </method>
+    <method name="AddInput">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
+    <method name="RemoveInput">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="removed" type="b" direction="out"/>
+    </method>
+    <!-- ordered insert chain as JSON {enabled, chain:[{type,params,…}]} (ADR 0008); "" when none.
+         Set through SetFx only — the property itself is read so third-party UIs can mirror it cheaply. -->
+    <property name="FxChain" type="s" access="read"/>
+    <!-- atomic mute toggle: what a hotkey or a Stream Deck key calls (no read-modify-write race) -->
+    <method name="ToggleMute"/>
+    <!-- replace the whole chain; validates first, errors surface as D-Bus errors. "{}" = clear (FX-5 bypass: enabled=false) -->
+    <method name="SetFx">
+      <arg name="chainJson" type="s" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
+    <!-- live tweak without rebuilding: full Props key as in the chain JSON, e.g. "gate:Threshold (dB)" -->
+    <method name="SetFxControl">
+      <arg name="control" type="s" direction="in"/>
+      <arg name="value" type="d" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
+  </interface>
+</node>

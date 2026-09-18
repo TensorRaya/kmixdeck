@@ -1,0 +1,18 @@
+# Review 2026-09-18 CC-3. `ruff check .` must be clean; CI runs it.
+line-length = 140
+target-version = "py311"
+extend-include = ["web/kmixdeck-web"]
+
+[lint]
+select = ["E", "F", "W", "B"]
+ignore = [
+  "E501",   # line length: 140 is the house limit, long JS/CDP strings in tests are deliberate
+  "E701", "E702",   # multiple statements on one line — house style (compact guards)
+  "E731",   # lambda assignment
+  "E741",   # short names in tight loops
+  "E401",   # `import a, b, c` on one line
+  "E402",   # imports after gi.require_version() in the bridge
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["F811"]   # pytest fixtures: `stack` is imported AND a parameter — that is the idiom

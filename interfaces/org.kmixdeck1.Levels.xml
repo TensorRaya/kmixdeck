@@ -1,0 +1,34 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  kmixdeck D-Bus API, major version 1 (ADR 0005). Level meters (ADR 0006).
+  Object: /org/kmixdeck1 (same object as org.kmixdeck1.Mixer)
+  Meters cost CPU, so they run only while at least one client is subscribed. Subscriptions are tied to the
+  caller's unique bus name and dropped automatically when that name leaves the bus.
+-->
+<node>
+  <interface name="org.kmixdeck1.Levels">
+    <!-- fixed tick rate of the Peaks signal, Hz -->
+    <property name="Rate" type="u" access="read"/>
+    <!-- number of currently subscribed clients (0 = no meter streams exist) -->
+    <property name="Subscribers" type="u" access="read"/>
+    <!-- start meters for this caller; idempotent -->
+    <method name="Subscribe"/>
+    <!-- stop meters for this caller; the last unsubscribe tears the meter streams down -->
+    <method name="Unsubscribe"/>
+    <!-- once per tick while Subscribers > 0: key → peak, linear 0..1 (dB = 20*log10(v); 0 means silence / -inf).
+         One dictionary per tick regardless of layout size. Keys (UX-13, every entity has a meter):
+           channel/<slug>        channel sink (pre-fader, post trim)
+           mix/<slug>            mix sink (sum of its cells, pre master)
+           cell/<ch>/<mix>       post-fader signal of that cell
+           in/<slug>             what the hardware input delivers into its channel
+           out/<mix>             what leaves the mix towards its device (post master)
+           app/<nodeId>          the application's own output — "who is talking right now"
+         CH-7 companions, same tick, same keys with a prefix (absent when there is nothing to say):
+           rms/<key>             RMS of the tick's samples, linear (no ballistics — a true average)
+           clip/<key>            1.0 while the clip indicator is lit: a sample reached full scale within the last ≈ 1.5 s -->
+    <signal name="Peaks">
+      <arg name="peaks" type="a{sd}"/>
+    </signal>
+  </interface>
+</node>

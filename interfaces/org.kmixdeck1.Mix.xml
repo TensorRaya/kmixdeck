@@ -1,0 +1,62 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <!-- /org/kmixdeck1/mix/<slug> : an output bus (PipeWire null sink); optionally a capture source for OBS etc. -->
+  <interface name="org.kmixdeck1.Mix">
+    <property name="Slug" type="s" access="read"/>
+    <property name="Name" type="s" access="readwrite"/>
+    <!-- UX-8: freedesktop icon name (theme lookup) or an absolute file path; persisted in the layout. "" = frontend default -->
+    <property name="Icon" type="s" access="readwrite"/>
+    <!-- MX-5 colour code: "#rrggbb", or "" for the theme default. Rejected otherwise. -->
+    <property name="Color" type="s" access="readwrite"/>
+    <!-- primary output: "node" or "node:POS,POS" (ADR 0009); empty = not routed to hardware (MX-3a).
+         Read: Outputs[0] or "". Write: replaces Outputs[0]; writing "" removes EVERY output (the mix is parked). -->
+    <property name="OutputDevice" type="s" access="readwrite"/>
+    <!-- node.name of the virtual capture source exposing this mix, or empty (MX-3b) -->
+    <property name="CaptureSource" type="s" access="read"/>
+    <property name="NodeName" type="s" access="read"/>
+    <!-- false while OutputDevice is set but the device is unplugged; the mix is parked and comes back by itself (DV-9..12) -->
+    <property name="OutputPresent" type="b" access="read"/>
+    <!-- MX-9: every hardware output this mix plays to — device references "node" or "node:POS[,POS]" (ADR 0009:
+         a port subset of a multichannel device; unnamed ports of that device stay untouched). OutputDevice is Outputs[0] for
+         single-output frontends; AddOutput/RemoveOutput edit the list without clobbering the rest. -->
+    <property name="Outputs" type="as" access="read"/>
+    <!-- parallel to Outputs: last seen node.description, so a frontend can name an unplugged device (DV-9) -->
+    <property name="OutputDescriptions" type="as" access="read"/>
+    <method name="AddOutput"><arg name="node_name" type="s" direction="in"/></method>
+    <!-- DV-14: each wire has its own trim (cubic 0..1, 1 = unity) and mute inside kmixdeck, applied to the edge loopback node,
+         never to the hardware device (CT-5). Persisted with the wire; survives unplug/replug and restarts. ref as listed in Outputs. -->
+    <method name="SetWireTrim">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="trim" type="d" direction="in"/>
+      <arg name="muted" type="b" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
+    <method name="WireTrim">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="trim" type="d" direction="out"/>
+    </method>
+    <method name="WireMuted">
+      <arg name="ref" type="s" direction="in"/>
+      <arg name="muted" type="b" direction="out"/>
+    </method>
+    <method name="RemoveOutput"><arg name="node_name" type="s" direction="in"/></method>
+    <!-- DV-15: played to while every entry of Outputs is unplugged. Empty = silence (never the default sink). -->
+    <property name="FallbackOutput" type="s" access="readwrite"/>
+    <!-- master fader of the mix (MX-6), linear 0..1: applies to every hardware output and to CaptureSource alike -->
+    <property name="Volume" type="d" access="readwrite"/>
+    <property name="Muted" type="b" access="readwrite"/>
+    <method name="ToggleMute"/>
+    <!-- same effect-chain contract as on Channel (FX-6: a limiter on the Stream mix is the common case) -->
+    <property name="FxChain" type="s" access="read"/>
+    <method name="SetFx">
+      <arg name="chainJson" type="s" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
+    <method name="SetFxControl">
+      <arg name="control" type="s" direction="in"/>
+      <arg name="value" type="d" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
+  </interface>
+</node>

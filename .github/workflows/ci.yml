@@ -1,0 +1,38 @@
+name: build-and-test
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain, KDE Frameworks 6, PipeWire (same packages as the dev box)
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq cmake ninja-build g++ pkg-config extra-cmake-modules \
+            qt6-base-dev qt6-declarative-dev qt6-declarative-dev-tools qt6-svg-dev \
+            qml6-module-org-kde-kirigami libkirigami-dev kirigami-addons-dev \
+            qml6-module-org-kde-kirigamiaddons-components qml6-module-org-kde-kirigamiaddons-formcard \
+            qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-templates \
+            libkf6coreaddons-dev libkf6config-dev libkf6i18n-dev libkf6globalaccel-dev \
+            libkf6statusnotifieritem-dev libkf6notifications-dev libkf6dbusaddons-dev libkf6crash-dev \
+            libkf6iconthemes-dev libkf6qqc2desktopstyle-dev libkf6colorscheme-dev \
+            libpipewire-0.3-dev pipewire pipewire-audio wireplumber pipewire-bin \
+            ffmpeg python3-pytest python3-gi appstream dbus dbus-daemon systemd swh-plugins
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+      - name: Build
+        run: ninja -C build
+      - name: Unit tests
+        run: ctest --test-dir build -LE integration --output-on-failure
+      - name: Integration tests (private PipeWire daemon, no sound card)
+        run: ctest --test-dir build -L integration -j4 --output-on-failure
+      - name: Smoke-start the app offscreen
+        run: |
+          export XDG_RUNTIME_DIR=/tmp/xdg && mkdir -p $XDG_RUNTIME_DIR && chmod 700 $XDG_RUNTIME_DIR
+          # The app uses KDBusService (single instance) → needs a session bus, like on any desktop.
+          QT_QPA_PLATFORM=offscreen dbus-run-session -- sh -c './build/bin/kmixdeckd & timeout 5 ./build/bin/kmixdeck-kde; test $? -eq 124'

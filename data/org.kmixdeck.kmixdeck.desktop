@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=kmixdeck
+GenericName=Streamer Audio Mixer
+Comment=Per-app channels, unlimited output mixes, per-mix levels — on PipeWire
+Exec=kmixdeck-kde
+Icon=audio-card
+Terminal=false
+Categories=Qt;KDE;AudioVideo;Audio;Mixer;
+Keywords=audio;mixer;stream;obs;pipewire;wave link;voicemeeter;
+StartupNotify=true
+X-DBUS-ServiceName=org.kmixdeck.kmixdeck
