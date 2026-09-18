@@ -239,7 +239,7 @@ struct Graph::Impl {
         // majority target of this node's outgoing links (a stereo stream has 2 links to the same sink). Our own level
         // meter (UX-13) is a second consumer of every metered app node — 2 links, same as the real sink — and won the
         // tie by hash order: "routed → kmixdeck.meter" cleared App.Channels, and the next drop REPLACED instead of
-        // adding (test_ux11 red 1 in 3 in the suite, 2026-09-17). The meter is a tap, never a route.
+        // adding (test_ux11 red 1 in 3 in the suite). The meter is a tap, never a route.
         QHash<uint32_t, int> count;
         for (const auto &l : links) if (l.out == outNode && !isMeterNode(l.in)) count[l.in]++;
         uint32_t best = 0; int n = 0;

@@ -10,6 +10,7 @@
 #include <QDBusObjectPath>
 #include <QDBusArgument>
 #include <QFile>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QDir>
 #include <QFileInfo>
@@ -157,7 +158,7 @@ public Q_SLOTS:
 };
 
 /// One CLI invocation: parsed arguments, the daemon's object tree, and one handler per command.
-/// (CC-1, review 2026-09-18: this was a single 500-line `main()`. The handlers are the former `if (cmd == …)` blocks
+/// (CC-1, review: this was a single 500-line `main()`. The handlers are the former `if (cmd == …)` blocks
 /// verbatim; behaviour is pinned by tests/integration/test_service_cli.py and the other suites.)
 struct Cli {
     QCoreApplication &app;
@@ -249,8 +250,10 @@ struct Cli {
         const QDBusReply<QString> r = mixer.call("Export");
         if (!r.isValid()) return fail(Rejected, r.error().message());
         if (a.size() < 2 || a[1] == "-") { out << r.value(); if (!r.value().endsWith(QLatin1Char('\n'))) out << "\n"; return Ok; }
-        QFile f(a[1]); if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return fail(Usage, "cannot write " + a[1]);
-        f.write(r.value().toUtf8()); out << "exported to " << a[1] << "\n"; return Ok;
+        // BP-7: a backup that is half-written is worse than none — QSaveFile writes next to the target and renames.
+        QSaveFile f(a[1]); if (!f.open(QIODevice::WriteOnly)) return fail(Usage, "cannot write " + a[1]);
+        f.write(r.value().toUtf8()); if (!f.commit()) return fail(Usage, "cannot write " + a[1] + ": " + f.errorString());
+        out << "exported to " << a[1] << "\n"; return Ok;
     }
     int cmdImport() {   // CT-7: kmixdeck import <file>  — replaces the whole layout + levels
         if (!need(2)) return Usage;

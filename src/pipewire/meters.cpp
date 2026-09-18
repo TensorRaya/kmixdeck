@@ -67,7 +67,7 @@ struct Meters::Impl {
             PW_KEY_STREAM_MONITOR, "true",
             PW_KEY_TARGET_OBJECT, target.toUtf8().constData(),
             // No resample.peaks: that mode hands us ONE peak sample per tick — fine for a peak meter, useless for RMS and
-            // clip counting (CH-7: RMS came out equal to peak, 2026-09-17). We take the graph's own rate, mono
+            // clip counting (CH-7: RMS came out equal to peak). We take the graph's own rate, mono
             // (channelmix folds to one), and reduce in onProcess: ~48k float multiply-adds per meter per second.
             PW_KEY_NODE_NAME, "kmixdeck.meter", PW_KEY_NODE_DESCRIPTION, "kmixdeck level meter",
             PW_KEY_NODE_PASSIVE, "true", PW_KEY_NODE_DONT_RECONNECT, "true", "node.dont-fallback", "true",

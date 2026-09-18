@@ -41,7 +41,7 @@ Item {
 
     RowLayout {
         anchors { fill: parent; leftMargin: Kirigami.Units.smallSpacing * 1.5; rightMargin: Kirigami.Units.smallSpacing * 1.5 }
-        spacing: Kirigami.Units.smallSpacing * 2   // fader cap → link button had 5 px on the laptop (2026-09-16)
+        spacing: Kirigami.Units.smallSpacing * 2   // fader cap → link button had 5 px on the laptop 
 
         QQC2.ToolButton {
             objectName: "cellMute/" + cell.channel + "/" + cell.mix

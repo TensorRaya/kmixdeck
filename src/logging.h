@@ -3,7 +3,7 @@
 #pragma once
 #include <QLoggingCategory>
 
-// Logging categories (review 2026-09-18, BP-3). Filter at runtime with the standard Qt switch, e.g.
+// Logging categories (review, BP-3). Filter at runtime with the standard Qt switch, e.g.
 //   QT_LOGGING_RULES="kmixdeck.pipewire.debug=true"     everything the PipeWire layer sees
 //   QT_LOGGING_RULES="kmixdeck.*.warning=false"         silence
 // or in ~/.config/QtProject/qtlogging.ini. Category names are part of the operator-facing surface: keep them stable.

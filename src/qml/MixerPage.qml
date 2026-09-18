@@ -42,7 +42,7 @@ Kirigami.ScrollablePage {
     property int stripW: 0
     readonly property int mixColW: mixes.length === 0 || stripW === 0 ? mixColWide
                                  : Math.max(mixColMin, Math.min(mixColWide, Math.floor((stripW - gap * (mixes.length - 1)) / mixes.length)))
-    readonly property int headerH: narrow ? Math.round(rowH * 1.55) : rowH   // two-row header when folded     // MX-5: the header (icon, name, mute, master, listen, ⋮) needs this much; below it the master handle left the card (2026-09-17 render)
+    readonly property int headerH: narrow ? Math.round(rowH * 1.55) : rowH   // two-row header when folded     // MX-5: the header (icon, name, mute, master, listen, ⋮) needs this much; below it the master handle left the card
 
     Kirigami.PlaceholderMessage {
         anchors.centerIn: parent

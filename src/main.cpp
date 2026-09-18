@@ -71,7 +71,7 @@ int main(int argc, char *argv[])
     about.processCommandLine(&parser);
 
     // one instance; a second launch raises the window — except for the headless modes, which must run next to a
-    // live UI (2026-09-16: --screenshot silently exited 0 because Unique handed the call to the running instance)
+    // live UI (--screenshot once silently exited 0 because Unique handed the call to the running instance)
     const bool headless = parser.isSet(selfTest) || parser.isSet(shot) || parser.isSet(gestureArg) || parser.isSet(probeArg);
     KDBusService service(headless ? KDBusService::Multiple | KDBusService::NoExitOnFailure : KDBusService::Unique);
 
@@ -82,7 +82,7 @@ int main(int argc, char *argv[])
     if (headless) client->setHideToTray(false);
 
     QQmlApplicationEngine engine;
-    // --self-test also fails on QML *warnings* (ReferenceError, TypeError, unresolved bindings): the 2026-09-16
+    // --self-test also fails on QML *warnings* (ReferenceError, TypeError, unresolved bindings): the
     // `band is not defined` in Fader.qml loaded fine and only broke at runtime — exit 0 would have hidden it.
     int qmlWarnings = 0;
     // Only OUR files count (org/kmixdeck/); Kirigami's own binding-loop notices are not ours to fix.
@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
     engine.loadFromModule("org.kmixdeck", "Main");
     if (!engine.rootObjects().isEmpty()) kde.setMainWindow(qobject_cast<QQuickWindow *>(engine.rootObjects().first()));
     // --self-test: load every QML file, then quit — ctest runs this offscreen so a broken binding
-    // (2026-09-16: a duplicate `font` assignment made the UI exit 1 without a message) fails the build, not the user.
+    // (a duplicate `font` assignment once made the UI exit 1 without a message) fails the build, not the user.
     if (parser.isSet(selfTest)) {
         if (engine.rootObjects().isEmpty()) return 1;
         auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
@@ -183,7 +183,7 @@ int main(int argc, char *argv[])
         });
         // Leave only after the bus has ROUND-TRIPPED: every gesture ends in asyncCall()s, and under load the 1 s that
         // used to remain before exit was not enough — the calls died with the process (ux14 red in the suite, green
-        // alone, 2026-09-17). A blocking Ping after the gestures is ordered behind our own calls on the same connection.
+        // alone). A blocking Ping after the gestures is ordered behind our own calls on the same connection.
         if (!parser.isSet(probeArg)) QTimer::singleShot(1500, &app, [] {
             QDBusInterface(QStringLiteral("org.kmixdeck1"), QStringLiteral("/org/kmixdeck1"), QStringLiteral("org.freedesktop.DBus.Peer"), QDBusConnection::sessionBus()).call(QStringLiteral("Ping"));
             QCoreApplication::exit(0);

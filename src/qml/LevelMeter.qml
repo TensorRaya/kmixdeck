@@ -24,7 +24,7 @@ Item {
     readonly property double rmsFrac: Math.max(0, Math.min(1, (rmsDb - floorDb) / -floorDb))
     property double hold: 0
     // UX-16 colour bands with 2 dB hysteresis: a level hovering around a threshold must not flicker between two
-    // colours (laptop 2026-09-16: "orange und grün wechselt sich zu schnell ab"). Ballistics (hold/fall) come from the
+    // colours (laptop: "orange und grün wechselt sich zu schnell ab"). Ballistics (hold/fall) come from the
     // daemon, so every frontend agrees; here only the band decision is smoothed.
     property int band: 0            // 0 green, 1 amber, 2 red
     onDbChanged: {
