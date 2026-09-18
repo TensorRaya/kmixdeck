@@ -36,6 +36,7 @@ remove_definitions(-DQT_NO_CAST_FROM_ASCII -DQT_NO_CAST_TO_ASCII -DQT_NO_CAST_FR
 set_property(TARGET kmixdeck-cli PROPERTY COMPILE_DEFINITIONS "")
 install(TARGETS kmixdeck-cli ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
 
+if(BUILD_KDE_FRONTEND)
 # --- kmixdeck-kde: the Kirigami frontend. Pure D-Bus client, no PipeWire (AR-2/AR-6 enforced by the linker).
 add_executable(kmixdeck-kde main.cpp frontend/mixerclient.cpp frontend/mixerclient.h frontend/kdeintegration.cpp frontend/kdeintegration.h frontend/iconpicker.cpp frontend/iconpicker.h qmltypes.h)
 ecm_add_qml_module(kmixdeck-kde
@@ -70,3 +71,4 @@ target_link_libraries(kmixdeck-kde PRIVATE
 )
 target_compile_options(kmixdeck-kde PRIVATE -Wall -Wextra)
 install(TARGETS kmixdeck-kde ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
+endif()
