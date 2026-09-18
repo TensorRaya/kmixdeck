@@ -155,71 +155,49 @@ public Q_SLOTS:
     }
 };
 
-int main(int argc, char *argv[]) {
-    QCoreApplication app(argc, argv);
-    qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<PortMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
-    QCommandLineParser p;
-    p.setApplicationDescription(QStringLiteral(
-        "kmixdeck — control the kmixdeck service (org.kmixdeck1) from the shell.\n\n"
-        "Commands:\n"
-        "  status                                     matrix overview\n"
-        "  undo                                    restore the last removed channel or mix (CH-9)\n"
-        "  setup [--apply]                         first-run wizard: show (or do) default routing — Monitor -> default output,\n"
-        "                                          Voice <- default mic, running apps -> channels by role (UX-3)\n"
-        "  export [file]                           backup: layout + every fader/trim/mute as JSON (CT-7)\n"
-        "  streamdeck install|uninstall|path       hook the OpenAction plugin (streamdeck/) into OpenDeck's plugins folder (CT-3)\n"
-        "  import <file>                           restore such a backup (replaces the running layout)\n"
-        "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
-        "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
-        "  channel group <slug> [<name>|none]; channel groups   CH-8: grouped channels move together (trim as one dB delta, mute mirrored)\n"
-        "  channel inputs <slug>                 all wires into a channel (ADR 0009 B1); input-add|input-remove <slug> <ref>\n"
-        "  channel pan <slug> [<-1..1>|L|C|R]    stereo position of the channel (DV-22)\n"
-        "  mix     list|add <name>|duplicate <slug> <new name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
-        "  mix     outputs <slug>                 list all hardware outputs of a mix (MX-9)\n"
-        "  mix     output-add|output-remove <slug> <node.name>\n"
-        "  mix     fallback <slug> <node.name|none>   played while every output is unplugged (DV-15)\n"
-        "  devices [in]                               hardware outputs a mix can play to (in: sources a channel can be fed by)\n"
-        "  devices hide|unhide <node.name>|hidden      CH-11: keep a device out of every picker (still routable by name)\n"
-        "  levels                                     live meters: peak '#', RMS '=', clip '!' (Ctrl-C to stop)\n"
-        "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
-        "  cell    link <ch> <mix> <other-mix|none>   MX-7: this cell follows the other mix's cell (volume+mute)\n"
-        "  fx      types                                  built-in effect catalog (JSON)\n"
-        "  fx      presets                                one-click chains (FX-4), editable starting points\n"
-        "  fx      get|set|clear <channel|mix> <slug> ['<json>']   ordered insert chain on one object\n"
-        "  fx      copy <channel|mix> <from> <kind> <to>          copy the chain to another object\n"
-        "  fx      control <channel|mix> <slug> <node:Control> <value>   live tweak, no reload\n"
-        "  app     list|move <id|name> <channel>          running application streams\n"
-        "  app     assign <id|name> <ch>[,<ch>...]   CH-12: several channels at once (first = primary)\n"
-        "  listen  [<node.name>|none]            UX-2: the device I listen on + which mixes play there\n"
-        "  audition <channel|mix> <slug>|none    UX-12: solo one entity on the main output; none restores\n"
-        "  watch                                      print property changes as they happen\n\n"
-        "Levels: linear 0..1, or NdB (e.g. -12dB), or N% (UI/cubic scale). Exit codes: 0 ok, 1 usage, 2 no service, 3 not found, 4 rejected."));
-    p.addHelpOption(); p.addVersionOption();
-    QCommandLineOption json({"j", "json"}, "machine-readable output"); p.addOption(json);
-    p.addPositionalArgument("command", "see above");
-    p.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);   // so "-12dB" is a value, not options
-    p.process(app);
-    g_json = p.isSet(json);
-    QStringList a = p.positionalArguments();
-    if (a.isEmpty()) { p.showHelp(Usage); }
-    if (!QDBusConnection::sessionBus().isConnected()) return fail(NoService, "no session bus");
+/// One CLI invocation: parsed arguments, the daemon's object tree, and one handler per command.
+/// (CC-1, review 2026-09-18: this was a single 500-line `main()`. The handlers are the former `if (cmd == …)` blocks
+/// verbatim; behaviour is pinned by tests/integration/test_service_cli.py and the other suites.)
+struct Cli {
+    QCoreApplication &app;
+    QCommandLineParser &p;
+    QStringList a;                 // positional arguments: a[0] = command, a[1] = sub-command
+    QString cmd, sub;
+    Objects o;                     // the daemon's object tree (empty for offline commands)
+    QString e;
+    QDBusInterface mixer{BUS, ROOT, "org.kmixdeck1.Mixer", QDBusConnection::sessionBus()};
 
-    Objects o; QString e;
-    const bool offline = a[0] == QLatin1String("streamdeck");   // CT-3: file-system only, works without the daemon
-    if (!offline && !fetch(o, &e)) return fail(NoService, "service not reachable: " + e);
-    const QString cmd = a[0], sub = a.value(1);
-    auto need = [&](int n) { if (a.size() < n) { fail(Usage, "missing arguments; see --help"); return false; } return true; };
-    auto printPath = [&](const QDBusReply<QDBusObjectPath> &r) -> int {
+    Cli(QCoreApplication &app_, QCommandLineParser &p_, QStringList args)
+        : app(app_), p(p_), a(std::move(args)), cmd(a[0]), sub(a.value(1)) {}
+
+    bool need(int n) { if (a.size() < n) { fail(Usage, "missing arguments; see --help"); return false; } return true; }
+    int printPath(const QDBusReply<QDBusObjectPath> &r) {
         if (!r.isValid()) return fail(Rejected, r.error().message());
-        if (g_json) out << QJsonDocument(QJsonObject{{"path", r.value().path()}}).toJson(QJsonDocument::Compact); else out << r.value().path() << "\n"; return Ok; };
-    auto list = [&](const QMap<QString, QVariantMap> &m) {
+        if (g_json) out << QJsonDocument(QJsonObject{{"path", r.value().path()}}).toJson(QJsonDocument::Compact); else out << r.value().path() << "\n"; return Ok; }
+    int list(const QMap<QString, QVariantMap> &m) {
         if (g_json) { QJsonArray arr; for (auto it = m.cbegin(); it != m.cend(); ++it) { auto v = it.value(); v["Path"] = it.key(); arr.append(QJsonObject::fromVariantMap(v)); } out << QJsonDocument(arr).toJson(); }
         else for (auto it = m.cbegin(); it != m.cend(); ++it) out << QStringLiteral("%1  %2\n").arg(it.value().value("Slug").toString(), -16).arg(it.value().value("Name").toString());
-        return Ok; };
-    QDBusInterface mixer(BUS, ROOT, "org.kmixdeck1.Mixer", QDBusConnection::sessionBus());
+        return Ok; }
+    // ADR 0009: "node[:POS,POS]" — the daemon logs a refusal but a D-Bus property Set cannot carry an error, so
+    // the CLI checks the reference against Mixer.DevicePorts first and verifies the write by reading back.
+    bool checkRef(QString ref, bool source, QString *why) {
+        int arrow = ref.lastIndexOf(QLatin1Char('>')); if (arrow < 0) arrow = ref.lastIndexOf(QLatin1Char('<'));   // ADR 0009 A2 side
+        bool hasSide = false;
+        if (arrow > 0) { const QString side = ref.mid(arrow + 1).toUpper(); if (side != "L" && side != "R") { *why = QStringLiteral("side must be L or R: node:POS>L"); return false; } ref = ref.left(arrow); hasSide = true; }
+        if (hasSide && ref.count(QLatin1Char(',')) > 0) { *why = QStringLiteral("a side (>L / >R) takes exactly one port: node:POS>L"); return false; }
+        const QString node = ref.section(QLatin1Char(':'), 0, 0);
+        const StringMap devs = qdbus_cast<StringMap>(o.mixer.value(source ? "InputDevices" : "OutputDevices"));
+        if (!devs.contains(node)) { *why = QStringLiteral("no %1 device '%2' (see `kmixdeck devices%3`)").arg(source ? "input" : "output", node, source ? " in" : ""); return false; }
+        if (!ref.contains(QLatin1Char(':'))) return true;
+        const QStringList want = ref.section(QLatin1Char(':'), 1).split(QLatin1Char(','), Qt::SkipEmptyParts);
+        if (want.isEmpty() || want.size() > 2) { *why = QStringLiteral("a virtual device is mono (1 port) or stereo (2 ports): node:POS or node:POS,POS"); return false; }
+        QStringList have; for (const auto &t : qdbus_cast<PortMap>(o.mixer.value("DevicePorts")).value(node)) have << t.section(QLatin1Char('|'), 0, 0);
+        for (const auto &w : want) if (!have.contains(w)) { *why = QStringLiteral("device '%1' has no port '%2' (see `kmixdeck devices ports %1`)").arg(node, w); return false; }
+        return true;
+    }
 
-    if (cmd == "status") return cmdStatus(o);
-    if (cmd == "streamdeck") {   // CT-3: kmixdeck streamdeck install|uninstall|path — hook the OpenAction plugin into OpenDeck
+    int cmdStatus() { return ::cmdStatus(o); }
+    int cmdStreamdeck() {   // CT-3: kmixdeck streamdeck install|uninstall|path — hook the OpenAction plugin into OpenDeck
         const QString sub = a.size() > 1 ? a[1] : QStringLiteral("path");
         // where the plugin lives: next to this binary in a build tree, else the installed data dir
         QStringList candidates{QCoreApplication::applicationDirPath() + QStringLiteral("/../../streamdeck/me.kmixdeck.sdPlugin")};
@@ -244,7 +222,7 @@ int main(int argc, char *argv[]) {
         if (sub == "uninstall") { for (const QString &t : targets) { const QString link = t + QStringLiteral("/me.kmixdeck.sdPlugin"); if (QFile::remove(link)) out << "removed " << link << "\n"; } return Ok; }
         return fail(Usage, "streamdeck install|uninstall|path");
     }
-    if (cmd == "setup") {   // UX-3: kmixdeck setup [--plan|--apply]  — the first-run wizard's brain, on the command line
+    int cmdSetup() {   // UX-3: kmixdeck setup [--plan|--apply]  — the first-run wizard's brain, on the command line
         const bool apply = a.size() > 1 && a[1] == "--apply";
         const QDBusReply<QString> r = mixer.call(apply ? "FirstRunApply" : "FirstRunPlan");
         if (!r.isValid()) return fail(Rejected, r.error().message());
@@ -266,45 +244,28 @@ int main(int argc, char *argv[]) {
         for (const auto &av : o.value("apps").toArray()) { const auto ap = av.toObject(); out << "app " << ap.value("name").toString() << " -> " << ap.value("channel").toString() << "\n"; }
         return Ok;
     }
-    if (cmd == "export") {   // CT-7: kmixdeck export [file]  — stdout when no file
+    int cmdExport() {   // CT-7: kmixdeck export [file]  — stdout when no file
         const QDBusReply<QString> r = mixer.call("Export");
         if (!r.isValid()) return fail(Rejected, r.error().message());
         if (a.size() < 2 || a[1] == "-") { out << r.value(); if (!r.value().endsWith(QLatin1Char('\n'))) out << "\n"; return Ok; }
         QFile f(a[1]); if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return fail(Usage, "cannot write " + a[1]);
         f.write(r.value().toUtf8()); out << "exported to " << a[1] << "\n"; return Ok;
     }
-    if (cmd == "import") {   // CT-7: kmixdeck import <file>  — replaces the whole layout + levels
+    int cmdImport() {   // CT-7: kmixdeck import <file>  — replaces the whole layout + levels
         if (!need(2)) return Usage;
         QFile f(a[1]); if (!f.open(QIODevice::ReadOnly)) return fail(NotFound, "cannot read " + a[1]);
         const QDBusMessage r = mixer.call("Import", QString::fromUtf8(f.readAll()));
         if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
         out << "imported " << a[1] << "\n"; return Ok;
     }
-    if (cmd == "undo") {
+    int cmdUndo() {
         const QString what = unwrap(o.mixer.value("UndoDescription")).toString();
         if (what.isEmpty()) return fail(NotFound, "nothing to undo");
         const QDBusMessage r = mixer.call("Undo");
         if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
         out << "restored " << what << "\n"; return Ok;
     }
-    // ADR 0009: "node[:POS,POS]" — the daemon logs a refusal but a D-Bus property Set cannot carry an error, so
-    // the CLI checks the reference against Mixer.DevicePorts first and verifies the write by reading back.
-    auto checkRef = [&](QString ref, bool source, QString *why) {
-        int arrow = ref.lastIndexOf(QLatin1Char('>')); if (arrow < 0) arrow = ref.lastIndexOf(QLatin1Char('<'));   // ADR 0009 A2 side
-        bool hasSide = false;
-        if (arrow > 0) { const QString side = ref.mid(arrow + 1).toUpper(); if (side != "L" && side != "R") { *why = QStringLiteral("side must be L or R: node:POS>L"); return false; } ref = ref.left(arrow); hasSide = true; }
-        if (hasSide && ref.count(QLatin1Char(',')) > 0) { *why = QStringLiteral("a side (>L / >R) takes exactly one port: node:POS>L"); return false; }
-        const QString node = ref.section(QLatin1Char(':'), 0, 0);
-        const StringMap devs = qdbus_cast<StringMap>(o.mixer.value(source ? "InputDevices" : "OutputDevices"));
-        if (!devs.contains(node)) { *why = QStringLiteral("no %1 device '%2' (see `kmixdeck devices%3`)").arg(source ? "input" : "output", node, source ? " in" : ""); return false; }
-        if (!ref.contains(QLatin1Char(':'))) return true;
-        const QStringList want = ref.section(QLatin1Char(':'), 1).split(QLatin1Char(','), Qt::SkipEmptyParts);
-        if (want.isEmpty() || want.size() > 2) { *why = QStringLiteral("a virtual device is mono (1 port) or stereo (2 ports): node:POS or node:POS,POS"); return false; }
-        QStringList have; for (const auto &t : qdbus_cast<PortMap>(o.mixer.value("DevicePorts")).value(node)) have << t.section(QLatin1Char('|'), 0, 0);
-        for (const auto &w : want) if (!have.contains(w)) { *why = QStringLiteral("device '%1' has no port '%2' (see `kmixdeck devices ports %1`)").arg(node, w); return false; }
-        return true;
-    };
-    if (cmd == "devices") {
+    int cmdDevices() {
         if (sub == "virtual") {   // DV-23: devices virtual list | add <name> [--in N] [--out N] | remove <slug|node>
             const QString op = a.value(2);
             if (op == "list" || op.isEmpty()) { for (const auto &n : unwrap(o.mixer.value("VirtualDevices")).toStringList()) out << n << "\n"; return Ok; }
@@ -362,7 +323,7 @@ int main(int argc, char *argv[]) {
         for (auto it = devs.cbegin(); it != devs.cend(); ++it) out << QStringLiteral("%1  %2%3\n").arg(it.key(), -48).arg(it.value()).arg(hidden.contains(it.key()) ? QStringLiteral("  (hidden)") : QString());
         return Ok;
     }
-    if (cmd == "channel" || cmd == "mix") {
+    int cmdChannelMix() {
         const bool ch = cmd == "channel"; const auto &objs = ch ? o.channels : o.mixes; const QString iface = ch ? "org.kmixdeck1.Channel" : "org.kmixdeck1.Mix";
         auto pathOf = [&](const QString &slug) { return QStringLiteral("%1/%2/%3").arg(ROOT, ch ? "channel" : "mix", slug); };
         if (sub == "list") return list(objs);
@@ -506,7 +467,7 @@ int main(int argc, char *argv[]) {
         }
         return fail(Usage, "unknown subcommand '" + sub + "'");
     }
-    if (cmd == "fx") {   // effects per channel/mix (ADR 0008)
+    int cmdFx() {   // effects per channel/mix (ADR 0008)
         // fx types | fx get <channel|mix> <slug> | fx set <channel|mix> <slug> '<json>' | fx control <channel|mix> <slug> <key> <value>
         if (sub == "types") {
             const QString t = unwrap(o.mixer.value("FxTypes")).toString();
@@ -556,7 +517,7 @@ int main(int argc, char *argv[]) {
         }
         return fail(Usage, "unknown fx subcommand '" + sub + "'");
     }
-    if (cmd == "cell") {
+    int cmdCell() {
         if (!need(4)) return Usage;
         const QString path = cellPath(a[2], a[3]);
         if (!o.cells.contains(path)) return fail(NotFound, QStringLiteral("no cell %1×%2").arg(a[2], a[3]));
@@ -572,7 +533,7 @@ int main(int argc, char *argv[]) {
         }
         return fail(Usage, "unknown subcommand '" + sub + "'");
     }
-    if (cmd == "app") {
+    int cmdApp() {
         if (sub == "list") {
             if (g_json) { QJsonArray arr; for (auto it = o.apps.cbegin(); it != o.apps.cend(); ++it) { auto v = it.value(); v["Path"] = it.key(); arr.append(QJsonObject::fromVariantMap(v)); } out << QJsonDocument(arr).toJson(); }
             else for (auto it = o.apps.cbegin(); it != o.apps.cend(); ++it) {
@@ -617,7 +578,7 @@ int main(int argc, char *argv[]) {
         }
         return fail(Usage, "app list | app move <id|name> <channel> | app assign <id|name> <ch>[,<ch>…]");
     }
-    if (cmd == "listen") {   // UX-2: listen [<node.name>|none] — the device I hear on; "what am I hearing" = mixes routed to it
+    int cmdListen() {   // UX-2: listen [<node.name>|none] — the device I hear on; "what am I hearing" = mixes routed to it
         if (a.size() < 2) {
             const QString dev = unwrap(o.mixer.value("ListeningDevice")).toString();
             QStringList heard; for (auto it = o.mixes.cbegin(); it != o.mixes.cend(); ++it) if (it.value().value("Outputs").toStringList().contains(dev)) heard << it.value().value("Slug").toString();
@@ -626,7 +587,7 @@ int main(int argc, char *argv[]) {
         }
         return setProp(QString::fromLatin1(ROOT), "org.kmixdeck1.Mixer", "ListeningDevice", a[1] == "none" ? QString() : a[1], &e) ? Ok : fail(Rejected, e);
     }
-    if (cmd == "audition") {   // UX-12: hold one entity on the main output; `none` restores
+    int cmdAudition() {   // UX-12: hold one entity on the main output; `none` restores
         if (!need(2)) return Usage;
         const QString target = (a[1] == QLatin1String("none"))
             ? QStringLiteral("/")
@@ -639,7 +600,7 @@ int main(int argc, char *argv[]) {
         const QDBusMessage r = mixer.call("Audition", QVariant::fromValue(QDBusObjectPath(target)));
         return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
     }
-    if (cmd == "levels") {   // live peaks, 25 Hz; Ctrl-C to stop. --json: one object per tick.
+    int cmdLevels() {   // live peaks, 25 Hz; Ctrl-C to stop. --json: one object per tick.
         QDBusInterface lv(BUS, ROOT, "org.kmixdeck1.Levels", QDBusConnection::sessionBus());
         QDBusReply<void> sub = lv.call("Subscribe");
         if (!sub.isValid()) return fail(NoService, sub.error().message());
@@ -648,14 +609,94 @@ int main(int argc, char *argv[]) {
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&lv] { lv.call("Unsubscribe"); });
         return app.exec();
     }
-    if (cmd == "watch") {
+    int cmdWatch() {
         Watcher w; auto bus = QDBusConnection::sessionBus();
         bus.connect(BUS, QString(), "org.freedesktop.DBus.Properties", "PropertiesChanged", &w, SLOT(propertiesChanged(QDBusMessage)));
         bus.connect(BUS, ROOT, "org.freedesktop.DBus.ObjectManager", "InterfacesAdded", &w, SLOT(interfacesAdded(QDBusObjectPath,InterfaceMap)));
         bus.connect(BUS, ROOT, "org.freedesktop.DBus.ObjectManager", "InterfacesRemoved", &w, SLOT(interfacesRemoved(QDBusObjectPath,QStringList)));
         return app.exec();
     }
-    return fail(Usage, "unknown command '" + cmd + "'; see --help");
+
+    int run() {
+        using Fn = int (Cli::*)();
+        static const QMap<QString, Fn> table = {
+            {QStringLiteral("status"), &Cli::cmdStatus},
+            {QStringLiteral("streamdeck"), &Cli::cmdStreamdeck},
+            {QStringLiteral("setup"), &Cli::cmdSetup},
+            {QStringLiteral("export"), &Cli::cmdExport},
+            {QStringLiteral("import"), &Cli::cmdImport},
+            {QStringLiteral("undo"), &Cli::cmdUndo},
+            {QStringLiteral("devices"), &Cli::cmdDevices},
+            {QStringLiteral("channel"), &Cli::cmdChannelMix},
+            {QStringLiteral("mix"), &Cli::cmdChannelMix},
+            {QStringLiteral("fx"), &Cli::cmdFx},
+            {QStringLiteral("cell"), &Cli::cmdCell},
+            {QStringLiteral("app"), &Cli::cmdApp},
+            {QStringLiteral("listen"), &Cli::cmdListen},
+            {QStringLiteral("audition"), &Cli::cmdAudition},
+            {QStringLiteral("levels"), &Cli::cmdLevels},
+            {QStringLiteral("watch"), &Cli::cmdWatch},
+        };
+        const Fn fn = table.value(cmd, nullptr);
+        if (!fn) return fail(Usage, "unknown command '" + cmd + "'; see --help");
+        return (this->*fn)();
+    }
+};
+
+int main(int argc, char *argv[]) {
+    QCoreApplication app(argc, argv);
+    qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<PortMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
+    QCommandLineParser p;
+    p.setApplicationDescription(QStringLiteral(
+        "kmixdeck — control the kmixdeck service (org.kmixdeck1) from the shell.\n\n"
+        "Commands:\n"
+        "  status                                     matrix overview\n"
+        "  undo                                    restore the last removed channel or mix (CH-9)\n"
+        "  setup [--apply]                         first-run wizard: show (or do) default routing — Monitor -> default output,\n"
+        "                                          Voice <- default mic, running apps -> channels by role (UX-3)\n"
+        "  export [file]                           backup: layout + every fader/trim/mute as JSON (CT-7)\n"
+        "  streamdeck install|uninstall|path       hook the OpenAction plugin (streamdeck/) into OpenDeck's plugins folder (CT-3)\n"
+        "  import <file>                           restore such a backup (replaces the running layout)\n"
+        "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
+        "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
+        "  channel group <slug> [<name>|none]; channel groups   CH-8: grouped channels move together (trim as one dB delta, mute mirrored)\n"
+        "  channel inputs <slug>                 all wires into a channel (ADR 0009 B1); input-add|input-remove <slug> <ref>\n"
+        "  channel pan <slug> [<-1..1>|L|C|R]    stereo position of the channel (DV-22)\n"
+        "  mix     list|add <name>|duplicate <slug> <new name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
+        "  mix     outputs <slug>                 list all hardware outputs of a mix (MX-9)\n"
+        "  mix     output-add|output-remove <slug> <node.name>\n"
+        "  mix     fallback <slug> <node.name|none>   played while every output is unplugged (DV-15)\n"
+        "  devices [in]                               hardware outputs a mix can play to (in: sources a channel can be fed by)\n"
+        "  devices hide|unhide <node.name>|hidden      CH-11: keep a device out of every picker (still routable by name)\n"
+        "  levels                                     live meters: peak '#', RMS '=', clip '!' (Ctrl-C to stop)\n"
+        "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
+        "  cell    link <ch> <mix> <other-mix|none>   MX-7: this cell follows the other mix's cell (volume+mute)\n"
+        "  fx      types                                  built-in effect catalog (JSON)\n"
+        "  fx      presets                                one-click chains (FX-4), editable starting points\n"
+        "  fx      get|set|clear <channel|mix> <slug> ['<json>']   ordered insert chain on one object\n"
+        "  fx      copy <channel|mix> <from> <kind> <to>          copy the chain to another object\n"
+        "  fx      control <channel|mix> <slug> <node:Control> <value>   live tweak, no reload\n"
+        "  app     list|move <id|name> <channel>          running application streams\n"
+        "  app     assign <id|name> <ch>[,<ch>...]   CH-12: several channels at once (first = primary)\n"
+        "  listen  [<node.name>|none]            UX-2: the device I listen on + which mixes play there\n"
+        "  audition <channel|mix> <slug>|none    UX-12: solo one entity on the main output; none restores\n"
+        "  watch                                      print property changes as they happen\n\n"
+        "Levels: linear 0..1, or NdB (e.g. -12dB), or N% (UI/cubic scale). Exit codes: 0 ok, 1 usage, 2 no service, 3 not found, 4 rejected."));
+    p.addHelpOption(); p.addVersionOption();
+    QCommandLineOption json({"j", "json"}, "machine-readable output"); p.addOption(json);
+    p.addPositionalArgument("command", "see above");
+    p.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);   // so "-12dB" is a value, not options
+    p.process(app);
+    g_json = p.isSet(json);
+    QStringList a = p.positionalArguments();
+    if (a.isEmpty()) { p.showHelp(Usage); }
+    if (!QDBusConnection::sessionBus().isConnected()) return fail(NoService, "no session bus");
+
+    const bool offline = a[0] == QLatin1String("streamdeck");   // CT-3: file-system only, works without the daemon
+
+    Cli cli(app, p, a);
+    if (!offline && !fetch(cli.o, &cli.e)) return fail(NoService, "service not reachable: " + cli.e);
+    return cli.run();
 }
 
 #include "main.moc"
