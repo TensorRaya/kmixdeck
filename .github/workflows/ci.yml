@@ -27,6 +27,7 @@ jobs:
         run: |
           ruff check .
           python3 tools/sot-audit.py
+          python3 tools/dbus-doc.py
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
       - name: Build
