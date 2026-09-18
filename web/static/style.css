@@ -38,7 +38,8 @@ main { padding: 12px; overflow: auto; }
 .empty { color: var(--muted); text-align: center; padding: 40px 16px; }
 
 /* ---- mixer grid: first column = channel headers, then one column per mix */
-.mixer { display: grid; grid-template-columns: minmax(170px, 220px) repeat(var(--mixes), minmax(120px, 1fr)); gap: 6px; align-items: stretch; }
+.mixer { display: grid; grid-template-columns: minmax(150px, 190px) repeat(var(--mixes), minmax(120px, 1fr)); gap: 6px; align-items: start; }
+.channel-header, .mix-header, .cell { height: 100%; }
 .corner { display: flex; align-items: flex-end; }
 .corner.bottom { align-items: flex-start; }
 .channel-header, .mix-header, .cell { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 8px; position: relative; overflow: hidden; }
@@ -48,27 +49,40 @@ main { padding: 12px; overflow: auto; }
 .source { color: var(--muted); font-size: 12px; margin: 0 4px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gone { color: var(--amber); }
 .badge { display: inline-block; font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; margin-left: 6px; }
-.controls { display: flex; align-items: center; gap: 4px; }
-.controls .fader.horizontal { flex: 1; }
-.controls button { min-height: 32px; padding: 4px 8px; }
-.pan-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: var(--muted); font-size: 11px; }
-.pan { flex: 1; accent-color: var(--accent); min-height: 18px; height: 18px; }
+/* header strip = [button column][vertical fader][meter] — the same shape as a cell, like a real desk */
+.strip { display: flex; align-items: flex-start; justify-content: center; gap: 6px; margin-top: 2px; }
+.strip .fader.vertical { margin-bottom: 16px; }
+.strip .meter { height: 116px; margin-top: 8px; }
+.button-col { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; align-items: center; }
+.button-col button { min-width: 40px; min-height: 30px; padding: 3px 6px; font-size: 13px; }
+/* pan knob */
+.knob { display: flex; flex-direction: column; align-items: center; width: 40px; margin-top: 4px; touch-action: none; user-select: none; cursor: ns-resize; }
+.knob svg { display: block; width: 32px; height: 28px; }
+.knob .arc { stroke: color-mix(in srgb, var(--text) 35%, transparent); stroke-width: 4; stroke-linecap: round; }
+.knob .val { stroke: var(--accent); stroke-width: 4; stroke-linecap: round; }
+.knob .pointer { stroke: var(--text); stroke-width: 3; stroke-linecap: round; }
+.knob.dragging .pointer, .knob:focus-visible .pointer { stroke: var(--accent); }
+.knob output { font-size: 10px; color: var(--muted); margin-top: 0; font-variant-numeric: tabular-nums; line-height: 1; }
+/* icon buttons: inline SVG so they render the same in every browser/font */
+button svg.i { width: 18px; height: 18px; display: block; margin: 0 auto; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mix-header { display: flex; flex-direction: column; align-items: center; }
+.mix-header .head-row, .mix-header .name, .mix-header .source { text-align: center; }
 .mix-header.muted { background: color-mix(in srgb, var(--red) 22%, var(--panel)); border-color: var(--red); }
 .mix-header.hearing { border-color: var(--hear); }
 
 /* ---- fader */
 .fader { position: relative; touch-action: none; user-select: none; -webkit-user-select: none; }
-.fader.vertical { width: var(--handle); height: 132px; margin: 0 auto; }
+.fader.vertical { width: var(--handle); height: 132px; flex: none; }
 .fader.horizontal { height: 32px; min-width: 50px; }
 .fader .track { position: absolute; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
-.fader.vertical .track { left: 50%; top: 8px; bottom: 8px; width: 8px; transform: translateX(-50%); }
+.fader.vertical .track { left: 50%; top: 8px; bottom: 8px; width: 10px; transform: translateX(-50%); }
 .fader.vertical .handle-area { position: absolute; top: 8px; bottom: 8px; left: 0; right: 0; }
 .fader.horizontal .track { top: 50%; left: 8px; right: 8px; height: 8px; transform: translateY(-50%); }
 .fader .fill { position: absolute; inset: 0; background: var(--accent); transform-origin: bottom; }
 .fader.horizontal .fill { transform-origin: left; }
 .fader .handle { position: absolute; background: var(--text); border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
-.fader.vertical .handle { left: 50%; width: 30px; height: 14px; transform: translate(-50%, 50%); bottom: calc(8px + (100% - 16px) * var(--pos, 1)) !important; }
-.fader.horizontal .handle { top: 50%; width: 12px; height: 22px; transform: translate(-50%, -50%); left: calc(8px + (100% - 16px) * var(--pos, 1)) !important; }
+.fader.vertical .handle { left: 50%; width: 30px; height: 14px; transform: translate(-50%, 50%); bottom: calc(15px + (100% - 30px) * var(--pos, 1)) !important; }
+.fader.horizontal .handle { top: 50%; width: 12px; height: 22px; transform: translate(-50%, -50%); left: calc(14px + (100% - 28px) * var(--pos, 1)) !important; }
 .fader.dragging .handle { background: var(--accent); }
 .fader .db { position: absolute; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .fader.vertical .db { bottom: -15px; left: 50%; transform: translateX(-50%); white-space: nowrap; }

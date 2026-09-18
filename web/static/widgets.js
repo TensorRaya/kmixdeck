@@ -54,7 +54,7 @@ export function fader({ value = 1, max = 1, vertical = true, label, probe, onInp
 
   const render = () => {
     const pos = Math.min(1, linToCubic(lin) / maxCubic);
-    fill.style.transform = vertical ? `scaleY(${pos})` : `scaleX(${pos})`;
+    fill.style.transform = vertical ? `scaleY(${pos})` : `scaleX(${pos})`;   // track is padded 8px, handle travels 15px..; close enough at 132px
     el.style.setProperty("--pos", pos);                         // handle travels inside the track's padded range (CSS)
     out.textContent = dbLabel(lin);
     el.setAttribute("aria-valuenow", Math.round(pos * 100));
@@ -119,3 +119,67 @@ export function toast(msg, isError = false) {
   const t = document.getElementById("toast"); t.textContent = msg; t.classList.toggle("error", isError); t.classList.add("show");
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2500);
 }
+
+
+/** Pan knob (DV-22): a small rotary — drag up/down or left/right, wheel, arrow keys, double-click = centre.
+ *  value −1 (L) … +1 (R). Shows "C", "L35", "R80" like a desk. */
+export function knob({ value = 0, label, probe, onInput, onCommit }) {
+  const el = document.createElement("div");
+  el.className = "knob"; el.setAttribute("role", "slider"); el.tabIndex = 0;
+  el.setAttribute("aria-valuemin", "-100"); el.setAttribute("aria-valuemax", "100");
+  if (label) el.setAttribute("aria-label", label);
+  if (probe) el.dataset.probe = probe;
+  el.innerHTML = '<svg viewBox="0 0 40 40" width="34" height="34"><path class="arc" d="M8 32 A16 16 0 1 1 32 32" fill="none"/><path class="val" fill="none"/><line class="pointer" x1="20" y1="20" x2="20" y2="7"/></svg><output></output>';
+  const val = el.querySelector(".val"), ptr = el.querySelector(".pointer"), out = el.querySelector("output");
+  let v = value, dragging = false, start = null, lastTap = 0;
+  const text = (x) => (Math.abs(x) < 0.03 ? "C" : (x < 0 ? "L" : "R") + Math.round(Math.abs(x) * 100));
+  const render = () => {
+    const a = v * 135;                                    // −135° … +135°
+    ptr.setAttribute("transform", `rotate(${a} 20 20)`);
+    const r = 16, cx = 20, cy = 20, toXY = (deg) => { const t = (deg - 90) * Math.PI / 180; return [cx + r * Math.cos(t), cy + r * Math.sin(t)]; };
+    const [x0, y0] = toXY(0), [x1, y1] = toXY(a);
+    val.setAttribute("d", a === 0 ? "" : `M${x0} ${y0} A${r} ${r} 0 0 ${a > 0 ? 1 : 0} ${x1} ${y1}`);
+    out.textContent = text(v);
+    el.setAttribute("aria-valuenow", Math.round(v * 100)); el.setAttribute("aria-valuetext", text(v));
+    el.dataset.value = v.toFixed(3);
+  };
+  const setV = (x, commit) => { v = Math.max(-1, Math.min(1, x)); render(); (commit ? onCommit : onInput)?.(v); };
+  el.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return;
+    const now = performance.now();
+    if (now - lastTap < 350) { lastTap = 0; setV(0, true); return; }
+    lastTap = now; dragging = true; start = { x: ev.clientX, y: ev.clientY, v }; el.setPointerCapture(ev.pointerId); el.classList.add("dragging"); ev.preventDefault();
+  });
+  el.addEventListener("pointermove", (ev) => { if (dragging) setV(start.v + ((ev.clientX - start.x) - (ev.clientY - start.y)) / 100, false); });
+  const up = () => { if (!dragging) return; dragging = false; el.classList.remove("dragging"); setV(v, true); };
+  el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+  el.addEventListener("wheel", (ev) => { ev.preventDefault(); setV(v - Math.sign(ev.deltaY) * 0.05, true); }, { passive: false });
+  el.addEventListener("keydown", (ev) => {
+    const step = ev.shiftKey ? 0.25 : 0.05;
+    if (ev.key === "ArrowLeft" || ev.key === "ArrowDown") setV(v - step, true);
+    else if (ev.key === "ArrowRight" || ev.key === "ArrowUp") setV(v + step, true);
+    else if (ev.key === "Home") setV(-1, true); else if (ev.key === "End") setV(1, true); else if (ev.key === "0" || ev.key === "c") setV(0, true);
+    else return;
+    ev.preventDefault();
+  });
+  el.update = (x) => { if (!dragging) { v = x; render(); } };
+  render();
+  return el;
+}
+
+
+/** Inline SVG icons (stroke = currentColor) — emoji render differently per font/OS, a desk needs the same glyph everywhere. */
+const ICON_PATHS = {
+  // ear (lucide "ear"): recognisable at 18 px
+  ear: "M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0 M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4",
+  headphones: "M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H3v-7zm18 0h-3a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h3v-7zM3 14a9 9 0 0 1 18 0",
+  // link (two arrows head-to-tail): "this cell follows another mix"
+  link: "M4 8h13M13 4l4 4-4 4M20 16H7M11 12l-4 4 4 4",
+  more: "M12 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm0 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm0 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z",
+  plus: "M12 5v14M5 12h14",
+};
+export function svgIcon(name) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.classList.add("i");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path"); p.setAttribute("d", ICON_PATHS[name] || ""); s.append(p); return s;
+}
+export function iconButton(name, opts) { const b = button("", opts); b.append(svgIcon(name)); return b; }

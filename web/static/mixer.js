@@ -1,6 +1,6 @@
 // mixer.js — UX-1: channels as rows against mixes as panels, one fader per cell. Same layout rules as MixerPage.qml.
 import * as C from "./client.js";
-import { fader, meter, button, el, toast } from "./widgets.js";
+import { fader, meter, button, el, toast, knob, iconButton } from "./widgets.js";
 
 const ICONS = { microphone: "🎤", "audio-headphones": "🎧", "applications-games": "🎮", "audio-speakers": "🔊", "preferences-system": "⚙️",
                 "media-playback-start": "▶", "audio-volume-high": "🔊", "camera-web": "📷", "internet-chat": "💬", "multimedia-player": "🎵", "": "" };
@@ -38,13 +38,12 @@ function channelHeader(ch) {
   h.append(el("div", { class: "head-row" }, name, ch.Group ? el("span", { class: "badge", probe: "channelGroupBadge" }, ch.Group) : null));
   const src = el("div", { class: "source", probe: `channelSource/${slug}` }, ch.Inputs?.length ? ch.Inputs.join(", ") : "Apps", ch.InputPresent === false ? el("span", { class: "gone", title: "input device is not connected" }, " ⚠") : null);
   h.append(src);
-  const controls = el("div", { class: "controls" });
-  controls.append(button("M", { probe: `channelMute/${slug}`, cls: "mute", pressed: ch.Muted, title: "Mute channel", onClick: () => C.set(ch.path, "Muted", !ch.Muted).catch(err) }));
-  controls.append(fader({ value: ch.Trim, max: 2, vertical: false, label: `${ch.Name} trim`, probe: `channelTrim/${slug}`,
-    onInput: (v) => C.set(ch.path, "Trim", v).catch(() => {}), onCommit: (v) => C.set(ch.path, "Trim", v).catch(err) }));
-  controls.append(button("👂", { probe: `channelListen/${slug}`, cls: "listen", title: "Hold to hear only this channel", onClick: () => {} }));
-  hold(controls.lastChild, ch.path);
-  controls.append(button("⋮", { probe: `channelMenuButton/${slug}`, cls: "menu", title: "More", onClick: (ev) => menu(ev.currentTarget, [
+  const controls = el("div", { class: "strip" });
+  const buttons = el("div", { class: "button-col" });
+  buttons.append(button("M", { probe: `channelMute/${slug}`, cls: "mute", pressed: ch.Muted, title: "Mute channel", onClick: () => C.set(ch.path, "Muted", !ch.Muted).catch(err) }));
+  buttons.append(iconButton("ear", { probe: `channelListen/${slug}`, cls: "listen", title: "Hold to hear only this channel", onClick: () => {} }));
+  hold(buttons.lastChild, ch.path);
+  buttons.append(iconButton("more", { probe: `channelMenuButton/${slug}`, cls: "menu", title: "More", onClick: (ev) => menu(ev.currentTarget, [
     ["Rename…", async () => { const n = prompt2("Channel name", ch.Name); if (n) await C.set(ch.path, "Name", n).catch(err); }],
     ["Colour…", async () => { const c = prompt2("Colour (#rrggbb or empty)", ch.Color); if (c !== null) await C.set(ch.path, "Color", c).catch(err); }],
     ["Group…", async () => { const g = prompt2("Group", ch.Group); if (g !== null) await C.set(ch.path, "Group", g).catch(err); }],
@@ -52,19 +51,17 @@ function channelHeader(ch) {
     ["Move down", () => C.call(C.ROOT, "MoveChannel", ch.path, C.channels().findIndex((c) => c.path === ch.path) + 1).catch(err)],
     ["Remove channel", () => confirm(`Remove channel “${ch.Name}”?`) && C.call(C.ROOT, "RemoveChannel", ch.path).catch(err), "danger"],
   ]) }));
+  controls.append(buttons);
+  // pan is a knob under the button column, like on a desk (DV-22) — the strip stays one fader tall
+  buttons.append(knob({ value: ch.Pan ?? 0, label: `${ch.Name} pan`, probe: `channelPan/${slug}`,
+    onInput: (v) => C.set(ch.path, "Pan", v).catch(() => {}), onCommit: (v) => C.set(ch.path, "Pan", v).catch(err) }));
+  controls.append(fader({ value: ch.Trim, max: 2, label: `${ch.Name} trim`, probe: `channelTrim/${slug}`,
+    onInput: (v) => C.set(ch.path, "Trim", v).catch(() => {}), onCommit: (v) => C.set(ch.path, "Trim", v).catch(err) }));
+  controls.append(meter(C.meterKey.channel(slug), { probe: `channelMeter/${slug}` }));
   h.append(controls);
-  h.append(el("div", { class: "pan-row" }, el("label", {}, "L"), panSlider(ch), el("label", {}, "R")));
-  h.append(meter(C.meterKey.channel(slug), { horizontal: true, probe: `channelMeter/${slug}` }));
   return h;
 }
 
-function panSlider(ch) {
-  const s = el("input", { type: "range", min: -1, max: 1, step: 0.05, value: ch.Pan ?? 0, probe: `channelPan/${ch.Slug}`, "aria-label": `${ch.Name} pan`, class: "pan" });
-  s.addEventListener("input", () => C.set(ch.path, "Pan", Number(s.value)).catch(() => {}));
-  s.addEventListener("change", () => C.set(ch.path, "Pan", Number(s.value)).catch(err));
-  s.addEventListener("dblclick", () => { s.value = 0; C.set(ch.path, "Pan", 0).catch(err); });
-  return s;
-}
 
 function mixHeader(m) {
   const slug = m.Slug, listening = C.state.root.ListeningDevice && m.Outputs?.includes(C.state.root.ListeningDevice);
@@ -74,14 +71,13 @@ function mixHeader(m) {
   h.append(el("button", { class: "name", probe: `mixName/${slug}`, title: "Rename", onclick: async () => { const n = prompt2("Mix name", m.Name); if (n) await C.set(m.path, "Name", n).catch(err); } }, el("span", { class: "icon" }, icon(m.Icon)), " ", m.Name));
   const outs = m.OutputDescriptions?.length ? m.OutputDescriptions.join(" + ") : "no output";
   h.append(el("div", { class: "source", probe: `mixOutput/${slug}` }, outs, m.OutputPresent === false ? el("span", { class: "gone", title: "output device is not connected" }, " ⚠") : null));
-  const controls = el("div", { class: "controls" });
-  controls.append(button("M", { probe: `mixMute/${slug}`, cls: "mute", pressed: m.Muted, title: "Mute mix", onClick: () => C.set(m.path, "Muted", !m.Muted).catch(err) }));
-  controls.append(fader({ value: m.Volume, max: 1, vertical: false, label: `${m.Name} master`, probe: `mixFader/${slug}`,
-    onInput: (v) => C.set(m.path, "Volume", v).catch(() => {}), onCommit: (v) => C.set(m.path, "Volume", v).catch(err) }));
-  const hear = button("🎧", { probe: `mixListen/${slug}`, cls: "listen" + (listening ? " on" : ""), pressed: !!listening, title: listening ? "You are hearing this mix" : "Hear this mix on your headphones",
+  const controls = el("div", { class: "strip" });
+  const buttons = el("div", { class: "button-col" });
+  buttons.append(button("M", { probe: `mixMute/${slug}`, cls: "mute", pressed: m.Muted, title: "Mute mix", onClick: () => C.set(m.path, "Muted", !m.Muted).catch(err) }));
+  const hear = iconButton("headphones", { probe: `mixListen/${slug}`, cls: "listen" + (listening ? " on" : ""), pressed: !!listening, title: listening ? "You are hearing this mix" : "Hear this mix on your headphones",
     onClick: () => { const dev = m.Outputs?.[0]; if (dev) C.set(C.ROOT, "ListeningDevice", dev).catch(err); else toast("This mix has no output device yet", true); } });
-  controls.append(hear);
-  controls.append(button("⋮", { probe: `mixMenuButton/${slug}`, cls: "menu", title: "More", onClick: (ev) => menu(ev.currentTarget, [
+  buttons.append(hear);
+  buttons.append(iconButton("more", { probe: `mixMenuButton/${slug}`, cls: "menu", title: "More", onClick: (ev) => menu(ev.currentTarget, [
     ["Rename…", async () => { const n = prompt2("Mix name", m.Name); if (n) await C.set(m.path, "Name", n).catch(err); }],
     ["Colour…", async () => { const c = prompt2("Colour (#rrggbb or empty)", m.Color); if (c !== null) await C.set(m.path, "Color", c).catch(err); }],
     ["Output device…", () => outputPicker(m)],
@@ -90,8 +86,11 @@ function mixHeader(m) {
     ["Move right", () => C.call(C.ROOT, "MoveMix", m.path, C.mixes().findIndex((x) => x.path === m.path) + 1).catch(err)],
     ["Remove mix", () => confirm(`Remove mix “${m.Name}”?`) && C.call(C.ROOT, "RemoveMix", m.path).catch(err), "danger"],
   ]) }));
+  controls.append(buttons);
+  controls.append(fader({ value: m.Volume, max: 1, label: `${m.Name} master`, probe: `mixFader/${slug}`,
+    onInput: (v) => C.set(m.path, "Volume", v).catch(() => {}), onCommit: (v) => C.set(m.path, "Volume", v).catch(err) }));
+  controls.append(meter(C.meterKey.mix(slug), { probe: `mixMeter/${slug}` }));
   h.append(controls);
-  h.append(meter(C.meterKey.mix(slug), { horizontal: true, probe: `mixMeter/${slug}` }));
   return h;
 }
 
@@ -119,10 +118,12 @@ function cellView(ch, m) {
   foot.append(button("M", { probe: `cellMute/${key}`, cls: "mute", pressed: c.Muted, title: "Mute this channel in this mix", onClick: () => C.set(c.path, "Muted", !c.Muted).catch(err) }));
   const others = C.mixes().filter((x) => x.path !== m.path);
   const followsSlug = c.Follows && c.Follows !== "/" ? C.slugOf(c.Follows) : "";
-  foot.append(button(followsSlug ? `⇄ ${followsSlug}` : "⇄", { probe: `cellLink/${key}`, cls: "link" + (followsSlug ? " on" : ""), pressed: !!followsSlug, title: followsSlug ? `Follows ${followsSlug} — click to unlink` : "Link to another mix", onClick: (ev) => {
+  const linkBtn = iconButton("link", { probe: `cellLink/${key}`, cls: "link" + (followsSlug ? " on" : ""), pressed: !!followsSlug, title: followsSlug ? `Follows ${followsSlug} — click to unlink` : "Link to another mix", onClick: (ev) => {
     if (followsSlug) return C.set(c.path, "Follows", "/").catch(err);
     menu(ev.currentTarget, others.map((o) => [`Follow ${o.Name}`, () => C.set(c.path, "Follows", o.path).catch(err)]));
-  } }));
+  } });
+  if (followsSlug) linkBtn.append(el("small", {}, followsSlug.slice(0, 3)));
+  foot.append(linkBtn);
   v.append(foot);
   return v;
 }
