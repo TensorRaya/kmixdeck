@@ -230,7 +230,8 @@ struct Graph::Impl {
         pw_proxy_add_listener(np->proxy, &np->proxyListener, &proxyEvents, np);
         impl->nodes.insert(id, np);
         // ask for Props once; further changes arrive via onNodeInfo(PARAMS) → enum_params
-        pw_node_subscribe_params(reinterpret_cast<pw_node *>(np->proxy), (uint32_t[]){SPA_PARAM_Props}, 1);
+        uint32_t ids[] = {SPA_PARAM_Props};
+        pw_node_subscribe_params(reinterpret_cast<pw_node *>(np->proxy), ids, 1);
     }
     bool isMeterNode(uint32_t id) const { auto it = nodes.constFind(id); return it != nodes.constEnd() && it.value()->info.name == QLatin1String("kmixdeck.meter"); }
     void recomputeRoute(uint32_t outNode) {

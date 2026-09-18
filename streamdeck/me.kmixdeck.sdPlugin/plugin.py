@@ -212,7 +212,7 @@ class Plugin:
 
 async def main(argv):
     import websockets
-    args = dict(zip(argv[1::2], argv[2::2]))
+    args = dict(zip(argv[1::2], argv[2::2], strict=False))
     port, uuid, reg = args["-port"], args["-pluginUUID"], args["-registerEvent"]
     async with websockets.connect(f"ws://localhost:{port}", max_size=None) as ws:
         await ws.send(json.dumps({"event": reg, "uuid": uuid}))

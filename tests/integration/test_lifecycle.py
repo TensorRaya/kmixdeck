@@ -7,7 +7,7 @@ pw-link) and the persisted layout + generated conf. Tests here are ordered — t
 import json, subprocess, time
 from pathlib import Path
 import pytest
-from test_service_cli import Stack, BIN, REPO, make_fake_sink, out_link_target
+from test_service_cli import Stack, make_fake_sink, out_link_target
 from pw_sandbox import start_private_pipewire
 
 
@@ -407,7 +407,7 @@ def test_ch9_undo_restores_mix_with_outputs_and_master_and_is_cleared_by_a_new_a
 def test_ch6_assignment_survives_node_id_name_and_metadata_churn(stack):
     """CH-6 (Sonusmix #38): an app that comes back with a NEW node id, a NEW node.name, or a changed media.name /
     stream id keeps its channel(s) — the layout keys on application.name. Three re-appearances, one assignment."""
-    from test_service_cli import start_fake_app, current_sink_of
+    from test_service_cli import current_sink_of
     import subprocess
     def spawn(node_name, media):
         props = f'{{ application.name = "FakeGame" application.process.binary = "fakegame" media.name = "{media}" media.role = "Game" node.name = "{node_name}" }}'

@@ -192,7 +192,7 @@ def test_ct5_kmixdeck_and_the_pulse_world_show_one_truth():
     """CT-5: the Plasma volume applet (plasma-pa) speaks PulseAudio to pipewire-pulse. A channel's trim set in kmixdeck
     is the sink volume pactl shows; a mix's master mute set in kmixdeck is the mute pactl shows; and the other way
     round — the applet muting the 'Game' sink is what kmixdeck reports. Volumes are compared in dB, both ways."""
-    import math, subprocess, time
+    import math, time
     pulsectl = pytest.importorskip("pulsectl", reason="CT-5 needs the PulseAudio client (pip install pulsectl)")
     from pw_sandbox import start_private_pipewire
     from test_service_cli import Stack

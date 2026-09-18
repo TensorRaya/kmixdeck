@@ -21,7 +21,8 @@ QString Names::slugify(const QString &display) {
     // '_' not '-': a slug ends up in D-Bus object paths, which allow only [A-Za-z0-9_] (dbus-spec). Found the hard
     // way: "Übertragung" → "ubertragung-und-mehr" marshalled as an invalid path and the reply never left the daemon.
     s.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral("_"));
-    while (s.startsWith(QLatin1Char('_'))) s.remove(0, 1); while (s.endsWith(QLatin1Char('_'))) s.chop(1);
+    while (s.startsWith(QLatin1Char('_'))) s.remove(0, 1);
+    while (s.endsWith(QLatin1Char('_'))) s.chop(1);
     return s;   // may be empty → callers reject (never invent a name)
 }
 
@@ -50,7 +51,8 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
         m_graph.teardown();
         m_channels.clear(); m_mixes.clear(); m_cells.clear(); m_sinks.clear(); m_devices.clear(); m_edges.clear(); m_idToName.clear();
         Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged();
-        for (auto id : m_apps.keys()) Q_EMIT appRemoved(id); m_apps.clear();
+        for (auto id : m_apps.keys()) Q_EMIT appRemoved(id);
+        m_apps.clear();
         m_connected = false; Q_EMIT connectedChanged(); Q_EMIT layoutChanged();
         m_reconnect.start(m_reconnectMs);
     });
@@ -301,7 +303,7 @@ void Mixer::applyFx(const QString &slug) {
 // Poll (registry events are what fill m_graph) until `entry` exists, then move the streams onto it.
 void Mixer::retargetWhenPresent(const QString &entry, const QList<uint32_t> &streams, int triesLeft) {
     if (streams.isEmpty() || triesLeft <= 0) return;
-    if (!m_graph.node(entry)) { QTimer::singleShot(50, this, [=] { retargetWhenPresent(entry, streams, triesLeft - 1); }); return; }
+    if (!m_graph.node(entry)) { QTimer::singleShot(50, this, [this, entry, streams, triesLeft] { retargetWhenPresent(entry, streams, triesLeft - 1); }); return; }
     for (uint32_t id : streams) m_graph.moveStream(id, entry);
 }
 
@@ -650,7 +652,9 @@ bool Mixer::setChannelWireTrim(const QString &channel, const QString &refStr, do
 }
 bool Mixer::channelWireTrim(const QString &channel, const QString &refStr, double *trim, bool *muted) const {
     const QString slug = inputSlugForWire(channel, refStr); if (slug.isEmpty()) return false;
-    if (trim) *trim = inputTrimLayout(slug); if (muted) *muted = inputMutedLayout(slug); return true;
+    if (trim) *trim = inputTrimLayout(slug);
+    if (muted) *muted = inputMutedLayout(slug);
+    return true;
 }
 bool Mixer::setMixWireTrim(const QString &mix, const QString &refStr, double trim, bool muted) {
     const auto *m = m_layout.mix(mix); if (!m) return false;
@@ -1022,7 +1026,7 @@ QString Mixer::addChannel(const QString &displayName, QString *error) {
     const QString slug = Names::slugify(displayName);
     if (slug.isEmpty()) { if (error) *error = QStringLiteral("name has no usable characters"); return {}; }
     if (m_layout.channel(slug)) { if (error) *error = QStringLiteral("channel '%1' already exists").arg(slug); return {}; }
-    m_layout.channels.push_back({slug, displayName.trimmed(), {}});
+    m_layout.channels.push_back(LayoutChannel::make(slug, displayName.trimmed()));
     if (!m_undo.isEmpty()) { m_undo = {}; Q_EMIT undoChanged(); }
     saveLayout(); reconcile();
     return slug;
@@ -1051,7 +1055,7 @@ QString Mixer::addMix(const QString &displayName, QString *error) {
     const QString slug = Names::slugify(displayName);
     if (slug.isEmpty()) { if (error) *error = QStringLiteral("name has no usable characters"); return {}; }
     if (m_layout.mix(slug)) { if (error) *error = QStringLiteral("mix '%1' already exists").arg(slug); return {}; }
-    m_layout.mixes.push_back({slug, displayName.trimmed(), {}, {}, {}});
+    m_layout.mixes.push_back(LayoutMix::make(slug, displayName.trimmed()));
     if (!m_undo.isEmpty()) { m_undo = {}; Q_EMIT undoChanged(); }
     saveLayout(); reconcile();
     return slug;
@@ -1165,7 +1169,7 @@ bool Mixer::undo() {
     const QString slug = lay.value(QStringLiteral("slug")).toString();
     const bool isCh = u.value(QStringLiteral("kind")).toString() == QLatin1String("channel");
     if (slug.isEmpty() || (isCh ? m_layout.channel(slug) != nullptr : m_layout.mix(slug) != nullptr)) { Q_EMIT undoChanged(); return false; }
-    if (isCh) m_layout.channels.push_back({slug, lay.value(QStringLiteral("name")).toString(), lay.value(QStringLiteral("icon")).toString()});
+    if (isCh) m_layout.channels.push_back(LayoutChannel::make(slug, lay.value(QStringLiteral("name")).toString(), lay.value(QStringLiteral("icon")).toString()));
     else {
         LayoutMix m; m.slug = slug; m.name = lay.value(QStringLiteral("name")).toString(); m.icon = lay.value(QStringLiteral("icon")).toString();
         for (const auto &d : lay.value(QStringLiteral("outputs")).toArray()) m.outputs.push_back(DeviceRef::fromJson(d.toObject()));

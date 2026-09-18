@@ -4,7 +4,7 @@
 that is not an allowlisted org.kmixdeck1 property/method (ADR 0011).
 
 The bridge runs under the system python (Gio bindings); the test client runs under pytest's python (`websockets`)."""
-import asyncio, json, os, shutil, subprocess, sys, time
+import asyncio, json, shutil, subprocess, sys, time
 import websockets
 from pathlib import Path
 
@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_service_cli import Stack, start_fake_app, stack, make_fake_sink, make_fake_source  # noqa: E402,F401 — the fixture
-from chrome_driver import Chrome  # noqa: E402
+from chrome_driver import Chrome, CHROME, NO_CHROME  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE = ROOT / "web" / "kmixdeck-web"
@@ -205,6 +205,7 @@ def test_ar8_static_files_are_served_and_the_tree_is_jailed(stack):
         web.close()
 
 
+@pytest.mark.skipif(not CHROME, reason=NO_CHROME)
 def test_fx8_web_ui_edits_the_chain_the_window_and_cli_see(stack):
     """FX in the browser (rule 2): the drawer shows the daemon's catalog, adds a gate over WebSocket, the CLI sees the
     chain and the fx nodes exist; a CLI-side change shows up in the drawer; a live control write goes through
@@ -290,6 +291,9 @@ def _cell(stack, ch, mix): return next(c for c in _status(stack)["cells"] if c["
 def _tab(ch, view): ch.eval("document.querySelector('#tabs [data-view=\"%s\"]').click()" % view, False)
 
 
+pytestmark_browser = pytest.mark.skipif(not CHROME, reason=NO_CHROME)
+
+@pytestmark_browser
 def test_ux14_web_mix_end_to_end_from_the_browser_alone(stack):
     """A whole mix from the browser: add → rename → output → cell fader by pointer → cell mute → link → undo → remove.
     Each step is checked at the CLI, as UX-14 does for the window."""
@@ -331,6 +335,7 @@ def test_ux14_web_mix_end_to_end_from_the_browser_alone(stack):
         web.close()
 
 
+@pytestmark_browser
 def test_ux11_web_app_chip_assigns_and_unassigns(stack):
     """UX-11 in the browser: the Apps tab shows the running app; a channel chip adds that channel (accumulates, CH-12),
     a second tap removes it — checked at the daemon like the window's drop test."""
@@ -355,6 +360,7 @@ def test_ux11_web_app_chip_assigns_and_unassigns(stack):
         p.kill(); p.wait(); web.close()
 
 
+@pytestmark_browser
 def test_dv24_web_patchbay_wire_menu_and_drag(stack):
     """DV-14/DV-24 in the browser: one wire per link; a wire's menu mutes/removes at the daemon; dragging from a device
     jack onto a channel jack calls AddInput."""
@@ -388,6 +394,7 @@ def test_dv24_web_patchbay_wire_menu_and_drag(stack):
         web.close()
 
 
+@pytestmark_browser
 def test_ar8_web_reconnects_after_the_bridge_restarts(stack):
     """The browser survives a bridge restart: shows 'disconnected', reconnects with backoff, and the state is fresh
     (a change made while it was away is visible). What a phone does when the wifi drops for a moment."""
@@ -411,6 +418,7 @@ def test_ar8_web_reconnects_after_the_bridge_restarts(stack):
         web.close()
 
 
+@pytestmark_browser
 def test_ct7_web_export_downloads_and_import_round_trips_and_refuses_garbage(stack):
     """CT-7 in the browser: Export returns the layout document (checked against `kmixdeck export`); Import of that
     document with a changed mix name lands in the daemon; garbage is refused with a toast and the layout is untouched."""
@@ -444,6 +452,7 @@ def test_ct7_web_export_downloads_and_import_round_trips_and_refuses_garbage(sta
         web.close()
 
 
+@pytestmark_browser
 def test_dv1_web_input_picker_and_ux8_icon_from_the_browser(stack):
     """ChannelHeader.qml's input line and Icon… in the browser: the source line opens a picker listing the daemon's
     InputDevices; ticking calls AddInput, unticking RemoveInput; the header then names the device. Icon… writes UX-8's

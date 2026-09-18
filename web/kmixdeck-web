@@ -22,17 +22,21 @@ A feature added to the daemon shows up here with no bridge work at all.
 Only org.kmixdeck1.* interfaces are reachable, and only their writable properties and declared methods: there is no
 "call anything on the bus" endpoint (ADR 0011 §2). The allowlist is read from the daemon's own introspection.
 """
-import argparse, asyncio, hashlib, json, os, secrets, signal, sys, threading, xml.etree.ElementTree as ET
+import argparse, asyncio, json, os, secrets, signal, sys, threading, xml.etree.ElementTree as ET
 from http import HTTPStatus
 from pathlib import Path
 
-import gi
-gi.require_version("Gio", "2.0"); gi.require_version("GLib", "2.0")
-from gi.repository import Gio, GLib  # noqa: E402
-
-import websockets  # noqa: E402
-from websockets.asyncio.server import serve  # noqa: E402
-from websockets.datastructures import Headers  # noqa: E402
+try:
+    import gi
+    gi.require_version("Gio", "2.0"); gi.require_version("GLib", "2.0")
+    from gi.repository import Gio, GLib
+    from websockets.asyncio.server import serve
+    from websockets.datastructures import Headers
+except (ImportError, ValueError) as _e:   # ValueError: gi.require_version with no typelib
+    sys.exit("kmixdeck-web: missing a runtime dependency (%s).\n"
+             "It needs python3-gi (GLib/Gio) and python3-websockets >= 11 in the system Python —\n"
+             "Debian/Ubuntu: apt install python3-gi python3-websockets · Fedora: dnf install python3-gobject python3-websockets\n"
+             "Arch: pacman -S python-gobject python-websockets" % _e)
 from websockets.http11 import Response  # noqa: E402
 
 BUS_NAME = "org.kmixdeck1"

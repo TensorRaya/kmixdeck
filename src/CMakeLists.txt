@@ -17,8 +17,11 @@ add_executable(kmixdeckd
     daemon/objectmanager.h
 )
 target_include_directories(kmixdeckd PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/.. daemon)
-target_link_libraries(kmixdeckd PRIVATE kmixdeck_core Qt6::DBus)
+target_link_libraries(kmixdeckd PRIVATE kmixdeck_core Qt6::DBus KF6::CoreAddons)   # KSignalHandler
 target_compile_options(kmixdeckd PRIVATE -Wall -Wextra)
+if(CMAKE_LIBRARY_ARCHITECTURE)
+    target_compile_definitions(kmixdeck_core PRIVATE KMIXDECK_MULTIARCH="${CMAKE_LIBRARY_ARCHITECTURE}")
+endif()
 install(TARGETS kmixdeckd DESTINATION ${KDE_INSTALL_LIBEXECDIR})
 
 # --- kmixdeck: the CLI. Pure D-Bus client, no PipeWire.

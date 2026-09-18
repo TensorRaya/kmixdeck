@@ -61,7 +61,14 @@ struct DeviceRef {
 /// lack; a NEWER file is moved aside and the daemon starts fresh (Layout::load) — never read-as-old and saved back.
 constexpr int kLayoutVersion = 2;
 
-struct LayoutChannel { QString slug, name, icon; fx::Chain fx; double pan = 0.0; QString color; QString group; };   // CH-8: group = free name, "" = none   // MX-5: color = "#rrggbb" or empty (theme)   // DV-22: −1 = left … 0 = centre … +1 = right
+struct LayoutChannel {
+    QString slug, name, icon;
+    fx::Chain fx;
+    double pan = 0.0;             // DV-22: −1 = left … 0 = centre … +1 = right
+    QString color;                // MX-5: "#rrggbb" or empty (theme)
+    QString group;                // CH-8: free-text group name, "" = none
+    static LayoutChannel make(const QString &slug, const QString &name, const QString &icon = {}) { LayoutChannel c; c.slug = slug; c.name = name; c.icon = icon; return c; }
+};
 /// A physical input feeding a channel (mic, capture card, BT headset mic) — ADR 0007 D2.
 struct LayoutInput   { QString slug, name; DeviceRef device; QString channel; };
 struct LayoutMix     {
@@ -70,6 +77,7 @@ struct LayoutMix     {
     QVector<DeviceRef> outputs;   // MX-9: several hardware outputs at once
     DeviceRef fallbackOutput;     // DV-15: used while outputs[0] is absent; empty node = none
     fx::Chain fx;                 // FX-6: same chain model on the output side
+    static LayoutMix make(const QString &slug, const QString &name, const QString &icon = {}) { LayoutMix m; m.slug = slug; m.name = name; m.icon = icon; return m; }
 };
 
 /// MX-7: cell (channel, mix) mirrors volume+mute of cell (channel, follows). Broken by touching the follower.

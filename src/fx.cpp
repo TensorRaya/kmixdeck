@@ -78,8 +78,10 @@ bool ladspaAvailable(const QString &file) {
     if (file.isEmpty()) return true;
     QStringList dirs;
     for (const QByteArray &p : qgetenv("LADSPA_PATH").split(':')) if (!p.isEmpty()) dirs << QString::fromUtf8(p);
-    dirs << QStringLiteral("/usr/lib/ladspa") << QStringLiteral("/usr/lib64/ladspa")
-         << QStringLiteral("/usr/lib/x86_64-linux-gnu/ladspa") << QStringLiteral("/usr/local/lib/ladspa");
+    dirs << QStringLiteral("/usr/lib/ladspa") << QStringLiteral("/usr/lib64/ladspa") << QStringLiteral("/usr/local/lib/ladspa");
+#ifdef KMIXDECK_MULTIARCH   // Debian-style /usr/lib/<triplet>/ladspa — the triplet comes from the compiler, not from a guess
+    dirs << QStringLiteral("/usr/lib/" KMIXDECK_MULTIARCH "/ladspa");
+#endif
     for (const QString &d : dirs)
         if (QDir(d).entryList({file + QStringLiteral(".so")}, QDir::Files).size() > 0) return true;
     return false;

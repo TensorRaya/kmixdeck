@@ -7,7 +7,7 @@
    CORE table — that table drives the change through the CLI and reads it back from the KDE window AND the tray.
    A core feature without a row there is not done, whatever the daemon test says.
 Exit 1 on violations."""
-import re, sys, sys, pathlib
+import re, sys, pathlib
 root = pathlib.Path(__file__).resolve().parent.parent
 sot = (root / "docs/spec/requirements.md").read_text()
 have = set()

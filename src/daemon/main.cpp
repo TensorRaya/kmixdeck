@@ -4,6 +4,7 @@
 #include <QCommandLineParser>
 #include <QDebug>
 #include <csignal>
+#include <KSignalHandler>
 #include "service.h"
 #include "kmixdeck_version.h"
 
@@ -17,8 +18,10 @@ int main(int argc, char *argv[]) {
 
     kmixdeck::daemon::Service service;
     if (!service.start()) return 2;
-    std::signal(SIGTERM, [](int) { QCoreApplication::quit(); });
-    std::signal(SIGINT,  [](int) { QCoreApplication::quit(); });
+    // SIGTERM/SIGINT → clean quit. KSignalHandler turns the signal into a Qt signal on the event loop (self-pipe), so
+    // nothing runs in signal context — QCoreApplication::quit() is not async-signal-safe by contract.
+    KSignalHandler::self()->watchSignal(SIGTERM); KSignalHandler::self()->watchSignal(SIGINT);
+    QObject::connect(KSignalHandler::self(), &KSignalHandler::signalReceived, &app, [](int) { QCoreApplication::quit(); });
     qInfo() << "kmixdeckd" << KMIXDECK_VERSION_STRING << "on" << kmixdeck::daemon::kBusName;
     return app.exec();
 }

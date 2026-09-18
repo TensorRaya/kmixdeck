@@ -13,6 +13,7 @@ import asyncio, atexit, json, os, shutil, signal, subprocess, tempfile, time, ur
 import websockets
 
 CHROME = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+NO_CHROME = "no google-chrome/chromium on PATH — the browser tests need one (apt install chromium)"
 
 _LIVE = set()
 

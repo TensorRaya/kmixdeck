@@ -1,6 +1,6 @@
 # Contributing to kmixdeck
 
-## The two rules (Michel, 2026-09-17 — ADR 0010)
+## The two rules (project owner, 2026-09-17 — ADR 0010)
 
 1. **Backend and API first.** A feature exists when it is on the D-Bus tree with its interface XML and the CLI can
    drive it. UI work starts after that, never instead of it.

@@ -135,7 +135,7 @@ def kde(stack, *args, open_page=None, timeout=90, lang=None):
     cmd = [str(b)] + (["--open", open_page] if open_page else []) + list(args)
     try:
         r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as e:
+    except subprocess.TimeoutExpired:
         # a hung UI: grab where it spins before the process is gone (perf is on this box, gdb is not)
         pid = subprocess.run(["pgrep", "-n", "-f", "kmixdeck-kde"], capture_output=True, text=True).stdout.strip()
         if pid:
@@ -254,7 +254,7 @@ def test_ux14_mix_end_to_end_from_the_ui_alone(stack):
     Applications drop); the CLI/bus is only READ to confirm. The audio measurement at the end is the proof that what the
     user did in the UI is what leaves towards the headphones."""
     from test_service_cli import make_fake_sink, start_fake_app
-    from test_ports import wait_level, HOT, SILENT
+    from test_ports import wait_level, SILENT
     make_fake_sink(stack, "fake.phones", "Laptop Speakers"); time.sleep(0.6)
     # known start (previous tests leave mutes/levels behind): everything unmuted, masters at unity, cells at unity —
     # via the bus, because this is the fixture, not the walk-through
@@ -374,7 +374,7 @@ def test_ux4_keyboard_drives_faders_and_mutes_and_every_control_has_a_screen_rea
     stack.cli("cell", "mute", "game", "stream", "off"); stack.cli("cell", "set", "game", "stream", "0dB")
     # every control a keyboard user can land on carries a name — walk Tab through the mixer page and collect the tree
     walk = kde(stack, *sum((["--gesture", "key:Tab", "--gesture", "a11y:focus"] for _ in range(60)), []), open_page="mixer")
-    pairs = list(zip([l.split(" -> ", 1)[1] for l in walk if l.startswith("gesture key:Tab")], [l.split(" -> ", 1)[1] for l in walk if l.startswith("gesture a11y:focus")]))
+    pairs = list(zip([l.split(" -> ", 1)[1] for l in walk if l.startswith("gesture key:Tab")], [l.split(" -> ", 1)[1] for l in walk if l.startswith("gesture a11y:focus")], strict=False))
     seen = [a for _, a in pairs]
     # Kirigami's own chrome (page-action toolbar buttons, the drawer handle) is not ours to label — it reports as
     # <PrivateActionToolButton…>/<HandleButton…> without an objectName. Everything WE put on the page must be named.

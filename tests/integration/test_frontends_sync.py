@@ -352,7 +352,7 @@ def test_mx8_duplicate_mix_copies_levels_fx_colour_not_outputs_from_cli_and_wind
             tone = stack.pw.play_into("kmixdeck.channel.game")
             try:
                 ch = wait_level(lambda: stack.pw.level_at("kmixdeck.channel.game"), lambda v: v > -50, tries=12)
-                mx = wait_level(lambda: stack.pw.level_at(f"kmixdeck.mix.{slug}"), lambda v: v > -60, tries=6)
+                mx = wait_level(lambda s=slug: stack.pw.level_at(f"kmixdeck.mix.{s}"), lambda v: v > -60, tries=6)
                 # the mix sink's monitor is post master: −12 dB (cell) −6 dB (master) under the channel
                 assert abs((mx - ch) - (-18)) < 3, f"copy {slug}: channel {ch:.1f}, mix {mx:.1f} (expected −18 dB apart)"
             finally:

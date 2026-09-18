@@ -29,11 +29,11 @@ QString Layout::mixEntry(const QString &slug) const {
 
 Layout Layout::starter() {
     Layout l;
-    l.channels = {{QStringLiteral("game"), QStringLiteral("Game"), QStringLiteral("input-gaming")},
-                  {QStringLiteral("system"), QStringLiteral("System"), QStringLiteral("computer")},
-                  {QStringLiteral("voice"), QStringLiteral("Voice"), QStringLiteral("audio-input-microphone")}};
-    l.mixes = {{QStringLiteral("monitor"), QStringLiteral("Monitor"), QStringLiteral("audio-headphones"), {}, {}},
-               {QStringLiteral("stream"), QStringLiteral("Stream"), QStringLiteral("camera-video"), {}, {}}};
+    l.channels = {LayoutChannel::make(QStringLiteral("game"), QStringLiteral("Game"), QStringLiteral("input-gaming")),
+                  LayoutChannel::make(QStringLiteral("system"), QStringLiteral("System"), QStringLiteral("computer")),
+                  LayoutChannel::make(QStringLiteral("voice"), QStringLiteral("Voice"), QStringLiteral("audio-input-microphone"))};
+    l.mixes = {LayoutMix::make(QStringLiteral("monitor"), QStringLiteral("Monitor"), QStringLiteral("audio-headphones")),
+               LayoutMix::make(QStringLiteral("stream"), QStringLiteral("Stream"), QStringLiteral("camera-video"))};
     return l;
 }
 
@@ -110,7 +110,7 @@ Layout Layout::fromJson(const QJsonObject &o) {
         for (const auto &d : m.value(QStringLiteral("outputs")).toArray()) lm.outputs.push_back(DeviceRef::fromJson(d.toObject()));
         // version 1 files had a single "outputDevice" string
         const QString legacy = m.value(QStringLiteral("outputDevice")).toString();
-        if (lm.outputs.isEmpty() && !legacy.isEmpty()) lm.outputs.push_back({legacy, legacy, {}});
+        if (lm.outputs.isEmpty() && !legacy.isEmpty()) lm.outputs.push_back(DeviceRef{legacy, legacy, {}, {}});
         if (m.contains(QStringLiteral("fallbackOutput"))) lm.fallbackOutput = DeviceRef::fromJson(m.value(QStringLiteral("fallbackOutput")).toObject());
         lm.fx = readFx(m);
         l.mixes.push_back(lm);

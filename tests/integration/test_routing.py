@@ -12,7 +12,7 @@ noise floor of a null sink is far below -90). Every assertion here is about a pr
 import json, subprocess, time
 from pathlib import Path
 import pytest
-from test_service_cli import Stack, BIN, make_fake_sink, make_fake_source, out_link_target
+from test_service_cli import Stack, make_fake_sink, out_link_target
 from pw_sandbox import start_private_pipewire
 
 HOT, SILENT = -30.0, -60.0

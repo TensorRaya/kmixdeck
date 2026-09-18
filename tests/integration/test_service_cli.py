@@ -6,7 +6,7 @@ kmixdeckd is started on that bus; the CLI is the test client — so every assert
 The acoustic checks reuse the same measurement helpers as test_audio_graph.py.
 """
 import json
-import math, math, os, subprocess, time, pytest
+import math, math, subprocess, time, pytest
 from pathlib import Path
 from pw_sandbox import start_private_pipewire, REPO
 

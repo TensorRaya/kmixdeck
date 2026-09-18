@@ -8,7 +8,6 @@ AUX1..AUX4 — the Pro-Audio naming real multichannel devices expose.
 The fake source is `Audio/Source/Virtual`: that null-sink variant has `input_<POS>` ports we can feed the tone into
 and `capture_<POS>` ports the daemon captures from — a plain `Audio/Source` null-sink has no inputs at all (and
 drops its first position, PipeWire 1.x quirk)."""
-import json
 import subprocess
 import time
 
@@ -548,7 +547,6 @@ def test_dv28_ui24r_scale_32_in_32_out_every_port_routable_and_fast(stack):
     assert len([p for p in stack.cli("devices", "ports", din).stdout.split() if p.startswith("AUX")]) == 32
     assert len([p for p in stack.cli("devices", "ports", dout).stdout.split() if p.startswith("AUX")]) == 32
     for i in range(1, 33): stack.cli("channel", "add", f"In {i}")
-    t0 = time.time()
     for i in range(1, 33): stack.cli("channel", "input-add", f"in_{i}", f"{din}:AUX{i}")
     took = stack.pw.wait_nodes([f"kmixdeck.in.in_{i}" for i in range(1, 33)], timeout=30)
     assert took < 10, f"32 input edges took {took:.1f}s"
@@ -559,15 +557,15 @@ def test_dv28_ui24r_scale_32_in_32_out_every_port_routable_and_fast(stack):
     time.sleep(1.5)
     p = stack.pw.play_into_port(din, "input_AUX32")
     try:
-        v = wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.in_32", "monitor_FL"), lambda x: x > HOT)
+        wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.in_32", "monitor_FL"), lambda x: x > HOT)
         assert stack.pw.level_at_port("kmixdeck.channel.in_1", "monitor_FL") < SILENT, "port 32 leaked into channel 1"
         stack.cli("cell", "volume", "in_32", "stream", "1.0", check=False)
-        out1 = wait_level(lambda: stack.pw.level_at_port(dout, "monitor_AUX1"), lambda x: x > HOT - 30)
+        wait_level(lambda: stack.pw.level_at_port(dout, "monitor_AUX1"), lambda x: x > HOT - 30)
         assert stack.pw.level_at_port(dout, "monitor_AUX31") > HOT - 30, "monitor mix did not reach AUX31"
         assert stack.pw.level_at_port(dout, "monitor_AUX5") < SILENT, "an unused output port carries signal"
     finally:
         p.kill(); p.wait()
-    t1 = time.time(); stack.restart_daemon()
+    stack.restart_daemon()
     back = stack.pw.wait_nodes([f"kmixdeck.in.in_{i}" for i in range(1, 33)] + ["kmixdeck.out.stream", "kmixdeck.out.monitor"], timeout=40)
     assert back < 15, f"restart: 32 edges took {back:.1f}s to return"
     assert set(stack.cli("channel", "inputs", "in_21").stdout.split()) == {f"{din}:AUX21", f"{din}:AUX22>R"}
@@ -588,7 +586,7 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
     back a moment later with new ids. Nothing the user set may be lost and nothing may need a restart: the listening
     device, both mix outputs, the port-level input wire, faders/mutes and the app's channel all stand, and audio flows
     input→channel→mix→speakers again within seconds. Measured, not read from properties."""
-    from test_service_cli import make_fake_sink, make_fake_source, destroy_node, start_fake_app
+    from test_service_cli import make_fake_sink, destroy_node, start_fake_app
     import subprocess
     # the "laptop": speakers + headphones + a 4-in interface, one input wire, one app
     make_fake_sink(stack, "fake.speakers", "Laptop Speakers"); make_fake_sink(stack, "fake.cans", "Headphones")
@@ -634,7 +632,6 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
     try:
         before = settled_level(lambda: stack.pw.level_at("fake.speakers"), lambda v: v > SILENT + 10, tries=15)
         assert before > SILENT + 10, "baseline: mic tone should reach the speakers via the stream mix"
-        snapshot = stack.cli("status", json_out=True)
         # --- sleep: every device vanishes in one go (the virtual interface too — it is a "device" to the daemon)
         destroy_node(stack, "fake.speakers"); destroy_node(stack, "fake.cans")
         stack.cli("devices", "virtual", "remove", "interface", check=False)   # the USB interface is gone as well

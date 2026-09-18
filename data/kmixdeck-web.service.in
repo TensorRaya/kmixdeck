@@ -1,0 +1,16 @@
+[Unit]
+Description=kmixdeck web frontend (browser UI bridge, LAN)
+Documentation=https://github.com/TensorRaya/kmixdeck
+# Optional. Disabled by default because --lan opens a port on every interface (token-protected).
+#   systemctl --user enable --now kmixdeck-web
+After=kmixdeckd.service
+Wants=kmixdeckd.service
+
+[Service]
+ExecStart=@KDE_INSTALL_FULL_BINDIR@/kmixdeck-web --lan
+Restart=on-failure
+RestartSec=2
+Slice=session.slice
+
+[Install]
+WantedBy=default.target

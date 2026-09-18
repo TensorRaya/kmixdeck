@@ -10,6 +10,7 @@ set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
 include(KDEInstallDirs)
 include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
+set(CMAKE_COMPILE_WARNING_AS_ERROR ON)   # review 2026-09-18 CC-2: the build is warning-free; keep it that way
 include(ECMSetupVersion)
 include(ECMQmlModule)
 include(FeatureSummary)
