@@ -9,7 +9,8 @@
     <property name="Icon" type="s" access="readwrite"/>
     <!-- MX-5 colour code: "#rrggbb", or "" for the theme default. Rejected otherwise. -->
     <property name="Color" type="s" access="readwrite"/>
-    <!-- node.name of the physical sink this mix plays to; empty = not routed to hardware (MX-3a) -->
+    <!-- primary output: "node" or "node:POS,POS" (ADR 0009); empty = not routed to hardware (MX-3a).
+         Read: Outputs[0] or "". Write: replaces Outputs[0]; writing "" removes EVERY output (the mix is parked). -->
     <property name="OutputDevice" type="s" access="readwrite"/>
     <!-- node.name of the virtual capture source exposing this mix, or empty (MX-3b) -->
     <property name="CaptureSource" type="s" access="read"/>

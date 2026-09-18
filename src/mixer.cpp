@@ -524,7 +524,10 @@ QString Mixer::validateDeviceRef(const DeviceRef &ref, bool wantSource) const {
 // pre-MX-9 UI must not clobber each other).
 void Mixer::setMixOutputDevice(const QString &slug, const QString &nodeName) {
     QVector<DeviceRef> outs = mixOutputs(slug);
-    if (nodeName.isEmpty()) { if (!outs.isEmpty()) outs.removeFirst(); }
+    // "" means NO output — every one goes, not just Outputs[0]. Until 2026-09-18 this dropped only the first entry, so
+    // `mix output <mix> none` on a mix with two outputs left one behind, OutputDevice read back non-empty and the CLI
+    // reported "daemon refused" for a write the daemon had accepted (test_ports DV-28 red depending on test order).
+    if (nodeName.isEmpty()) outs.clear();
     else if (outs.isEmpty()) outs.push_back(deviceRef(nodeName));
     else outs[0] = deviceRef(nodeName);
     setMixOutputs(slug, outs);

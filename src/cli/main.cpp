@@ -496,6 +496,7 @@ int main(int argc, char *argv[]) {
             if (!setProp(pathOf(a[2]), iface, "OutputDevice", dev, &e)) return fail(Rejected, e);
             QDBusInterface mxObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
             if (mxObj.property("OutputDevice").toString() != dev) return fail(Rejected, QStringLiteral("daemon refused '%1' (see its log)").arg(a[3]));
+            if (dev.isEmpty() && !mxObj.property("Outputs").toStringList().isEmpty()) return fail(Rejected, QStringLiteral("mix still has outputs after 'none'"));
             return Ok;
         }
         if (sub == "get" && !ch) {   // mix get <slug> — all properties (JSON) for scripts/tests
