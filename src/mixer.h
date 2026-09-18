@@ -323,6 +323,14 @@ private:
     QHash<uint32_t, QString> m_idToName;
     bool m_firstRun = false;              // no layout.json existed when we started (UX-3)
     QHash<QString, quint64> m_cellWriteSeq;   // per cell node: last setCellVolume() generation (WirePlumber-race retry)
+    // What the user wants a cell/mix node to be, by node name. WirePlumber's restore-stream writes ITS value (a stored
+    // one or the 1.0 default) to a node whenever it (re)appears, at a moment we cannot predict — 400 ms after creation
+    // in a quiet session, seconds later under load (ctest35: CT-7 import lost a mute, DV-6 lost a cell volume, both
+    // AFTER the one-shot retry had fired). So instead of racing it with timers, onNode() compares every echo from
+    // PipeWire against the intent and writes the intent back when the echo disagrees and did not come from us.
+    struct Intent { float volume; bool mute; int rewrites = 0; };
+    QHash<QString, Intent> m_intent;
+    void intend(const QString &node, float volume, bool mute) { m_intent[node] = {volume, mute}; }
     QString m_defaultSink, m_defaultSource;
 };
 

@@ -289,6 +289,7 @@ void Mixer::setCellVolume(const QString &ch, const QString &mix, double cubic) {
     breakLink(ch, mix);                       // MX-7: a direct write to a follower unlinks it
     const float lin = cubicToLinear(std::clamp(cubic, 0.0, 1.0));
     it->volume = lin;                         // optimistic; PipeWire echoes via nodeChanged
+    intend(Names::cellNode(ch, mix), lin, it->mute);
     m_graph.setVolume(it->id, lin, it->mute);
     // WirePlumber's restore-stream writes ITS value (default 1.0 for a node it has never seen) shortly after a new
     // stream appears; a user write in that window loses (DV-6 under ctest31: `cell set -6dB` on a channel created a
@@ -339,6 +340,7 @@ void Mixer::setCellMuted(const QString &ch, const QString &mix, bool muted) {
     auto it = m_cells.find(Names::cellNode(ch, mix)); if (it == m_cells.end()) return;
     breakLink(ch, mix);
     it->mute = muted;
+    intend(Names::cellNode(ch, mix), it->volume, muted);
     m_graph.setVolume(it->id, it->volume, muted);
     // same WirePlumber restore-stream window as setCellVolume(): DV-6 under ctest34 — `cell mute voice stream on`
     // read back unmuted, the app's tone summed into the mic measurement (+4.7 dB). One re-assert, last intent wins.
@@ -1222,6 +1224,7 @@ void Mixer::restorePendingCellStates() {
             auto s = m_sinks.find(it.key()); if (s != m_sinks.end()) { s->volume = it->first; s->mute = it->second; }
             applyChannelGain(it.key().mid(17));
         } else {
+            intend(it.key(), it->first, it->second);
             m_graph.setVolume(n->id, it->first, it->second);
             // WirePlumber applies its stored/default volume to a NEW node right after it appears — for a node it has
             // never seen (a duplicated mix, an imported channel) that write lands after ours and resets it to unity
@@ -1296,6 +1299,11 @@ void Mixer::onNode(const pw::NodeInfo &n) {
     } else if (n.name.startsWith(lkP) && !n.name.endsWith(QLatin1String(".in")) && n.mediaClass.startsWith(QLatin1String("Stream/Output"))) {
         const bool isNew = !m_cells.contains(n.name);
         m_cells[n.name] = n;
+        if (auto in = m_intent.find(n.name); in != m_intent.end() && (std::abs(n.volume - in->volume) > 1e-3f || n.mute != in->mute)) {
+            // somebody else (WirePlumber restore-stream) wrote this node — put the user's intent back. Bounded so a
+            // genuinely fighting peer cannot make us loop forever; 3 rewrites have never been needed in practice.
+            if (in->rewrites < 3) { ++in->rewrites; qInfo() << "cell" << n.name << "echoed" << n.volume << n.mute << "but intent is" << in->volume << in->mute << "- rewriting"; m_graph.setVolume(n.id, in->volume, in->mute); auto &c = m_cells[n.name]; c.volume = in->volume; c.mute = in->mute; }
+        } else if (in != m_intent.end()) in->rewrites = 0;
         const QStringList parts = n.name.mid(lkP.size()).split(QLatin1Char('.'));
         if (parts.size() == 2) { Q_EMIT cellChanged(parts[0], parts[1]); if (!isNew) propagateLinks(parts[0], parts[1]); }
         if (isNew) { layout = true; if (!m_pendingCellState.isEmpty()) restorePendingCellStates(); }
