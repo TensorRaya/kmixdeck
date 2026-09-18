@@ -67,7 +67,32 @@ document.addEventListener("keydown", (ev) => {
   if (ev.target.matches("input, select, textarea, [role=slider]")) return;
   const k = { 1: "mixer", 2: "apps", 3: "patchbay" }[ev.key]; if (k) selectView(k);
   if (ev.key === "z" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); C.call(C.ROOT, "Undo").catch(() => {}); }
+  if (ev.key === "s" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); exportLayout(); }
 });
 
 // test hook (the same idea as the KDE window's --probe): window.kmixdeck.probe("cellFader/game/stream").dataset.value
 window.kmixdeck = { state: C.state, peaks: C.peaks, probe: (name) => document.querySelector(`[data-probe="${name}"]`), probes: () => [...document.querySelectorAll("[data-probe]")].map((e) => e.dataset.probe), selectView, C };
+
+
+// CT-7 backup/restore — the same two daemon calls Main.qml makes; the browser's file dialogs instead of KDE's.
+export async function exportLayout() {
+  try {
+    const json = await C.call(C.ROOT, "Export");
+    const blob = new Blob([json], { type: "application/json" });
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `kmixdeck-${new Date().toISOString().slice(0, 10)}.json` });
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast("Layout exported");
+  } catch (e) { toast(e.message, true); }
+}
+export function importLayout() {
+  const inp = Object.assign(document.createElement("input"), { type: "file", accept: "application/json,.json" });
+  inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return;
+    if (!confirm(`Replace the whole layout with “${f.name}”? Every channel, mix, fader and effect chain is overwritten.`)) return;
+    try { await C.call(C.ROOT, "Import", await f.text()); toast(`Imported ${f.name}`); }
+    catch (e) { toast(`Import refused: ${e.message}`, true); }        // CT-7: garbage is refused, the layout stays
+  };
+  inp.click();
+}
+document.getElementById("export")?.addEventListener("click", exportLayout);
+document.getElementById("import")?.addEventListener("click", importLayout);

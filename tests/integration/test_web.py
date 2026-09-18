@@ -402,3 +402,36 @@ def test_ar8_web_reconnects_after_the_bridge_restarts(stack):
     finally:
         stack.cli("mix", "unmute", "stream", check=False)
         web.close()
+
+
+def test_ct7_web_export_downloads_and_import_round_trips_and_refuses_garbage(stack):
+    """CT-7 in the browser: Export returns the layout document (checked against `kmixdeck export`); Import of that
+    document with a changed mix name lands in the daemon; garbage is refused with a toast and the layout is untouched."""
+    web = Web(stack, token="")
+    try:
+        with Chrome(web.url, size=(1280, 800)) as ch:
+            ch.wait("window.kmixdeck && window.kmixdeck.state.connected && " + _q("exportLayout"), 15)
+            # Export: intercept the download (headless chrome has no download dir) — read the blob the button builds
+            ch.eval("(() => { window.__dl = null; const o = URL.createObjectURL; URL.createObjectURL = (b) => { window.__dl = b; return o(b); }; })()", False)
+            _click(ch, "exportLayout")
+            ch.wait("window.__dl", 8)
+            got = json.loads(ch.eval("window.__dl.text()", True))
+            ref = json.loads(stack.cli("export").stdout)
+            assert got.keys() == ref.keys() and got["mixes"] == ref["mixes"], "browser export must be the daemon's export"
+            # Import: same document with a renamed mix, fed through the file input (no OS dialog in headless)
+            doc = json.loads(json.dumps(ref)); doc["mixes"][0]["name"] = "Imported Web Mix"; slug = doc["mixes"][0]["slug"]
+            ch.answer_dialogs(None, confirm=True)
+            ch.eval("""(() => { const inp = document.createElement('input'); inp.type = 'file'; window.__inp = inp;
+                const o = document.createElement; document.createElement = function (t) { const e = o.call(document, t); if (t === 'input' && !window.__hooked) { window.__hooked = true; return inp; } return e; }; })()""", False)
+            _click(ch, "importLayout")
+            ch.eval("""(() => { const f = new File([%s], 'layout.json', { type: 'application/json' }); const dt = new DataTransfer(); dt.items.add(f);
+                window.__inp.files = dt.files; window.__inp.dispatchEvent(new Event('change')); })()""" % json.dumps(json.dumps(doc)), False)
+            assert wait_for(lambda: _mix(stack, slug)["Name"] == "Imported Web Mix", 8), "Import from the browser"
+            # garbage: refused, nothing changes
+            before = stack.cli("export").stdout
+            ch.eval("""(() => { const f = new File(['{"this is": "not a layout"'], 'bad.json'); const dt = new DataTransfer(); dt.items.add(f);
+                window.__inp.files = dt.files; window.__inp.dispatchEvent(new Event('change')); })()""", False)
+            ch.wait("/refused/.test(document.getElementById('toast').textContent) && document.getElementById('toast').classList.contains('error')", 8)
+            assert stack.cli("export").stdout == before, "garbage import must leave the layout untouched"
+    finally:
+        web.close()

@@ -190,3 +190,7 @@ button.danger { color: var(--red); }
   body.fx-open #view { margin-right: 0; }
   #fx-drawer { width: 100vw; top: 0; }
 }
+
+header .spacer { flex: 1; }
+header .icon-btn { background: none; border: 1px solid var(--line); color: var(--fg-dim); width: 30px; height: 30px; border-radius: 6px; font-size: 16px; line-height: 1; }
+header .icon-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
