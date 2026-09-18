@@ -38,26 +38,28 @@ main { padding: 12px; overflow: auto; }
 .empty { color: var(--muted); text-align: center; padding: 40px 16px; }
 
 /* ---- mixer grid: first column = channel headers, then one column per mix */
-.mixer { display: grid; grid-template-columns: minmax(180px, 240px) repeat(var(--mixes), minmax(150px, 1fr)); gap: 8px; align-items: stretch; }
+.mixer { display: grid; grid-template-columns: minmax(170px, 220px) repeat(var(--mixes), minmax(120px, 1fr)); gap: 6px; align-items: stretch; }
 .corner { display: flex; align-items: flex-end; }
 .corner.bottom { align-items: flex-start; }
-.channel-header, .mix-header, .cell { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; position: relative; overflow: hidden; }
+.channel-header, .mix-header, .cell { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 8px; position: relative; overflow: hidden; }
 .stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--accent); }   /* --accent set inline per header = the entity's colour */
-.name { background: none; border: none; font-weight: 600; font-size: 16px; padding: 2px 4px; text-align: left; min-height: 0; }
-.source { color: var(--muted); font-size: 13px; margin: 2px 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.name { background: none; border: none; font-weight: 600; font-size: 15px; padding: 0 4px; text-align: left; min-height: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.head-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.source { color: var(--muted); font-size: 12px; margin: 0 4px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gone { color: var(--amber); }
 .badge { display: inline-block; font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; margin-left: 6px; }
-.controls { display: flex; align-items: center; gap: 6px; }
+.controls { display: flex; align-items: center; gap: 4px; }
 .controls .fader.horizontal { flex: 1; }
-.pan-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 12px; }
-.pan { flex: 1; accent-color: var(--accent); min-height: 24px; }
+.controls button { min-height: 32px; padding: 4px 8px; }
+.pan-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: var(--muted); font-size: 11px; }
+.pan { flex: 1; accent-color: var(--accent); min-height: 18px; height: 18px; }
 .mix-header.muted { background: color-mix(in srgb, var(--red) 22%, var(--panel)); border-color: var(--red); }
 .mix-header.hearing { border-color: var(--hear); }
 
 /* ---- fader */
 .fader { position: relative; touch-action: none; user-select: none; -webkit-user-select: none; }
-.fader.vertical { width: var(--handle); height: 180px; margin: 0 auto; }
-.fader.horizontal { height: 36px; min-width: 60px; }
+.fader.vertical { width: var(--handle); height: 132px; margin: 0 auto; }
+.fader.horizontal { height: 32px; min-width: 50px; }
 .fader .track { position: absolute; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 .fader.vertical .track { left: 50%; top: 8px; bottom: 8px; width: 8px; transform: translateX(-50%); }
 .fader.vertical .handle-area { position: absolute; top: 8px; bottom: 8px; left: 0; right: 0; }
@@ -66,18 +68,18 @@ main { padding: 12px; overflow: auto; }
 .fader.horizontal .fill { transform-origin: left; }
 .fader .handle { position: absolute; background: var(--text); border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
 .fader.vertical .handle { left: 50%; width: 30px; height: 14px; transform: translate(-50%, 50%); bottom: calc(8px + (100% - 16px) * var(--pos, 1)) !important; }
-.fader.horizontal .handle { top: 50%; width: 14px; height: 26px; transform: translate(-50%, -50%); left: calc(8px + (100% - 16px) * var(--pos, 1)) !important; }
+.fader.horizontal .handle { top: 50%; width: 12px; height: 22px; transform: translate(-50%, -50%); left: calc(8px + (100% - 16px) * var(--pos, 1)) !important; }
 .fader.dragging .handle { background: var(--accent); }
 .fader .db { position: absolute; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.fader.vertical .db { bottom: -16px; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+.fader.vertical .db { bottom: -15px; left: 50%; transform: translateX(-50%); white-space: nowrap; }
 .fader.horizontal .db { display: none; }
-.cell .fader.vertical { margin-bottom: 18px; }
 .cell.muted .fader .fill { background: var(--muted); }
-.cell { display: grid; grid-template-columns: 1fr auto; grid-template-rows: 1fr auto; gap: 6px 0; justify-items: center; }
-.cell .fader.vertical { grid-column: 1; grid-row: 1; margin: 0 0 18px; justify-self: end; }
-.cell .meter { grid-column: 2; grid-row: 1; height: 164px; margin: 8px 12px 0 2px; justify-self: start; }
-.cell-foot { grid-column: 1 / -1; display: flex; gap: 4px; justify-content: center; }
-.cell-foot button { min-width: 44px; }
+/* cell = [fader | meter | M over ⇄] — the buttons stand beside the fader, so the cell is exactly one fader tall */
+.cell { display: flex; align-items: flex-start; justify-content: center; gap: 6px; }
+.cell .fader.vertical { margin: 0 0 16px; }
+.cell .meter { height: 116px; margin-top: 8px; }
+.cell-foot { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.cell-foot button { min-width: 40px; min-height: 40px; padding: 4px 6px; font-size: 13px; }
 .cell.linked .link { border-color: var(--accent); }
 .pending { color: var(--muted); }
 
@@ -139,9 +141,7 @@ svg.wires .wire:hover { stroke-width: 5px; opacity: 1; }
 
 /* ---- phone: one mix per screen width, headers stack */
 @media (max-width: 720px) {
-  .mixer { grid-template-columns: minmax(140px, 170px) repeat(var(--mixes), minmax(130px, 1fr)); gap: 6px; }
-  .fader.vertical { height: 150px; }
-  .cell .meter { height: 150px; }
+  .mixer { grid-template-columns: minmax(140px, 160px) repeat(var(--mixes), minmax(112px, 1fr)); gap: 4px; }
   #hearing { order: 5; width: 100%; margin-left: 0; }
   .app { grid-template-columns: 36px 1fr; }
   .app .target { grid-column: 1 / -1; justify-content: flex-start; max-width: none; }

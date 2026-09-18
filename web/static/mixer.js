@@ -35,8 +35,7 @@ function channelHeader(ch) {
   h.dataset.slug = slug;
   h.append(el("div", { class: "stripe", probe: `channelColorStripe/${slug}` }));
   const name = el("button", { class: "name", probe: `channelName/${slug}`, title: "Rename", onclick: async () => { const n = prompt2("Channel name", ch.Name); if (n) await C.set(ch.path, "Name", n).catch(err); } }, el("span", { class: "icon" }, icon(ch.Icon)), " ", ch.Name);
-  h.append(name);
-  if (ch.Group) h.append(el("span", { class: "badge", probe: "channelGroupBadge" }, ch.Group));
+  h.append(el("div", { class: "head-row" }, name, ch.Group ? el("span", { class: "badge", probe: "channelGroupBadge" }, ch.Group) : null));
   const src = el("div", { class: "source", probe: `channelSource/${slug}` }, ch.Inputs?.length ? ch.Inputs.join(", ") : "Apps", ch.InputPresent === false ? el("span", { class: "gone", title: "input device is not connected" }, " ⚠") : null);
   h.append(src);
   const controls = el("div", { class: "controls" });
@@ -54,7 +53,7 @@ function channelHeader(ch) {
     ["Remove channel", () => confirm(`Remove channel “${ch.Name}”?`) && C.call(C.ROOT, "RemoveChannel", ch.path).catch(err), "danger"],
   ]) }));
   h.append(controls);
-  h.append(el("div", { class: "pan-row" }, el("label", {}, "Pan"), panSlider(ch)));
+  h.append(el("div", { class: "pan-row" }, el("label", {}, "L"), panSlider(ch), el("label", {}, "R")));
   h.append(meter(C.meterKey.channel(slug), { horizontal: true, probe: `channelMeter/${slug}` }));
   return h;
 }
