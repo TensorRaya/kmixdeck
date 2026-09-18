@@ -435,3 +435,34 @@ def test_ct7_web_export_downloads_and_import_round_trips_and_refuses_garbage(sta
             assert stack.cli("export").stdout == before, "garbage import must leave the layout untouched"
     finally:
         web.close()
+
+
+def test_dv1_web_input_picker_and_ux8_icon_from_the_browser(stack):
+    """ChannelHeader.qml's input line and Icon… in the browser: the source line opens a picker listing the daemon's
+    InputDevices; ticking calls AddInput, unticking RemoveInput; the header then names the device. Icon… writes UX-8's
+    Icon property on channel and mix — all checked at the CLI."""
+    web = Web(stack, token="")
+    src = "fake.web.line"; make_fake_source(stack, src, "Web Line In")
+    try:
+        with Chrome(web.url, size=(1280, 800)) as ch:
+            ch.wait("window.kmixdeck && window.kmixdeck.state.connected && " + _q("channelSource/voice"), 15)
+            ch.wait("Object.keys(window.kmixdeck.state.root.InputDevices || {}).includes('%s')" % src, 8)
+            _click(ch, "channelSource/voice")
+            ch.wait(_q("inMenu/voice"), 5)
+            ch.eval("[...document.querySelectorAll('[data-probe=\"inMenu/voice\"] label')].find(l => l.textContent.includes('Web Line In')).querySelector('input').click()", False)
+            def inputs(): return next(c for c in _status(stack)["channels"] if c["Slug"] == "voice")["Inputs"]
+            assert wait_for(lambda: any(i.startswith(src) for i in inputs()), 8), "tick → AddInput: %s" % inputs()
+            ch.wait(_q("channelSource/voice") + ".textContent.includes('Web Line In')", 8)
+            _click(ch, "channelSource/voice"); ch.wait(_q("inMenu/voice"), 5)
+            ch.eval("[...document.querySelectorAll('[data-probe=\"inMenu/voice\"] label')].find(l => l.textContent.includes('Web Line In')).querySelector('input').click()", False)
+            assert wait_for(lambda: not any(i.startswith(src) for i in inputs()), 8), "untick → RemoveInput"
+            # UX-8 icon via the ⋮ menus
+            ch.answer_dialogs("audio-input-microphone"); _click(ch, "channelMenuButton/voice"); _menu_click(ch, "^Icon")
+            assert wait_for(lambda: next(c for c in _status(stack)["channels"] if c["Slug"] == "voice")["Icon"] == "audio-input-microphone", 8), "channel Icon"
+            ch.answer_dialogs("audio-headphones"); _click(ch, "mixMenuButton/stream"); _menu_click(ch, "^Icon")
+            assert wait_for(lambda: _mix(stack, "stream")["Icon"] == "audio-headphones", 8), "mix Icon"
+            ch.answer_dialogs(""); _click(ch, "channelMenuButton/voice"); _menu_click(ch, "^Icon")
+            assert wait_for(lambda: next(c for c in _status(stack)["channels"] if c["Slug"] == "voice")["Icon"] == "", 8), "empty → default"
+    finally:
+        stack.cli("mix", "icon", "stream", "none", check=False)
+        web.close()

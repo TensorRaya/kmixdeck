@@ -42,7 +42,7 @@ function channelHeader(ch) {
     el("div", { class: "name-line" },
       el("button", { class: "name", probe: `channelName/${slug}`, title: "Rename", onclick: async () => { const n = prompt2("Channel name", ch.Name); if (n) await C.set(ch.path, "Name", n).catch(err); } }, el("span", { class: "icon" }, icon(ch.Icon)), " ", ch.Name),
       ch.Group ? el("span", { class: "badge", probe: "channelGroupBadge" }, ch.Group) : null),
-    el("div", { class: "source", probe: `channelSource/${slug}` }, ch.Inputs?.length ? ch.Inputs.join(", ") : "Apps", ch.InputPresent === false ? el("span", { class: "gone", title: "input device is not connected" }, " ⚠") : null)));
+    el("button", { class: "source", probe: `channelSource/${slug}`, title: "Hardware input feeding this channel — click to change. Applications can be routed here regardless.", onclick: () => inputPicker(ch) }, ch.Inputs?.length ? ch.Inputs.map((r) => C.state.root.InputDevices?.[r.split(":")[0]] || r).join(", ") : "Apps", ch.InputPresent === false ? el("span", { class: "gone", title: "input device is not connected" }, " ⚠") : null)));
   const row = el("div", { class: "hrow" });
   row.append(iconButton(ch.Muted ? "muted" : "speaker", { probe: `channelMute/${slug}`, cls: "mute", pressed: ch.Muted, title: ch.Muted ? "Unmute channel" : "Mute channel", onClick: () => C.set(ch.path, "Muted", !ch.Muted).catch(err) }));
   const listen = iconButton("ear", { probe: `channelListen/${slug}`, cls: "listen", title: "Hold to hear only this channel", onClick: () => {} }); hold(listen, ch.path); row.append(listen);
@@ -52,6 +52,7 @@ function channelHeader(ch) {
   row.append(iconButton("more", { probe: `channelMenuButton/${slug}`, cls: "menu", title: "More", onClick: (ev) => menu(ev.currentTarget, [
     ["Rename…", async () => { const n = prompt2("Channel name", ch.Name); if (n) await C.set(ch.path, "Name", n).catch(err); }],
     ["Effects…", () => openFx(ch, ch.Name)],
+    ["Icon…", async () => { const i = prompt2("Icon (freedesktop name like 'audio-input-microphone', or empty for the default)", ch.Icon || ""); if (i !== null) await C.set(ch.path, "Icon", i).catch(err); }],
     ["Trim…", async () => { const t = prompt2("Trim in dB (−60 … +6)", (20 * Math.log10(ch.Trim || 1)).toFixed(1)); if (t !== null && !isNaN(+t)) await C.set(ch.path, "Trim", Math.pow(10, Math.max(-60, Math.min(6, +t)) / 20)).catch(err); }, "", `channelTrim/${slug}`],
     ["Colour…", async () => { const c = prompt2("Colour (#rrggbb or empty)", ch.Color); if (c !== null) await C.set(ch.path, "Color", c).catch(err); }],
     ["Group…", async () => { const g = prompt2("Group", ch.Group); if (g !== null) await C.set(ch.path, "Group", g).catch(err); }],
@@ -79,6 +80,7 @@ function mixHeader(m) {
     el("span", { class: "spacer" }),
     iconButton("more", { probe: `mixMenuButton/${slug}`, cls: "menu", title: "More", onClick: (ev) => menu(ev.currentTarget, [
       ["Rename…", async () => { const n = prompt2("Mix name", m.Name); if (n) await C.set(m.path, "Name", n).catch(err); }],
+      ["Icon…", async () => { const i = prompt2("Icon (freedesktop name, or empty for the default)", m.Icon || ""); if (i !== null) await C.set(m.path, "Icon", i).catch(err); }],
       ["Colour…", async () => { const c = prompt2("Colour (#rrggbb or empty)", m.Color); if (c !== null) await C.set(m.path, "Color", c).catch(err); }],
       ["Output device…", () => outputPicker(m)],
       ["Effects…", () => openFx(m, m.Name)],
@@ -100,6 +102,20 @@ function mixHeader(m) {
   h.append(body);
   h.append(meter(`out/${slug}`, { horizontal: true, probe: `mixMeter/${slug}`, cls: "outmeter" }));
   return h;
+}
+
+function inputPicker(ch) {
+  // ChannelHeader.qml's input line: every capture device from the daemon, ticked when it feeds this channel
+  const devs = Object.entries(C.state.root.InputDevices || {});
+  const box = el("div", { class: "popover", probe: `inMenu/${ch.Slug}` });
+  box.append(el("h3", {}, `${ch.Name} ← inputs`));
+  for (const [node, desc] of devs) {
+    const on = (ch.Inputs || []).some((r) => r.split(":")[0] === node);
+    box.append(el("label", { class: "row" }, el("input", { type: "checkbox", checked: on, onchange: (ev) => (ev.target.checked ? C.call(ch.path, "AddInput", node) : C.call(ch.path, "RemoveInput", (ch.Inputs || []).find((r) => r.split(":")[0] === node) || node)).catch(err) }), " ", desc || node));
+  }
+  if (!devs.length) box.append(el("p", {}, "No input devices"));
+  box.append(el("p", { class: "hint" }, "Applications reach a channel from the Apps tab, whatever is ticked here."));
+  openPopover(box);
 }
 
 function outputPicker(m) {
