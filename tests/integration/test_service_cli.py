@@ -9,6 +9,7 @@ import json
 import math, math, subprocess, time, pytest
 from pathlib import Path
 from pw_sandbox import start_private_pipewire, REPO
+from waiting import wait_for
 
 BIN = REPO / "build" / "bin"
 pytestmark = pytest.mark.skipif(not (BIN / "kmixdeckd").exists(), reason="build first: ninja -C build")
@@ -46,9 +47,7 @@ class Stack:
         self.daemon.terminate(); self.daemon.wait(timeout=5)
         self.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=self.env, stdout=subprocess.DEVNULL, stderr=open(self.daemon_log_path, "a"), text=True)
         # the bus name is claimed only after every object is exported (Service::start), so one green `status` = ready
-        for _ in range(100):
-            if self.cli("status", check=False).returncode == 0: break
-            time.sleep(0.1)
+        wait_for(lambda: self.cli("status", check=False).returncode == 0, timeout=10.0, what="self.cli('status', check=False).returncode == 0")
 
     def close(self):
         for p in (self.daemon, self.dbus):
@@ -155,9 +154,7 @@ def test_ar5_frontend_call_activates_nothing_but_survives_daemon_gone(stack):
     r = stack.cli("status", check=False)
     assert r.returncode == 2, (r.returncode, r.stderr)
     stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL, stderr=open(stack.daemon_log_path, "a"), text=True)
-    for _ in range(50):
-        if stack.cli("status", check=False).returncode == 0: break
-        time.sleep(0.1)
+    wait_for(lambda: stack.cli("status", check=False).returncode == 0, timeout=5.0, what="stack.cli('status', check=False).returncode == 0")
     assert stack.cli("status", json_out=True)["connected"] is True
 
 
@@ -295,9 +292,7 @@ def test_dv1_layout_survives_without_the_daemon(stack):
     assert stack.pw.props("kmixdeck.link.voice.recording")["volume"] == pytest.approx(1.0)
     # daemon comes back, sees the graph, exports it — nothing recreated twice
     stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL, stderr=open(stack.daemon_log_path, "a"), text=True)
-    for _ in range(50):
-        if stack.cli("status", check=False).returncode == 0: break
-        time.sleep(0.1)
+    wait_for(lambda: stack.cli("status", check=False).returncode == 0, timeout=5.0, what="stack.cli('status', check=False).returncode == 0")
     time.sleep(1.0)
     st = stack.cli("status", json_out=True)
     assert len(st["cells"]) == 9
@@ -345,9 +340,7 @@ def test_dv8_devices_lists_hardware_sinks_not_ours(stack):
 def test_mx3a_mix_output_follows_device_and_is_audible(stack):
     assert out_link_target(stack, "stream") == "kmixdeck.null", "mix output must start parked on kmixdeck.null (never the default sink)"
     stack.cli("mix", "output", "stream", "fake.headphones")
-    for _ in range(40):
-        if out_link_target(stack, "stream") == "fake.headphones": break
-        time.sleep(0.1)
+    wait_for(lambda: out_link_target(stack, "stream") == "fake.headphones", timeout=4.0, what="out_link_target(stack, 'stream') == 'fake.headphones'")
     assert out_link_target(stack, "stream") == "fake.headphones"
     # audible on the device: game→stream at 0 dB, tone into game
     stack.cli("cell", "set", "game", "stream", "1.0")
@@ -364,9 +357,7 @@ def test_mx3a_output_none_unlinks_and_unknown_device_is_rejected(stack):
     r = stack.cli("mix", "output", "stream", "does.not.exist", check=False)
     assert r.returncode == 3
     stack.cli("mix", "output", "stream", "none")
-    for _ in range(40):
-        if out_link_target(stack, "stream") == "kmixdeck.null": break
-        time.sleep(0.1)
+    wait_for(lambda: out_link_target(stack, "stream") == "kmixdeck.null", timeout=4.0, what="out_link_target(stack, 'stream') == 'kmixdeck.null'")
     assert out_link_target(stack, "stream") == "kmixdeck.null"
 
 
@@ -424,9 +415,7 @@ def test_vf7_capture_side_volume_is_healed_on_start(stack):
     stack.pw.set_volume("kmixdeck.link.game.stream.in", 0.0156)
     assert abs(stack.pw.props("kmixdeck.link.game.stream.in")["volume"] - 0.0156) < 1e-3
     stack.restart_daemon()
-    for _ in range(40):
-        if stack.pw.props("kmixdeck.link.game.stream.in")["volume"] > 0.99: break
-        time.sleep(0.1)
+    wait_for(lambda: stack.pw.props("kmixdeck.link.game.stream.in")["volume"] > 0.99, timeout=4.0, what="stack.pw.props('kmixdeck.link.game.stream.in')['volume'] > 0.99")
     assert stack.pw.props("kmixdeck.link.game.stream.in")["volume"] > 0.99
     # and the fader itself was not touched
     assert stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"] == 1.0
@@ -472,9 +461,7 @@ def test_ux6_levels_signal_carries_peaks_of_the_tone(stack):
     assert -23 < db(peaks["mix/stream"]) < -17 and -23 < db(peaks["mix/monitor"]) < -17, peaks
     assert peaks["channel/system"] == 0 and peaks["channel/voice"] == 0, peaks
     # after Unsubscribe the daemon keeps meters for a grace period, then tears them down
-    for _ in range(80):
-        if meter_nodes(stack) == 0: break
-        time.sleep(0.1)
+    wait_for(lambda: meter_nodes(stack) == 0, timeout=8.0, what="meter_nodes(stack) == 0")
     assert meter_nodes(stack) == 0
     assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Subscribers").stdout.strip() == "u 0"
 
@@ -483,15 +470,11 @@ def test_ux6_subscriber_that_dies_is_forgotten(stack):
     """A client that exits without Unsubscribe must not leave meters running (NameOwnerChanged)."""
     p = subprocess.Popen(["/usr/bin/python3", "-c", METER_LISTENER, "30"], env=stack.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # UX-13: 3 channels + 2 mixes + 6 cells + 2 mix outputs (+ one per running app, none here)
-    for _ in range(50):
-        if meter_nodes(stack) >= 13: break
-        time.sleep(0.1)
+    wait_for(lambda: meter_nodes(stack) >= 13, timeout=5.0, what="meter_nodes(stack) >= 13")
     assert meter_nodes(stack) == 13, "one meter stream per channel, mix, cell and mix output"
     assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Subscribers").stdout.strip() == "u 1"
     p.kill(); p.wait()
-    for _ in range(80):
-        if meter_nodes(stack) == 0: break
-        time.sleep(0.1)
+    wait_for(lambda: meter_nodes(stack) == 0, timeout=8.0, what="meter_nodes(stack) == 0")
     assert meter_nodes(stack) == 0
 
 
@@ -552,15 +535,11 @@ def test_dv9_dv12_unplug_greys_out_and_replug_restores(stack):
     destroy_node(stack, "fake.headphones")
     assert wait_prop(stack, "mix", "stream", "OutputPresent", False) is False
     assert wait_prop(stack, "mix", "stream", "OutputDevice", "fake.headphones") == "fake.headphones"
-    for _ in range(40):
-        if out_link_target(stack, "stream") == "kmixdeck.null": break
-        time.sleep(0.1)
+    wait_for(lambda: out_link_target(stack, "stream") == "kmixdeck.null", timeout=4.0, what="out_link_target(stack, 'stream') == 'kmixdeck.null'")
     assert out_link_target(stack, "stream") == "kmixdeck.null", "absent output must park, never fall to the default sink"
     make_fake_sink(stack, "fake.headphones", "Fake Headphones")
     assert wait_prop(stack, "mix", "stream", "OutputPresent", True) is True
-    for _ in range(60):
-        if out_link_target(stack, "stream") == "fake.headphones": break
-        time.sleep(0.1)
+    wait_for(lambda: out_link_target(stack, "stream") == "fake.headphones", timeout=6.0, what="out_link_target(stack, 'stream') == 'fake.headphones'")
     assert out_link_target(stack, "stream") == "fake.headphones", "replug must resume on the device without user action (DV-12)"
     stack.cli("mix", "output", "stream", "none")
     stack.cli("channel", "input", "voice", "none")
@@ -590,9 +569,7 @@ def test_ux13_every_entity_has_a_meter(stack):
     assert db(peaks["cell/game/monitor"]) - 45 < db(peaks["cell/game/stream"]) < db(peaks["cell/game/monitor"]) - 35, peaks
     assert db(peaks["out/monitor"]) > -30, peaks
     assert peaks.get("cell/voice/monitor", 0) == 0, peaks
-    for _ in range(80):
-        if meter_nodes(stack) == 0: break
-        time.sleep(0.1)
+    wait_for(lambda: meter_nodes(stack) == 0, timeout=8.0, what="meter_nodes(stack) == 0")
     assert meter_nodes(stack) == 0
 
 
@@ -601,9 +578,7 @@ def test_ux2_listening_device_is_one_truth(stack):
     `kmixdeck listen` shows device + the mixes routed there."""
     if "fake.headphones" not in stack.cli("devices", json_out=True):
         make_fake_sink(stack, "fake.headphones", "Fake Headphones")
-        for _ in range(30):
-            if "fake.headphones" in stack.cli("devices", json_out=True): break
-            time.sleep(0.1)
+        wait_for(lambda: "fake.headphones" in stack.cli("devices", json_out=True), timeout=3.0, what="'fake.headphones' in stack.cli('devices', json_out=True)")
     stack.cli("listen", "fake.headphones")
     assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", "ListeningDevice").stdout.strip() == 's "fake.headphones"'
     stack.cli("mix", "output", "monitor", "fake.headphones")
@@ -630,9 +605,7 @@ def test_ch13_add_channel_from_source_app_and_device(stack):
     finally:
         p.kill(); p.wait()
     make_fake_source(stack, "fake.mic", "Fake Mic")
-    for _ in range(30):
-        if "fake.mic" in stack.cli("devices", "in", json_out=True): break
-        time.sleep(0.1)
+    wait_for(lambda: "fake.mic" in stack.cli("devices", "in", json_out=True), timeout=3.0, what="'fake.mic' in stack.cli('devices', 'in', json_out=True)")
     path = stack.cli("channel", "add", "Picked Mic").stdout.strip()
     stack.cli("channel", "input", "picked_mic", "fake.mic")
     assert wait_prop(stack, "channel", "picked_mic", "InputDevice", "fake.mic") == "fake.mic"

@@ -12,6 +12,7 @@ import pytest
 from test_service_cli import BIN, Stack, make_fake_sink  # noqa: F401
 from test_presentation import kde, stack  # noqa: F401
 from test_ports import wait_level
+from waiting import wait_for
 
 
 def tray(stack, *probes):
@@ -230,9 +231,7 @@ def test_ct7_export_import_round_trip_cli_and_window_and_garbage_is_refused(stac
         # restore via the WINDOW (menu → file dialog → onAccepted handler)
         out = kde(stack, "--gesture", f"import:{f}")
         assert out[0].endswith("-> ok"), out
-        for _ in range(60):
-            if picture() == before: break
-            time.sleep(0.2)
+        wait_for(lambda: picture() == before, timeout=12.0, what="picture() == before")
         after = picture()
         stack.pw.wait_nodes(["kmixdeck.channel.music", "kmixdeck.link.music.stream"]); time.sleep(1.0)   # nodes up AND levels applied
         assert after == before, "\n".join(f"{k}: {before[k]} -> {after[k]}" for k in before if before[k] != after[k])
@@ -411,9 +410,7 @@ def test_ch11_hidden_device_leaves_every_picker_stays_routable_and_comes_back(st
         # unhide through the window (the dialog's "Show again" handler) and via the tray's hidden-count
         assert kde(stack, "--gesture", "hide:fake.hide.out|0")[0].endswith("-> ok")
         stack.cli("devices", "unhide", "fake.hide.in")
-        for _ in range(30):
-            if not stack.cli("devices", "hidden").stdout.strip(): break
-            time.sleep(0.1)
+        wait_for(lambda: not stack.cli("devices", "hidden").stdout.strip(), timeout=3.0, what="not stack.cli('devices', 'hidden').stdout.strip()")
         after = picker_state()
         assert "Hideable Out" in after["hearingBar.deviceNames"] and "Hideable In" in after["channelHeader/voice.inputDeviceNames"]
         assert "dev/fake.hide.in" in after["patchbay.cardIds"] and "outdev/fake.hide.out" in after["patchbay.cardIds"]
@@ -503,9 +500,7 @@ def _ux3_body(stack, prop, make_fake_sink, make_fake_source, start_fake_app):
         # apply through the window's handler (what the "Set up" button calls)
         r = kde(stack, "--gesture", "firstrun:apply", "--probe", "firstRunBody.summary", open_page="mixer")
         assert r["firstRunBody.summary"].startswith("done:") and "monitorOutput" in r["firstRunBody.summary"] and "voiceInput" in r["firstRunBody.summary"], r
-        for _ in range(50):
-            if prop("FirstRun") == "b false" and prop("ListeningDevice") == 's "fake.desk"': break
-            time.sleep(0.1)
+        wait_for(lambda: prop("FirstRun") == "b false" and prop("ListeningDevice") == 's "fake.desk"', timeout=5.0, what="prop('FirstRun') == 'b false' and prop('ListeningDevice') == 's 'fake.")
         assert prop("FirstRun") == "b false"
         st = stack.cli("status", json_out=True)
         assert stack.cli("listen").stdout.strip().startswith("fake.desk")
@@ -550,9 +545,7 @@ def test_ch8_channel_groups_move_together_in_cli_window_and_tray(stack):
     g = kde(stack, "--probe", "channelGroupBadge.visible", "--gesture", "group:voice|Media", "--probe", "channelGroupBadge.groupName", open_page="mixer")
     assert g["channelGroupBadge.visible"] == "true", g
     assert g["channelGroupBadge.groupName"] == "Media"
-    for _ in range(30):
-        if stack.cli("channel", "group", "voice").stdout.strip() == "Media": break
-        time.sleep(0.1)
+    wait_for(lambda: stack.cli("channel", "group", "voice").stdout.strip() == "Media", timeout=3.0, what="stack.cli('channel', 'group', 'voice').stdout.strip() == 'Media'")
     assert stack.cli("channel", "groups", json_out=True) == {"Media": ["game", "system", "voice"]}
     # --- a fader move in the window on ONE member moves the others in the daemon (trim dial of game: −9 → −3 = +6 dB)
     before = trims()

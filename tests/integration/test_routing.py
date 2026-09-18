@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from test_service_cli import Stack, make_fake_sink, out_link_target
 from pw_sandbox import start_private_pipewire
+from waiting import wait_for
 
 HOT, SILENT = -30.0, -60.0
 
@@ -83,18 +84,14 @@ def test_parked_mix_plays_nothing_on_the_default_sink(stack, tone):
 
 def test_output_device_receives_exactly_the_mix(stack, tone):
     stack.cli("mix", "output", "monitor", "fake.headphones")
-    for _ in range(40):
-        if out_link_target(stack, "monitor") == "fake.headphones": break
-        time.sleep(0.1)
+    wait_for(lambda: out_link_target(stack, "monitor") == "fake.headphones", timeout=4.0, what="out_link_target(stack, 'monitor') == 'fake.headphones'")
     settle()
     assert stack.pw.level_at("fake.headphones") > HOT
     stack.cli("cell", "set", "game", "monitor", "0.0"); settle()
     assert stack.pw.level_at("fake.headphones") < SILENT, "the device follows the mix fader"
     stack.cli("cell", "set", "game", "monitor", "1.0")
     stack.cli("mix", "output", "monitor", "none")
-    for _ in range(40):
-        if out_link_target(stack, "monitor") == "kmixdeck.null": break
-        time.sleep(0.1)
+    wait_for(lambda: out_link_target(stack, "monitor") == "kmixdeck.null", timeout=4.0, what="out_link_target(stack, 'monitor') == 'kmixdeck.null'")
     settle()
     assert stack.pw.level_at("fake.headphones") < SILENT, "'none' must actually stop the audio on the device"
 
@@ -102,15 +99,11 @@ def test_output_device_receives_exactly_the_mix(stack, tone):
 def test_two_mixes_on_the_same_device_do_not_double(stack, tone):
     """Edge: Monitor AND Stream both on the headphones. Allowed, but the level must be the sum, not a crash/loop."""
     for mx in ("monitor", "stream"): stack.cli("mix", "output", mx, "fake.headphones")
-    for _ in range(40):
-        if out_link_target(stack, "monitor") == "fake.headphones" and out_link_target(stack, "stream") == "fake.headphones": break
-        time.sleep(0.1)
+    wait_for(lambda: out_link_target(stack, "monitor") == "fake.headphones" and out_link_target(stack, "stream") == "fake.headphones", timeout=4.0, what="out_link_target(stack, 'monitor') == 'fake.headphones' and out_link_ta")
     settle()
     both = stack.pw.level_at("fake.headphones")
     stack.cli("mix", "output", "stream", "none")
-    for _ in range(40):
-        if out_link_target(stack, "stream") == "kmixdeck.null": break
-        time.sleep(0.1)
+    wait_for(lambda: out_link_target(stack, "stream") == "kmixdeck.null", timeout=4.0, what="out_link_target(stack, 'stream') == 'kmixdeck.null'")
     settle()
     one = stack.pw.level_at("fake.headphones")
     assert 4 < both - one < 8, f"two identical mixes summed should read ≈ +6 dB, got {both - one:.1f} (both={both:.1f} one={one:.1f})"
@@ -148,9 +141,7 @@ def test_hardware_input_lands_in_its_channel_and_follows_the_cells(stack):
     try:
         stack.pw.wait_node("fake.mic")
         play = stack.pw.play_into("fake.mic.feed")
-        for _ in range(30):
-            if "fake.mic" in stack.cli("devices", "in", json_out=True): break
-            time.sleep(0.1)
+        wait_for(lambda: "fake.mic" in stack.cli("devices", "in", json_out=True), timeout=3.0, what="'fake.mic' in stack.cli('devices', 'in', json_out=True)")
         stack.cli("channel", "input", "voice", "fake.mic")
         stack.pw.wait_node("kmixdeck.in.voice")
         time.sleep(1.0)
@@ -160,9 +151,7 @@ def test_hardware_input_lands_in_its_channel_and_follows_the_cells(stack):
         assert stack.pw.level_at("kmixdeck.mix.stream") < SILENT and stack.pw.level_at("kmixdeck.mix.monitor") > HOT
         stack.cli("cell", "set", "voice", "stream", "1.0")
         stack.cli("channel", "input", "voice", "none")
-        for _ in range(40):
-            if stack.pw.node("kmixdeck.in.voice") is None: break
-            time.sleep(0.1)
+        wait_for(lambda: stack.pw.node("kmixdeck.in.voice") is None, timeout=4.0, what="stack.pw.node('kmixdeck.in.voice') is None")
         settle()
         assert stack.pw.level_at("kmixdeck.channel.voice") < SILENT, "detaching the input must stop the audio"
     finally:
@@ -185,9 +174,7 @@ def test_levels_survive_daemon_restart_exactly(stack, tone):
 def test_mix_master_fader_and_mute_hit_outputs_and_capture_source(stack, tone):
     """MX-6: the mix master sits on the mix sink → one control for every output and for OBS's capture source."""
     stack.cli("mix", "output", "stream", "fake.headphones")
-    for _ in range(40):
-        if out_link_target(stack, "stream") == "fake.headphones": break
-        time.sleep(0.1)
+    wait_for(lambda: out_link_target(stack, "stream") == "fake.headphones", timeout=4.0, what="out_link_target(stack, 'stream') == 'fake.headphones'")
     settle()
     base_dev = stack.pw.level_at("fake.headphones")
     assert base_dev > HOT
