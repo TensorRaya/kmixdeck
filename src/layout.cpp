@@ -23,8 +23,14 @@ QString Layout::channelEntry(const QString &slug) const {
     return Names::channelNode(slug);
 }
 QString Layout::mixEntry(const QString &slug) const {
+    // Cells always sum into the mix sink. Routing them into the chain instead would make the chain the summing
+    // bus and leave the sink (which every output edge and meter reads) dangling — measured 2026-09-19: the
+    // limiter node existed, got signal, and its output went nowhere while audio kept flowing sink → output edge.
+    return Names::mixNode(slug);
+}
+QString Layout::mixExit(const QString &slug) const {
     const auto *m = mix(slug);
-    if (m && m->fx.isActive()) return QStringLiteral("kmixdeck.fx.mix.%1").arg(slug);
+    if (m && m->fx.isActive()) return QStringLiteral("kmixdeck.fx.mix.%1.out").arg(slug);
     return Names::mixNode(slug);
 }
 

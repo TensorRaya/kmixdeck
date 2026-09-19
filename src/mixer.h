@@ -144,6 +144,7 @@ public:
     bool setInputDevice(const QString &slug, const DeviceRef &device);
     /// Input trim/mute (DV-14) = channelVolumes on kmixdeck.in.<slug> (playback side).
     double inputVolume(const QString &slug) const;
+    bool mixChainActive(const QString &slug) const;   // FX-10: is a mix chain live (gain-reduction meter)?
     double inputTrimLayout(const QString &slug) const;                    // DV-14: the wire's persisted value (also while unplugged)
     bool   inputMutedLayout(const QString &slug) const;
     double mixOutputTrimLayout(const QString &slug, int index) const;
@@ -308,6 +309,7 @@ private:
     QString m_lastError;
     void ensureEdgeLoopbackForInput(const QString &slug);
     void ensureAppRelays(const LayoutApp &a);            // CH-12: relay loopbacks for extra channels
+    void rebuildMixOutputEdges(const QString &slug, int triesLeft = 40);   // FX-6: output edges follow mixExit()
     void retargetWhenPresent(const QString &entry, const QList<uint32_t> &streams, int triesLeft);   // FX-5: after a chain swap
     void removeAppRelays(const LayoutApp &a);
     void notifyPresence();

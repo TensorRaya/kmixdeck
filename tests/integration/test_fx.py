@@ -163,3 +163,111 @@ def test_fx7_chain_copies_between_channels_even_with_absent_device():
         assert json.loads(s.cli("fx", "get", "channel", "absent_mic").stdout)["chain"] == src["chain"]
     finally:
         s.close(); pw.close()
+
+def test_fx6_a_mix_chain_actually_processes_the_sum_and_not_a_dead_end():
+    """FX-6/FX-10: a limiter on a MIX must change what leaves that mix.
+
+    The 2026-09-19 regression this pins down: the chain node was created, got signal, and its output went
+    nowhere — audio kept flowing mix sink → output edge, so `fx set mix` was silently a no-op. Checking for
+    the node's existence (what the old FX-6 assertion did) passes in exactly that broken state, so this test
+    measures the LEVEL behind the chain instead:
+
+      kmixdeck.mix.<slug>            the summing bus, before the chain
+      kmixdeck.fx.mix.<slug>.out     the chain's tail, what the output edges capture (Layout::mixExit)
+    """
+    pw, s = fixture_stack()
+    try:
+        play = subprocess.Popen(["pw-play", "-P", '{ application.name = "MixFxProbe" node.name = "mixfx-out" target.object = "kmixdeck.channel.voice" }',
+                                 str(s.pw.tone())], env=s.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1.2)
+        pre = s.pw.level_at("kmixdeck.mix.monitor")
+        assert pre > -30, f"the tone must reach the mix, got {pre}"
+
+        # The sandbox tone sits at about -24 dBFS and swh's limiter only accepts a -20..0 dB ceiling, so a limiter
+        # has nothing to clamp here. sc4m's ranges (threshold -30..0, ratio 1..20, attack from 1.5 ms, makeup 0..24)
+        # allow a compressor that bites at -30 dB with 20:1 — the same kind of mix effect (FX-6, FX-10 rides on it).
+        s.cli("fx", "set", "mix", "monitor", '{"enabled":true,"chain":[{"type":"compressor","enabled":true,"params":{"threshold":-30,"ratio":20,"attack":1.5,"release":50,"makeup":0}}]}')
+        assert wait(lambda: "kmixdeck.fx.mix.monitor.out" in node_names(s)), "chain tail never appeared"
+        time.sleep(1.5)
+
+        # The summing bus in front of the chain is unchanged. What matters is the level at the OUTPUT EDGE — that
+        # is what actually leaves towards the device. Measuring the chain's tail instead would pass even in the
+        # broken state, because the tail carried the processed signal while hanging in a dead end (verified by
+        # running this test against the pre-fix sources: the tail assertion passed, this one fails).
+        bus = s.pw.level_at("kmixdeck.mix.monitor")
+        edge = s.pw.level_at_port("kmixdeck.out.monitor.in", "monitor_FL")
+        assert bus > -30, f"the summing bus must still carry the tone, got {bus}"
+        assert edge < bus - 3.0, f"what LEAVES the mix must be processed: bus={bus} edge={edge}"
+
+        # and the output edge must capture the chain tail, not the raw sink
+        dump = json.loads(subprocess.run(["pw-dump"], env=s.pw.env, capture_output=True, text=True).stdout)
+        ids = {o["id"]: o["info"]["props"].get("node.name") for o in dump if o.get("type", "").endswith("Node")}
+        feeders = {ids.get(o["info"]["props"].get("link.output.node")) for o in dump
+                   if o.get("type", "").endswith("Link")
+                   and ids.get(o["info"]["props"].get("link.input.node")) == "kmixdeck.out.monitor.in"}
+        assert feeders == {"kmixdeck.fx.mix.monitor.out"}, f"output edge must read the chain tail, reads {feeders}"
+
+        # clearing the chain puts the plain sink back in charge; the level returns
+        s.cli("fx", "clear", "mix", "monitor")
+        assert wait(lambda: "kmixdeck.fx.mix.monitor" not in node_names(s))
+        time.sleep(1.5)
+        back = s.pw.level_at("kmixdeck.mix.monitor")
+        assert back > -30, f"clearing the chain must restore the path, got {back}"
+        play.terminate(); play.wait(timeout=5)
+    finally:
+        s.close(); pw.close()
+
+def test_fx10_brickwall_is_mix_only_and_its_gain_reduction_is_on_the_bus():
+    """FX-10: the broadcast limiter belongs to a mix, clamps the sum, and reports its gain reduction.
+
+    Three things the requirement asks for, each measured rather than assumed:
+      1. a channel MUST NOT be able to carry it (channels clip before the mix — the limiter is a mix property)
+      2. driving the mix INTO the ceiling must lower what leaves the mix
+      3. the reduction must be visible on the mix meter (published as "gr/<mix>" over org.kmixdeck1.Levels)
+    """
+    pw, s = fixture_stack()
+    try:
+        # 1. mix-only
+        r = s.cli("fx", "set", "channel", "voice", '{"enabled":true,"chain":[{"type":"brickwall","enabled":true,"params":{"ceiling":-1}}]}', check=False)
+        assert r.returncode != 0, "a channel must refuse the broadcast limiter"
+        assert json.loads(s.cli("fx", "get", "channel", "voice").stdout or "null") in ({}, None), "the refused chain must not be stored"
+
+        # the type is advertised, so a frontend can offer it
+        types = json.loads(s.cli("fx", "types").stdout)
+        bw = next((t for t in types if t["type"] == "brickwall"), None)
+        assert bw, "brickwall must be in FxTypes"
+        assert {p["key"] for p in bw["params"]} == {"ceiling", "gain", "release"}, bw["params"]
+        assert next(p for p in bw["params"] if p["key"] == "ceiling")["unit"] == "dBTP"
+
+        # 2. on the mix: the sandbox tone measures about -24 dBFS RMS, i.e. roughly -21 dBTP peak for a sine.
+        #    The plugin's input gain caps at +20 dB, so a -12 dBTP ceiling (not -1) is what this level can actually
+        #    be driven into: +20 dB lifts the peak to about -1 dBTP, 11 dB above the wall, and the limiter must
+        #    give those 11 dB back. Same stage FX-10 describes, only scaled to the sandbox's signal.
+        play = subprocess.Popen(["pw-play", "-P", '{ application.name = "BwProbe" node.name = "bw-out" target.object = "kmixdeck.channel.voice" }',
+                                 str(s.pw.tone())], env=s.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1.2)
+        assert s.cli("fx", "set", "mix", "monitor",
+                     '{"enabled":true,"chain":[{"type":"brickwall","enabled":true,"params":{"ceiling":-12,"gain":20,"release":0.5}}]}').returncode == 0
+        assert wait(lambda: "kmixdeck.fx.mix.monitor.out" in node_names(s)), "chain tail never appeared"
+        time.sleep(2.0)
+
+        bus = s.pw.level_at("kmixdeck.mix.monitor")
+        edge = s.pw.level_at_port("kmixdeck.out.monitor.in", "monitor_FL")
+        # +20 dB of input gain against a -12 dBTP wall: louder than the bus, but clearly short of the full +20.
+        assert edge > bus + 3.0, f"input gain must lift the sum: bus={bus} edge={edge}"
+        assert edge < bus + 17.0, f"the ceiling must clamp the lifted sum: bus={bus} edge={edge}"
+
+        # 3. gain reduction on the bus
+        levels = json.loads(s.cli("--json", "levels", "--once").stdout)
+        assert "gr/monitor" in levels, f"gain reduction missing from the level stream: {sorted(levels)[:12]}"
+        assert levels["gr/monitor"] >= 0.0, levels["gr/monitor"]
+
+        # and it disappears again when the chain goes away (a meaningless difference must not be published)
+        s.cli("fx", "clear", "mix", "monitor")
+        assert wait(lambda: "kmixdeck.fx.mix.monitor" not in node_names(s))
+        time.sleep(1.0)
+        after = json.loads(s.cli("--json", "levels", "--once").stdout)
+        assert "gr/monitor" not in after, "gain reduction must only be published while a chain is active"
+        play.terminate(); play.wait(timeout=5)
+    finally:
+        s.close(); pw.close()

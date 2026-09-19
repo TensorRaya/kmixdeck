@@ -209,7 +209,7 @@ bool Mixer::setFxChain(const QString &slug, const QJsonObject &chainJson) {
     fx::Chain *chain = chainOf(m_layout, slug);
     if (!chain) return false;
     const fx::Chain next = fx::Chain::fromJson(chainJson);
-    const QString why = fx::validate(next);
+    const QString why = fx::validate(next, m_layout.mix(slug) != nullptr);
     if (!why.isEmpty()) { qCWarning(lcMixer) << "kmixdeck: refusing fx chain:" << why; return false; }
     // Same topology (types, order, enabled flags) and only parameter values differ → this is a control tweak, not a
     // rebuild: write the controls live (glitch-free Props write, ADR 0008 finding 2) and keep the nodes. Every frontend
@@ -298,12 +298,13 @@ void Mixer::applyFx(const QString &slug) {
     if (const auto *c = m_layout.channel(slug)) { chain = c->fx; desc = c->name; plainName = Names::channelNode(slug); entry = QStringLiteral("kmixdeck.fx.%1").arg(slug); exit = entry + QStringLiteral(".out"); }
     else if (const auto *m = m_layout.mix(slug)) { chain = m->fx; desc = QStringLiteral("Mix: ") + m->name; plainName = Names::mixNode(slug); entry = QStringLiteral("kmixdeck.fx.mix.%1").arg(slug); exit = entry + QStringLiteral(".out"); }
     else return;
+    const bool isMix = m_layout.mix(slug) != nullptr;   // FX-6: a mix chain sits BEHIND the sink and has no streams to move
 
     // Streams currently on the entry (fx node) or the plain sink: remembered BEFORE the old chain goes away — with
     // node.dont-fallback a stream whose sink vanishes ends up unlinked, and nothing would find it afterwards.
     // (Measured: SetFx while playing → −inf on the mix until the app reconnected.) FX-5.
     QList<uint32_t> streams;
-    {
+    if (!isMix) {
         const auto e = m_graph.node(entry); const auto p = m_graph.node(plainName);
         for (const auto &n : m_graph.nodes()) {
             if (!n.mediaClass.contains(QLatin1String("Stream/Output")) || n.name.startsWith(QLatin1String("kmixdeck."))) continue;
@@ -320,14 +321,49 @@ void Mixer::applyFx(const QString &slug) {
         return;
     }
     if (!m_graph.node(plainName)) m_graph.createNullSink(plainName, desc, true);   // tail for the chain
-    const QString args = fx::renderFilterChainArgs(chain, desc, entry, exit, plainName, plainName, slug);
-    qCInfo(lcMixer) << "fx: rendered" << args.length() << "chars";
+    const QString args = fx::renderFilterChainArgs(chain, desc, entry, exit, plainName, plainName, slug, isMix);
+    qCInfo(lcMixer) << "fx: rendered" << args.length() << "chars" << (isMix ? "(behind the mix sink)" : "(in front of the channel sink)");
     if (args.isEmpty()) return;
     m_graph.loadLoopback(args, "libpipewire-module-filter-chain");
+    if (isMix) {
+        // FX-6: the chain's tail is the new source for every output edge and for the capture source (MX-3b).
+        // Rebuild those edges so they capture kmixdeck.fx.mix.<slug>.out instead of the raw sink — measured
+        // 2026-09-19: without this the chain runs in a dead end and the limiter has no effect on the stream.
+        rebuildMixOutputEdges(slug);
+        return;
+    }
     // the module's node appears asynchronously — retarget the remembered streams once it is there
     retargetWhenPresent(entry, streams, 40);
 }
 // Poll (registry events are what fill m_graph) until `entry` exists, then move the streams onto it.
+// FX-6: an output edge captures Layout::mixExit(), so turning a mix chain on or off changes its source.
+// A loopback cannot be re-pointed at a different capture target (node.target is read at load time), so the
+// edges of THIS mix are dropped and ensureEdgeLoopbacks() recreates them against the new exit node.
+void Mixer::rebuildMixOutputEdges(const QString &slug, int triesLeft) {
+    const auto *mx = m_layout.mix(slug);
+    if (!mx) return;
+    // The new capture target must EXIST before the edges are recreated: a loopback reads node.target at load
+    // time, so an edge built against a chain tail that is still coming up ends with no source at all (measured
+    // 2026-09-19: out.stream.in had zero inputs). Wait for the tail exactly like retargetWhenPresent() does.
+    const QString exitNode = m_layout.mixExit(slug);
+    if (exitNode != Names::mixNode(slug) && !m_graph.node(exitNode)) {
+        if (triesLeft > 0)
+            QTimer::singleShot(50, this, [this, slug, triesLeft] { rebuildMixOutputEdges(slug, triesLeft - 1); });
+        else
+            qCWarning(lcMixer) << "fx: chain tail" << exitNode << "never appeared; mix outputs keep the raw sink";
+        return;
+    }
+    QStringList gone;
+    for (int i = 0; i < qMax(1, int(mx->outputs.size())); ++i) gone << EdgeNames::outputNode(slug, i);
+    gone << EdgeNames::sourceNode(slug);
+    destroyOurNodes([&](const QString &n) {
+        for (const auto &g : gone) if (n == g || n == g + QStringLiteral(".in")) return true;
+        return false;
+    });
+    for (const auto &g : gone) m_edges.remove(g);
+    qCInfo(lcMixer) << "fx: rebuilding mix outputs of" << slug << "against" << exitNode;
+    ensureEdgeLoopbacks();
+}
 void Mixer::retargetWhenPresent(const QString &entry, const QList<uint32_t> &streams, int triesLeft) {
     if (streams.isEmpty() || triesLeft <= 0) return;
     if (!m_graph.node(entry)) { QTimer::singleShot(50, this, [this, entry, streams, triesLeft] { retargetWhenPresent(entry, streams, triesLeft - 1); }); return; }
@@ -683,6 +719,7 @@ void Mixer::setInputVolume(const QString &slug, double cubic, bool muted) {
     if (it != m_edges.end()) { it->volume = cubicToLinear(cubic); it->mute = muted; m_graph.setVolume(it->id, it->volume, muted); }
     Q_EMIT inputChanged(slug);
 }
+bool Mixer::mixChainActive(const QString &slug) const { const auto *m = m_layout.mix(slug); return m && m->fx.isActive(); }
 double Mixer::inputTrimLayout(const QString &slug) const { const auto *in = m_layout.input(slug); return in ? in->device.trim : 1.0; }
 bool Mixer::inputMutedLayout(const QString &slug) const { const auto *in = m_layout.input(slug); return in ? in->device.muted : false; }
 double Mixer::mixOutputTrimLayout(const QString &slug, int index) const { const auto *m = m_layout.mix(slug); return (m && index >= 0 && index < m->outputs.size()) ? m->outputs[index].trim : 1.0; }
@@ -838,7 +875,7 @@ void Mixer::ensureEdgeLoopbacks() {
             const QString target = m.outputs.isEmpty() ? QStringLiteral("kmixdeck.null") : m.outputs.first().node;
             const QString what = m.outputs.isEmpty() ? QStringLiteral("output") : m.outputs.first().description;
             m_graph.loadLoopback(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + what,
-                                              out0 + QStringLiteral(".in"), Names::mixNode(m.slug), true, m.outputs.isEmpty() ? QStringList{} : m.outputs.first().channelSidePositions(), false,
+                                              out0 + QStringLiteral(".in"), m_layout.mixExit(m.slug), !m.fx.isActive(), m.outputs.isEmpty() ? QStringList{} : m.outputs.first().channelSidePositions(), false,
                                               out0, target, m.outputs.isEmpty() ? QStringList{} : m.outputs.first().positions, true, false));
         }
         for (int n = 1; n < m.outputs.size(); ++n) {   // additional outputs (MX-9)
@@ -846,13 +883,13 @@ void Mixer::ensureEdgeLoopbacks() {
             if (m_graph.node(out)) continue;
             const DeviceRef &d = m.outputs[n];
             m_graph.loadLoopback(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + d.description,
-                                              out + QStringLiteral(".in"), Names::mixNode(m.slug), true, d.channelSidePositions(), false,
+                                              out + QStringLiteral(".in"), m_layout.mixExit(m.slug), !m.fx.isActive(), d.channelSidePositions(), false,
                                               out, d.node, d.positions, true, false));
         }
         const QString src = EdgeNames::sourceNode(m.slug);   // virtual capture source for OBS/Discord (MX-3b)
         if (!m_graph.node(src))
             m_graph.loadLoopback(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" (capture)"),
-                                              src + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,
+                                              src + QStringLiteral(".in"), m_layout.mixExit(m.slug), !m.fx.isActive(), {}, false,
                                               src, QString(), {}, false, false,
                                               QStringLiteral("node.description = %1 media.class = Audio/Source ")
                                                   .arg(QLatin1Char('"') + QStringLiteral("kmixdeck ") + m.name + QStringLiteral(" Mix\""))));

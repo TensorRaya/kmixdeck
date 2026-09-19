@@ -18,6 +18,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QTextStream>
+#include <QTimer>
 #include <QMap>
 #include <cmath>
 #include <cstdio>
@@ -121,6 +122,8 @@ int cmdStatus(const Objects &o) {
 
 class Watcher : public QObject {
     Q_OBJECT
+Q_SIGNALS:
+    void gotPeaks();   // `levels --once` quits on the first tick
 public Q_SLOTS:
     // Slot with a QDBusMessage parameter receives the raw message → we get the object path.
     void propertiesChanged(const QDBusMessage &msg) {
@@ -131,7 +134,10 @@ public Q_SLOTS:
         out.flush();
     }
     void peaks(const QVariantMap &p) {
-        if (g_json) { out << QJsonDocument(QJsonObject::fromVariantMap(p)).toJson(QJsonDocument::Compact) << "\n"; out.flush(); return; }
+        // The first tick after Subscribe() is empty: the daemon is still building the peak streams for the
+        // targets it just learned about. `--once` waits for a tick that actually carries readings.
+        if (!p.isEmpty()) Q_EMIT gotPeaks();
+        if (g_json) { if (p.isEmpty()) return; out << QJsonDocument(QJsonObject::fromVariantMap(p)).toJson(QJsonDocument::Compact) << "\n"; out.flush(); return; }
         QStringList keys = p.keys(); keys.sort();
         QString line;
         for (const auto &k : keys) {
@@ -620,12 +626,17 @@ struct Cli {
         const QDBusMessage r = mixer.call("Audition", QVariant::fromValue(QDBusObjectPath(target)));
         return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
     }
-    int cmdLevels() {   // live peaks, 25 Hz; Ctrl-C to stop. --json: one object per tick.
+    int cmdLevels() {   // live peaks, 25 Hz; Ctrl-C to stop. --json: one object per tick. --once: a single tick, then exit.
         QDBusInterface lv(BUS, ROOT, "org.kmixdeck1.Levels", QDBusConnection::sessionBus());
         QDBusReply<void> sub = lv.call("Subscribe");
         if (!sub.isValid()) return fail(NoService, sub.error().message());
+        const bool once = a.contains(QStringLiteral("--once"));
         auto *w = new Watcher; w->setParent(&app);
         QDBusConnection::sessionBus().connect(BUS, ROOT, "org.kmixdeck1.Levels", "Peaks", w, SLOT(peaks(QVariantMap)));
+        if (once) {   // scripts and tests want one reading, not a stream — quit after the first non-empty tick
+            QObject::connect(w, &Watcher::gotPeaks, &app, [] { QCoreApplication::quit(); });
+            QTimer::singleShot(4000, &app, [] { QCoreApplication::exit(int(Rejected)); });   // no tick at all = failure
+        }
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&lv] { lv.call("Unsubscribe"); });
         return app.exec();
     }
@@ -690,7 +701,7 @@ int main(int argc, char *argv[]) {
         "  mix     fallback <slug> <node.name|none>   played while every output is unplugged (DV-15)\n"
         "  devices [in]                               hardware outputs a mix can play to (in: sources a channel can be fed by)\n"
         "  devices hide|unhide <node.name>|hidden      CH-11: keep a device out of every picker (still routable by name)\n"
-        "  levels                                     live meters: peak '#', RMS '=', clip '!' (Ctrl-C to stop)\n"
+        "  levels [--once]                            live meters: peak '#', RMS '=', clip '!' (Ctrl-C to stop; --once = one reading)\n"
         "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
         "  cell    link <ch> <mix> <other-mix|none>   MX-7: this cell follows the other mix's cell (volume+mute)\n"
         "  fx      types                                  built-in effect catalog (JSON)\n"

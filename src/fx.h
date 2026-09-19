@@ -49,14 +49,14 @@ bool ladspaAvailable(const QString &file);
 QString packageHint(const QString &file);
 
 /// Validate a chain: known type, params in range, plugin present. Returns "" when fine, else the first problem.
-QString validate(const Chain &c);
+QString validate(const Chain &c, bool onMix = false);
 
 /// Render the `args` of libpipewire-module-filter-chain for this chain (disabled effects skipped).
 /// Streams target entryNode → chain → exitNode → targetSink. mediaName rides on BOTH sides so restored
 /// stream state keeps working across toggling effects. `description` shows up in pavucontrol-like tools.
 QString renderFilterChainArgs(const Chain &c, const QString &description, const QString &entryNode,
                               const QString &exitNode, const QString &mediaName, const QString &targetSink,
-                              const QString &idPrefix);
+                              const QString &idPrefix, bool behindSink = false);
 /// The Props param name filter-chain uses for a control at runtime, e.g. "gate:Threshold (dB)".
 /// Returns {name → value} for every enabled effect of the chain (for live updates without a reload).
 QVector<QPair<QString, double>> controlValues(const Chain &c, const QString &idPrefix);

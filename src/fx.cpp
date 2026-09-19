@@ -64,6 +64,14 @@ const QVector<TypeSpec> &builtinTypes() {
         {QStringLiteral("limiter"), QStringLiteral("Limiter"), QStringLiteral("brick wall against peaks"),
          {{QStringLiteral("limit"), QStringLiteral("Limit"), QStringLiteral("dB"), -20.0, 0.0, -3.0},
           {QStringLiteral("release"), QStringLiteral("Release"), QStringLiteral("s"), 0.01, 2.0, 0.5}}, QStringLiteral("fast_lookahead_limiter_1913")},
+        // FX-10: the broadcast-safe limiter for MIXES. Same swh plugin as "limiter", but the parameter the user
+        // sees is a ceiling in dBTP (Elgato calls this Clipguard) and the stage carries its own input gain so a
+        // quiet mix can be driven INTO the ceiling instead of sitting below it doing nothing. Mix-only: enforced
+        // in validate(), because channels are supposed to clip before the mix (the limiter is a mix property).
+        {QStringLiteral("brickwall"), QStringLiteral("Broadcast limiter"), QStringLiteral("brick wall on the mix sum — protects the stream from clipping"),
+         {{QStringLiteral("ceiling"), QStringLiteral("Ceiling"), QStringLiteral("dBTP"), -20.0, 0.0, -1.0},
+          {QStringLiteral("gain"), QStringLiteral("Input gain"), QStringLiteral("dB"), -20.0, 20.0, 0.0},
+          {QStringLiteral("release"), QStringLiteral("Release"), QStringLiteral("s"), 0.01, 2.0, 0.5}}, QStringLiteral("fast_lookahead_limiter_1913")},
         {QStringLiteral("noise"), QStringLiteral("Noise suppression"), QStringLiteral("RNNoise — ML denoiser for the microphone"),
          {{QStringLiteral("vad"), QStringLiteral("Voice threshold"), QStringLiteral("%"), 0.0, 100.0, 50.0}}, QStringLiteral("librnnoise_ladspa")},
     };
@@ -104,8 +112,12 @@ QJsonObject presetChains() {
     QJsonObject bcast = chain({QByteArrayLiteral("gate").constData(), QByteArrayLiteral("compressor").constData(), QByteArrayLiteral("eq").constData(), QByteArrayLiteral("limiter").constData()});
     return {{QStringLiteral("Voice — clean"), voice}, {QStringLiteral("Voice — broadcast"), bcast}};
 }
-QString validate(const Chain &c) {
+QString validate(const Chain &c, bool onMix) {
     for (const auto &e : c.effects) {
+        // FX-10: the broadcast limiter is a MIX property. Channels are supposed to clip before the mix does, and a
+        // per-channel brick wall would hide exactly the overload the streamer needs to see.
+        if (e.type == QLatin1String("brickwall") && !onMix)
+            return QStringLiteral("'brickwall' is a mix effect (FX-10) — put it on a mix, not on a channel");
         if (e.type == QLatin1String("ladspa")) {
             if (e.plugin.isEmpty()) return QStringLiteral("ladspa effect needs a plugin name");
             // Library presence matters only for effects that will be rendered. A bypassed effect whose library is missing
@@ -139,6 +151,7 @@ QString nodePrefix(const Effect &e) {
     if (e.type == QLatin1String("highpass")) return QStringLiteral("hp");
     if (e.type == QLatin1String("compressor")) return QStringLiteral("comp");
     if (e.type == QLatin1String("limiter")) return QStringLiteral("lim");
+    if (e.type == QLatin1String("brickwall")) return QStringLiteral("bw");
     return e.type;
 }
 double param(const Effect &e, const QString &key, double def) {
@@ -148,7 +161,7 @@ double param(const Effect &e, const QString &key, double def) {
 
 QString renderFilterChainArgs(const Chain &c, const QString &description, const QString &entryNode,
                               const QString &exitNode, const QString &mediaName, const QString &targetSink,
-                              const QString &idPrefix) {
+                              const QString &idPrefix, bool behindSink) {
     struct Rendered { QString node, inPort, outPort; QStringList extras; };   // one graph node per entry
     QVector<Rendered> nodes;
     QHash<QString, QString> uniq;                            // prefix → unique name with count
@@ -193,6 +206,11 @@ QString renderFilterChainArgs(const Chain &c, const QString &description, const 
             push(name, {QStringLiteral("type = ladspa"), QStringLiteral("plugin = fast_lookahead_limiter_1913"), QStringLiteral("label = fastLookaheadLimiter"),
                         QStringLiteral("control = { \"Limit (dB)\" = %1 \"Release time (s)\" = %2 }").arg(param(e, "limit", -3.0)).arg(param(e, "release", 0.5))},
                  QStringLiteral("Input 1"), QStringLiteral("Output 1"));
+        else if (e.type == QLatin1String("brickwall"))
+            push(name, {QStringLiteral("type = ladspa"), QStringLiteral("plugin = fast_lookahead_limiter_1913"), QStringLiteral("label = fastLookaheadLimiter"),
+                        QStringLiteral("control = { \"Input gain (dB)\" = %1 \"Limit (dB)\" = %2 \"Release time (s)\" = %3 }")
+                            .arg(param(e, "gain", 0.0)).arg(param(e, "ceiling", -1.0)).arg(param(e, "release", 0.5))},
+                 QStringLiteral("Input 1"), QStringLiteral("Output 1"));
         else if (e.type == QLatin1String("noise"))
             push(name, {QStringLiteral("type = ladspa"), QStringLiteral("plugin = librnnoise_ladspa"), QStringLiteral("label = noise_suppressor_stereo"),
                         QStringLiteral("control = { \"VAD Threshold (%%)\" = %1 }").arg(param(e, "vad", 50.0))}, QStringLiteral("Input"), QStringLiteral("Output"));
@@ -219,15 +237,37 @@ QString renderFilterChainArgs(const Chain &c, const QString &description, const 
 
     // capture side = the Audio/Sink streams target; media.name keeps the PLAIN channel/mix name so WirePlumber
     // stream-restore (volume + target per app) is untouched when effects turn on (ADR 0008 D3).
-    QString args = QStringLiteral("{ node.description = %1 audio.channels = 2 audio.position = [ FL FR ] "
-                                  "filter.graph = { nodes = [ %2 ] links = [ %3 ] inputs = [ \"%4:%5\" ] outputs = [ \"%6:%7\" ] } "
-                                  "capture.props = { node.name = %8 media.name = %9 media.class = Audio/Sink audio.position = [ FL FR ] node.description = %1 node.dont-fallback = true } "
-                                  "playback.props = { node.name = %10 media.name = %9 node.target = %11 node.passive = true node.linger = true node.dont-fallback = true } }")
-                       .arg(QLatin1Char('"') + description + QLatin1Char('"'), nodeBlocks.join(QLatin1Char(' ')), linkBlocks.join(QLatin1Char(' ')),
-                            nodes.first().node, nodes.first().inPort, nodes.last().node, nodes.last().outPort,
-                            QLatin1Char('"') + entryNode + QLatin1Char('"'), QLatin1Char('"') + mediaName + QLatin1Char('"'),
-                            QLatin1Char('"') + exitNode + QLatin1Char('"'), QLatin1Char('"') + targetSink + QLatin1Char('"'));
-    return args;
+    // FX-6/FX-10: a MIX chain sits BEHIND the mix sink — it captures that sink's monitor like a cell loopback does
+    // and leaves its playback side free for the output edges to read (Layout::mixExit). A CHANNEL chain sits IN FRONT
+    // of the channel sink: it IS the sink apps target, and its playback side feeds the plain sink (ADR 0008 D3).
+    const QString cap = behindSink
+        // stream.capture.sink = true is what makes a capture stream read a SINK's monitor instead of looking for a
+        // source — without it the stream gets no ports at all and stays suspended (measured 2026-09-19: the chain
+        // head had zero ports while the tail was already running). Same flag every cell/output edge uses.
+        ? QStringLiteral("capture.props = { node.name = %1 media.name = %2 node.target = %3 audio.position = [ FL FR ] "
+                         "stream.capture.sink = true node.passive = true node.dont-fallback = true node.linger = true "
+                         "node.dont-reconnect = true node.description = %4 }")
+              .arg(QLatin1Char('"') + entryNode + QLatin1Char('"'), QLatin1Char('"') + mediaName + QLatin1Char('"'),
+                   QLatin1Char('"') + targetSink + QLatin1Char('"'), QLatin1Char('"') + description + QLatin1Char('"'))
+        : QStringLiteral("capture.props = { node.name = %1 media.name = %2 media.class = Audio/Sink audio.position = [ FL FR ] "
+                         "node.description = %3 node.dont-fallback = true }")
+              .arg(QLatin1Char('"') + entryNode + QLatin1Char('"'), QLatin1Char('"') + mediaName + QLatin1Char('"'),
+                   QLatin1Char('"') + description + QLatin1Char('"'));
+    const QString play = behindSink
+        // NO node.passive on a mix chain's tail: the output edges capture FROM it and are passive themselves
+        // (like every cell's capture side). Two passive ends never get linked — measured 2026-09-19: the tail
+        // existed, the edge existed, and out.stream.in had zero inputs until this flag was dropped.
+        ? QStringLiteral("playback.props = { node.name = %1 media.name = %2 audio.position = [ FL FR ] "
+                         "node.linger = true node.dont-fallback = true }")
+              .arg(QLatin1Char('"') + exitNode + QLatin1Char('"'), QLatin1Char('"') + mediaName + QLatin1Char('"'))
+        : QStringLiteral("playback.props = { node.name = %1 media.name = %2 node.target = %3 "
+                         "node.passive = true node.linger = true node.dont-fallback = true }")
+              .arg(QLatin1Char('"') + exitNode + QLatin1Char('"'), QLatin1Char('"') + mediaName + QLatin1Char('"'),
+                   QLatin1Char('"') + targetSink + QLatin1Char('"'));
+    return QStringLiteral("{ node.description = %1 audio.channels = 2 audio.position = [ FL FR ] "
+                          "filter.graph = { nodes = [ %2 ] links = [ %3 ] inputs = [ \"%4:%5\" ] outputs = [ \"%6:%7\" ] } %8 %9 }")
+        .arg(QLatin1Char('"') + description + QLatin1Char('"'), nodeBlocks.join(QLatin1Char(' ')), linkBlocks.join(QLatin1Char(' ')),
+             nodes.first().node, nodes.first().inPort, nodes.last().node, nodes.last().outPort, cap, play);
 }
 
 QVector<QPair<QString, double>> controlValues(const Chain &c, const QString &idPrefix) {
@@ -246,6 +286,7 @@ QVector<QPair<QString, double>> controlValues(const Chain &c, const QString &idP
         else if (e.type == QLatin1String("gate")) { emit(name, "threshold", "Threshold (dB)", -40.0); emit(name, "attack", "Attack (ms)", 5.0); emit(name, "hold", "Hold (ms)", 50.0); emit(name, "decay", "Decay (ms)", 100.0); emit(name, "range", "Range (dB)", -90.0); }
         else if (e.type == QLatin1String("compressor")) { emit(name, "threshold", "Threshold level (dB)", -20.0); emit(name, "ratio", "Ratio (1:n)", 3.0); emit(name, "attack", "Attack time (ms)", 10.0); emit(name, "release", "Release time (ms)", 100.0); emit(name, "makeup", "Makeup gain (dB)", 0.0); }
         else if (e.type == QLatin1String("limiter")) { emit(name, "limit", "Limit (dB)", -3.0); emit(name, "release", "Release time (s)", 0.5); }
+        else if (e.type == QLatin1String("brickwall")) { emit(name, "ceiling", "Limit (dB)", -1.0); emit(name, "gain", "Input gain (dB)", 0.0); emit(name, "release", "Release time (s)", 0.5); }
         else if (e.type == QLatin1String("noise")) emit(name, "vad", "VAD Threshold (%)", 50.0);
         else for (auto it = e.params.constBegin(); it != e.params.constEnd(); ++it) out.append({name + QLatin1Char(':') + it.key(), it.value()});
     }

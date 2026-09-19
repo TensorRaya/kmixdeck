@@ -211,7 +211,21 @@ void AppObject::notifyChanged() {
 LevelsAdaptor::LevelsAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor(parent), m_mixer(mixer) {
     m_teardown.setSingleShot(true); m_teardown.setInterval(3000);
     connect(&m_teardown, &QTimer::timeout, this, &LevelsAdaptor::syncTargets);
-    connect(m_mixer->meters(), &pw::Meters::peaks, this, [this](const QHash<QString, float> &p) {
+    connect(m_mixer->meters(), &pw::Meters::peaks, this, [this](const QHash<QString, float> &raw) {
+        QHash<QString, float> p = raw;
+        // FX-10: gain reduction of a mix's brick-wall limiter. swh's limiter has an "Attenuation (dB)" OUTPUT
+        // control port, but PipeWire's filter-chain only exposes INPUT controls through Props (measured
+        // 2026-09-19), so the reduction is derived from the two meter points that already exist: the summing
+        // bus in front of the chain and the output edge behind it. Published as "gr/<mix>" in dB (>= 0), and
+        // only while a chain is actually active — otherwise the difference is meaningless noise.
+        for (const auto &slug : m_mixer->mixSlugs()) {
+            if (!m_mixer->mixChainActive(slug)) continue;
+            const auto bus = raw.constFind(Names::mixNode(slug));
+            const auto edge = raw.constFind(EdgeNames::outputNode(slug, 0));
+            if (bus == raw.constEnd() || edge == raw.constEnd()) continue;
+            p.insert(QStringLiteral("gr-src/") + slug, qMax(0.0f, *bus - *edge));
+        }
+
         if (m_subscribers.isEmpty()) return;
         QVariantMap out;
         for (auto it = p.cbegin(); it != p.cend(); ++it) out.insert(meterKey(it.key()), static_cast<double>(it.value()));
@@ -252,6 +266,8 @@ void LevelsAdaptor::onNameOwnerChanged(const QString &name, const QString &, con
 QString LevelsAdaptor::meterKey(const QString &n) const {
     // CH-7 companions arrive as "rms/<node>" / "clip/<node>" and keep their prefix in front of the public key
     for (const char *pre : {"rms/", "clip/"}) if (n.startsWith(QLatin1String(pre))) return QLatin1String(pre) + meterKey(n.mid(int(strlen(pre))));
+    // FX-10: already a public key, computed above rather than read from a node
+    if (n.startsWith(QLatin1String("gr-src/"))) return QStringLiteral("gr/") + n.mid(7);
     if (n.startsWith(QLatin1String("kmixdeck.channel."))) return QStringLiteral("channel/") + n.mid(17);
     if (n.startsWith(QLatin1String("kmixdeck.mix.")))     return QStringLiteral("mix/") + n.mid(13);
     if (n.startsWith(QLatin1String("kmixdeck.link.")))    { const auto p = n.mid(14).split(QLatin1Char('.')); if (p.size() == 2) return QStringLiteral("cell/%1/%2").arg(p[0], p[1]); }

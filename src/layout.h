@@ -143,6 +143,10 @@ struct Layout {
     /// Where streams should aim: the fx entry when a chain is active, the plain node otherwise (ADR 0008).
     QString channelEntry(const QString &slug) const;
     QString mixEntry(const QString &slug) const;
+    /// FX-6: what a mix OUTPUT captures from. A mix sums into its sink; an active mix chain sits BEHIND that
+    /// sink (limiter on the sum, FX-10), so every output edge and the capture source must read the chain's
+    /// tail instead of the raw sink. Cells keep targeting the sink itself (mixEntry) — they are the summing bus.
+    QString mixExit(const QString &slug) const;
 };
 
 /// Node names of the device-edge loopbacks (ADR 0007).
