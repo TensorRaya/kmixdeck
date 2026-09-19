@@ -6,3 +6,7 @@ __pycache__/
 streamdeck/**/plugin.log
 streamdeck/**/__pycache__/
 *.mo
+
+# Vorsorge: nie eine lokale Umgebungsdatei mitcommitten (release-gate SOLL)
+.env
+.env.*
