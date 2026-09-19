@@ -155,6 +155,9 @@ inline QString outputNode(const QString &mixSlug, int index) {
                       : QStringLiteral("kmixdeck.out.%1.%2").arg(mixSlug).arg(index);
 }
 inline QString sourceNode(const QString &mixSlug) { return QStringLiteral("kmixdeck.source.") + mixSlug; }
+/// DV-29: the pass-through of a virtual device — what apps play into `.out` port N appears on the source's port N,
+/// so a channel wired to the device hears the app (Loopback's "virtual device" semantics). One loopback per device.
+inline QString virtualPassNode(const QString &virtSlug) { return QStringLiteral("kmixdeck.virt.") + virtSlug + QStringLiteral(".pass"); }   // only "<pass>.in" exists as a node; the playback half is inputNode()
 /// CH-12: one relay loopback per extra channel of a multi-assigned app — captures from the primary channel
 /// sink and plays into the next one, so every assigned channel hears the app. Key: <appKey>.<channelSlug>.
 inline QString relayNode(const QString &appKey, const QString &channelSlug) {
@@ -165,6 +168,7 @@ inline QString relayNode(const QString &appKey, const QString &channelSlug) {
 /// One loopback = one module-loopback args string. Shared by the config renderer and the runtime path so the
 /// two can never drift (ADR 0002/0007). Device-side streams get node.linger + dont-fallback: they wait for an
 /// absent device instead of dying, and WirePlumber links them by itself when the device appears (D3).
+QString virtualPassArgs(const LayoutVirtualDevice &v);   // DV-29
 QString loopbackArgs(const QString &description,
                      const QString &captureName, const QString &captureTarget, bool captureIsSink, const QStringList &capturePositions, bool captureLinger,
                      const QString &playbackName, const QString &playbackTarget, const QStringList &playbackPositions, bool playbackLinger, bool playbackDontReconnect,

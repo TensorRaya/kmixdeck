@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kmixdeck\n"
 "Report-Msgid-Bugs-To: https://github.com/TensorRaya/kmixdeck/issues\n"
-"POT-Creation-Date: 2026-09-18 00:35+0200\n"
+"POT-Creation-Date: 2026-09-19 01:52+0200\n"
 "PO-Revision-Date: 2026-09-17 14:00+0200\n"
 "Last-Translator: Raya Elena Solano\n"
 "Language-Team: German\n"
@@ -29,7 +29,7 @@ msgstr "Bilder (*.png *.svg *.svgz *.jpg *.jpeg *.webp)"
 
 #: src/frontend/kdeintegration.cpp:21 src/frontend/kdeintegration.cpp:70
 #: src/frontend/kdeintegration.cpp:190 src/frontend/kdeintegration.cpp:195
-#: src/frontend/kdeintegration.cpp:202 src/main.cpp:51 src/qml/Main.qml:12
+#: src/frontend/kdeintegration.cpp:202 src/main.cpp:52 src/qml/Main.qml:12
 #: src/qml/Main.qml:19
 #, kde-format
 msgid "kmixdeck"
@@ -130,19 +130,19 @@ msgstr "%1 stumm"
 msgid "%1 unmuted"
 msgstr "%1 hörbar"
 
-#: src/frontend/mixerclient.cpp:282
+#: src/frontend/mixerclient.cpp:284
 #, kde-format
 msgctxt "@label ref bound to the left side only"
 msgid " → L"
 msgstr " → L"
 
-#: src/frontend/mixerclient.cpp:283
+#: src/frontend/mixerclient.cpp:285
 #, kde-format
 msgctxt "@label ref bound to the right side only"
 msgid " → R"
 msgstr " → R"
 
-#: src/frontend/mixerclient.cpp:307
+#: src/frontend/mixerclient.cpp:309
 #, kde-format
 msgid ""
 "Connect a source to a channel, a channel to a mix, or a mix to an output."
@@ -150,54 +150,54 @@ msgstr ""
 "Eine Quelle mit einem Kanal verbinden, einen Kanal mit einem Mix oder einen "
 "Mix mit einem Ausgang."
 
-#: src/frontend/mixerclient.cpp:322
+#: src/frontend/mixerclient.cpp:324
 #, kde-format
 msgid "The capture device of a mix is always connected."
 msgstr "Das Aufnahmegerät eines Mixes ist immer verbunden."
 
-#: src/frontend/mixerclient.cpp:323
+#: src/frontend/mixerclient.cpp:325
 #, kde-format
 msgid "A device feeds a channel, not a mix — add a channel first."
 msgstr "Ein Gerät speist einen Kanal, keinen Mix — zuerst einen Kanal anlegen."
 
-#: src/frontend/mixerclient.cpp:324
+#: src/frontend/mixerclient.cpp:326
 #, kde-format
 msgid "These two cannot be wired."
 msgstr "Diese beiden lassen sich nicht verbinden."
 
-#: src/frontend/mixerclient.cpp:383
+#: src/frontend/mixerclient.cpp:385
 #, kde-format
 msgctxt "@label stereo row"
 msgid "1 (L)"
 msgstr "1 (L)"
 
-#: src/frontend/mixerclient.cpp:383
+#: src/frontend/mixerclient.cpp:385
 #, kde-format
 msgctxt "@label stereo row"
 msgid "2 (R)"
 msgstr "2 (R)"
 
-#: src/frontend/mixerclient.cpp:442 src/qml/RoutingPage.qml:161
+#: src/frontend/mixerclient.cpp:444 src/qml/RoutingPage.qml:161
 #, kde-format
 msgid "Capture: %1"
 msgstr "Aufnahme: %1"
 
-#: src/main.cpp:52
+#: src/main.cpp:53
 #, kde-format
 msgid "A streamer's audio mixer for KDE Plasma on PipeWire"
 msgstr "Der Audio-Mixer für Streaming auf KDE Plasma mit PipeWire"
 
-#: src/main.cpp:53
+#: src/main.cpp:54
 #, kde-format
 msgid "© 2026 kmixdeck contributors"
 msgstr "© 2026 die kmixdeck-Mitwirkenden"
 
-#: src/main.cpp:56
+#: src/main.cpp:57
 #, kde-format
 msgid "Raya Elena Solano"
 msgstr "Raya Elena Solano"
 
-#: src/main.cpp:56
+#: src/main.cpp:57
 #, kde-format
 msgid "Maintainer"
 msgstr "Betreuung"

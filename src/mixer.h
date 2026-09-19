@@ -180,6 +180,13 @@ private:
     // Nodes we asked PipeWire to create that have not shown up in the registry yet. reconcile() runs again on
     // every graph event; without this, two reconciles a few ms apart created the same node twice (DV-23 test).
     QSet<QString> m_nodeRequested;
+    /// DV-30: loopbacks we asked for whose playback node has not shown up yet, with the moment we asked. A node still
+    /// missing after ~3 s is an edge that failed asynchronously (EMFILE shows as "Protocol error" on the module's own
+    /// core, pw_context_load_module returns success) → LastError. Key: playback node name; value: description + ms.
+    QHash<QString, QPair<QString, qint64>> m_edgePending;
+    QTimer m_edgeWatch;
+    void expectEdge(const QString &playbackNode, const QString &description);
+    void checkPendingEdges();
     void requestNullNode(const QString &name, const std::function<void()> &create);
 public:
     /// ADR 0009 D4: non-monitor ports of a device node, as "POSITION|port.name|port.alias" — for pickers.
@@ -251,6 +258,12 @@ public:
     static double linearToCubic(float lin) { return std::cbrt(static_cast<double>(lin)); }
     static float  cubicToLinear(double cub) { return static_cast<float>(cub * cub * cub); }
 
+    /// DV-31: human label for a device port. Hardware counts 0-based in PipeWire (Ui24R: AUX0..AUX31) while the desk's
+    /// surface counts 1-based ("Aux 1/2 = Main"); our virtual devices already count 1-based. Label = 1-based number
+    /// ("USB 1" for AUX0 on a device whose positions start at 0), identity for everything else.
+    QString portLabel(const QString &node, const QString &position) const;
+    /// Accept a label ("USB 1") or a PipeWire position ("AUX0") in a ref and return the position; "" if neither exists.
+    QString resolvePortName(const QString &node, const QString &nameOrLabel) const;
     QString lastError() const { return m_lastError; }   // last graph-level failure (EMFILE, bad module args); "" = none
 
 Q_SIGNALS:

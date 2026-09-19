@@ -145,7 +145,7 @@ class PwDaemon:
         name = f"kmixdeck-rec-{time.time_ns()}"
         rec = subprocess.Popen(["pw-record", "-P", "{ node.autoconnect = false node.name = %s }" % name,
                                 "--rate", "48000", "--channels", str(channels), "--format", "s16", str(out)],
-                               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         links = [(src, dst.replace("pw-record:", name + ":", 1)) for src, dst in links]
         linked = False
         for _ in range(80):
@@ -162,7 +162,12 @@ class PwDaemon:
         rec.terminate()
         try: rec.wait(timeout=3)
         except subprocess.TimeoutExpired: rec.kill(); rec.wait()
-        assert out.exists() and out.stat().st_size > 1000, f"recording from {what} is empty"
+        if not (out.exists() and out.stat().st_size > 1000):
+            lk = subprocess.run(["pw-link", "-l"], env=self.env, capture_output=True, text=True).stdout
+            mine = [l.strip() for l in lk.splitlines() if name in l or any(src in l for src, _ in links)]
+            err = rec.stderr.read()[-400:] if rec.stderr else ""
+            raise AssertionError(f"recording from {what} is empty (size={out.stat().st_size if out.exists() else None}, rec rc={rec.returncode}, stderr={err!r}, "
+                                 f"link attempts ok={ok}/{len(links)}, graph lines: {mine[:6]})")
         return out
 
     def record_port(self, node: str, port: str, seconds: float = 1.5) -> Path:

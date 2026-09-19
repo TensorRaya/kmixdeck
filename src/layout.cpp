@@ -163,6 +163,27 @@ static QString q(const QString &s) { QString r = s; r.replace(QLatin1Char('\\'),
 // first named = the stream's left, second = right; measured on a fake 4-port sink).
 static QString pos(const QStringList &p) { return p.isEmpty() ? QStringLiteral("[ FL FR ]") : QStringLiteral("[ ") + p.join(QLatin1Char(' ')) + QStringLiteral(" ]"); }
 
+QString virtualPassArgs(const LayoutVirtualDevice &v) {
+    // The capture half reads the sink's monitor (stream.capture.sink); the playback half IS the device's input side:
+    // media.class Audio/Source with the input positions — the same shape as the mix capture source
+    // (kmixdeck.source.<mix>). A separate null source with a loopback merely *targeting* it never got a single link
+    // from WirePlumber in the sandbox (measured 2026-09-19: node.target, target.object, passive, always-process — all
+    // 0 links, the loopback nodes never even grew ports). Port N of the sink lands on port N of the source (equal
+    // position names); the device's usable input count is min(inputs, outputs).
+    // node.async = true is not optional: a virtual device is typically BOTH a channel's input and a mix's output
+    // ("Games" plays into it, the "Games" channel hears it, the stream mix returns to it for the Ui24R). That is a
+    // cycle in the scheduling graph — .out → pass → source → channel edge → channel → mix → .out — and PipeWire
+    // cannot order a cyclic graph: every node in the loop stays "running" and never gets a buffer. Measured
+    // 2026-09-19 (sandbox): the moment `mix output stream <virt>.out:AUX7,AUX8` landed, every recorder anywhere in
+    // that subgraph produced a 44-byte WAV. An async node breaks the cycle with one quantum of delay (~21 ms at
+    // 1024/48000), which is fine for a return path and invisible for a monitor.
+    const int n = std::min(v.inputs, v.outputs);
+    const QStringList pos = v.positions(n);
+    return loopbackArgs(v.name + QStringLiteral(" (virtual) pass-through"),
+                        EdgeNames::virtualPassNode(v.slug) + QStringLiteral(".in"), v.outputNode(), true, pos, false,
+                        v.inputNode(), QString(), pos, false, false,
+                        QStringLiteral("node.description = %1 media.class = Audio/Source node.async = true ").arg(q(v.name + QStringLiteral(" (virtual)"))));
+}
 QString loopbackArgs(const QString &description,
                      const QString &captureName, const QString &captureTarget, bool captureIsSink, const QStringList &capturePositions, bool captureLinger,
                      const QString &playbackName, const QString &playbackTarget, const QStringList &playbackPositions, bool playbackLinger, bool playbackDontReconnect,
@@ -207,8 +228,10 @@ QString Layout::toPipewireConf() const {
     for (const auto &v : virtualDevices) {   // DV-23: virtual multichannel device = one sink (its outputs) + one virtual source (its inputs)
         out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = %1 media.name = %1 node.description = %2 media.class = Audio/Sink object.linger = true audio.position = %3 monitor.channel-volumes = true } }\n")
                    .arg(q(v.outputNode()), q(v.name + QStringLiteral(" (virtual) outputs")), pos(v.positions(v.outputs)));
-        out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = %1 media.name = %1 node.description = %2 media.class = Audio/Source/Virtual object.linger = true audio.position = %3 } }\n")
-                   .arg(q(v.inputNode()), q(v.name + QStringLiteral(" (virtual)")), pos(v.positions(v.inputs)));
+        if (v.outputs <= 0)   // no output side: the input side stays a standalone virtual source (feed its input_* ports = mic emulation)
+            out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = %1 media.name = %1 node.description = %2 media.class = Audio/Source/Virtual object.linger = true audio.position = %3 } }\n")
+                       .arg(q(v.inputNode()), q(v.name + QStringLiteral(" (virtual)")), pos(v.positions(v.inputs)));
+        // otherwise the input side is the playback half of the pass-through loopback below (DV-29)
     }
     const auto fxModule = [&](const fx::Chain &chain, const QString &desc, const QString &entry, const QString &exit,
                               const QString &mediaName, const QString &target, const QString &prefix) {
@@ -240,6 +263,9 @@ QString Layout::toPipewireConf() const {
             mod(loopbackArgs(c.name + QStringLiteral(" → ") + m.name, cell + QStringLiteral(".in"), Names::channelNode(c.slug), true, {}, false,
                              cell, mixEntry(m.slug), {}, false, true));
         }
+    for (const auto &v : virtualDevices)   // DV-29: .out port N → source port N; the loopback's playback half IS the source
+        if (v.outputs > 0 && v.inputs > 0)
+            mod(virtualPassArgs(v));
     for (const auto &i : inputs)   // physical input → channel (ADR 0007 D2); capture side waits for the device
         mod(loopbackArgs(QStringLiteral("Input: ") + i.name, EdgeNames::inputNode(i.slug) + QStringLiteral(".in"), i.device.node, false, i.device.positions, true,
                          EdgeNames::inputNode(i.slug), channelEntry(i.channel), i.device.channelSidePositions(), false, true));

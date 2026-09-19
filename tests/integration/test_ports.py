@@ -30,9 +30,12 @@ def stack():
     s.close(); pw.close()
 
 
-def make_device(stack, name, desc, media_class):
+def make_device(stack, name, desc, media_class, positions=None):
+    # audio.channels alongside the positions, as a driver-backed node carries it (the Ui24R shows AUX0..AUX31).
+    pos = "[ " + " ".join(positions) + " ]" if positions else POS
+    chans = f"audio.channels={len(positions)} " if positions else ""
     subprocess.run(["pw-cli", "create-node", "adapter",
-                    f'{{ factory.name=support.null-audio-sink node.name={name} node.description="{desc}" media.class={media_class} audio.position={POS} object.linger=true }}'],
+                    f'{{ factory.name=support.null-audio-sink node.name={name} node.description="{desc}" media.class={media_class} {chans}audio.position={pos} object.linger=true }}'],
                    env=stack.pw.env, capture_output=True)
     stack.pw.wait_node(name)
     for _ in range(50):   # the daemon must have seen it (Mixer.InputDevices / OutputDevices)
@@ -161,7 +164,7 @@ def test_dv23_virtual_multichannel_device_is_a_real_device_and_persists(stack):
     # a channel from two of its ports hears exactly those (same measurement as DV-17, on the virtual device)
     stack.cli("channel", "add", "Deck"); stack.cli("channel", "input", "deck", f"{node}:AUX5,AUX6")
     stack.pw.wait_node("kmixdeck.in.deck.in"); time.sleep(0.8)
-    p = stack.pw.play_into_port(node, "input_AUX5")
+    p = stack.pw.play_into_port(node + ".out", "playback_AUX5")
     try:
         left = wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.deck", "monitor_FL"), lambda v: v > HOT)
         right = stack.pw.level_at_port("kmixdeck.channel.deck", "monitor_FR")
@@ -194,7 +197,7 @@ def test_dv21_side_bound_input_feeds_only_that_side(stack):
     wait_for(lambda: node in stack.cli("devices", "in", json_out=True), timeout=5.0, what="node in stack.cli('devices', 'in', json_out=True)")
     stack.cli("channel", "add", "Right Only"); stack.cli("channel", "input", "right_only", f"{node}:AUX1>R")
     stack.pw.wait_node("kmixdeck.in.right_only.in"); time.sleep(0.8)
-    p = stack.pw.play_into_port(node, "input_AUX1")
+    p = stack.pw.play_into_port(node + ".out", "playback_AUX1")
     try:
         right = wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.right_only", "monitor_FR"), lambda v: v > HOT)
         left = stack.pw.level_at_port("kmixdeck.channel.right_only", "monitor_FL")
@@ -241,7 +244,7 @@ def test_dv21_side_bound_output_sends_only_that_side_of_the_mix(stack):
     stack.cli("channel", "add", "Left Mic"); stack.cli("channel", "input", "left_mic", f"{node}:AUX1>L")
     stack.pw.wait_node("kmixdeck.in.left_mic.in"); time.sleep(0.8)
     stack.cli("cell", "set", "left_mic", "stream", "1.0")
-    p = stack.pw.play_into_port(node, "input_AUX1")
+    p = stack.pw.play_into_port(node + ".out", "playback_AUX1")
     try:
         l = wait_level(lambda: stack.pw.level_at_port("kmixdeck.mix.stream", "monitor_FL"), lambda v: v > HOT)
         a5 = stack.pw.level_at_port(node + ".out", "monitor_AUX5")
@@ -249,7 +252,7 @@ def test_dv21_side_bound_output_sends_only_that_side_of_the_mix(stack):
     finally:
         p.kill(); p.wait()
     stack.cli("channel", "input", "left_mic", f"{node}:AUX1>R"); time.sleep(1.2)
-    p = stack.pw.play_into_port(node, "input_AUX1")
+    p = stack.pw.play_into_port(node + ".out", "playback_AUX1")
     try:
         a5 = wait_level(lambda: stack.pw.level_at_port(node + ".out", "monitor_AUX5"), lambda v: v > HOT)
         a6 = stack.pw.level_at_port(node + ".out", "monitor_AUX6")
@@ -262,7 +265,7 @@ def test_dv21_side_bound_output_sends_only_that_side_of_the_mix(stack):
 def test_dv25_several_wires_into_one_channel_from_two_devices(stack):
     """ADR 0009 B1 / DV-25: a channel takes several wires. Ui24R 3 → left, RØDECaster-ish device 1 → right; each
     side hears only its wire; both survive a daemon restart; removing the primary promotes the other wire."""
-    ui = stack.cli("devices", "virtual", "add", "Wire Ui24R", "--in", "4", "--out", "2").stdout.strip()
+    ui = stack.cli("devices", "virtual", "add", "Wire Ui24R", "--in", "4", "--out", "4").stdout.strip()
     rc = stack.cli("devices", "virtual", "add", "Wire Rode", "--in", "2", "--out", "2").stdout.strip()
     for n in (ui, rc): stack.pw.wait_node(n)
     for _ in range(50):
@@ -278,13 +281,13 @@ def test_dv25_several_wires_into_one_channel_from_two_devices(stack):
 
     def sides():
         return stack.pw.level_at_port("kmixdeck.channel.duo", "monitor_FL"), stack.pw.level_at_port("kmixdeck.channel.duo", "monitor_FR")
-    p = stack.pw.play_into_port(ui, "input_AUX3")
+    p = stack.pw.play_into_port(ui + ".out", "playback_AUX3")
     try:
         l = wait_level(lambda: sides()[0], lambda v: v > HOT); r = sides()[1]
         assert l > HOT and r < SILENT, f"Ui24R wire must land LEFT only: L={l} R={r}"
     finally:
         p.kill(); p.wait()
-    p = stack.pw.play_into_port(rc, "input_AUX1")
+    p = stack.pw.play_into_port(rc + ".out", "playback_AUX1")
     try:
         r = wait_level(lambda: sides()[1], lambda v: v > HOT); l = sides()[0]
         assert r > HOT and l < SILENT, f"Rode wire must land RIGHT only: L={l} R={r}"
@@ -301,7 +304,7 @@ def test_dv25_several_wires_into_one_channel_from_two_devices(stack):
     stack.restart_daemon()
     assert stack.cli("channel", "inputs", "duo", json_out=True) == [f"{ui}:AUX3>L", f"{rc}:AUX1>R", f"{ui}:AUX4>R"], "wires must survive a restart"
     stack.pw.wait_node("kmixdeck.in.duo.w1.in"); time.sleep(0.8)
-    p = stack.pw.play_into_port(rc, "input_AUX1")
+    p = stack.pw.play_into_port(rc + ".out", "playback_AUX1")
     try:
         assert wait_level(lambda: sides()[1], lambda v: v > HOT) > HOT, "right wire silent after restart"
     finally:
@@ -429,7 +432,7 @@ def test_dv22_pan_moves_a_mono_source_between_the_sides_and_persists(stack):
     stack.pw.wait_node("kmixdeck.in.panner.in"); time.sleep(0.8)
     stack.cli("cell", "set", "panner", "stream", "1.0"); stack.cli("cell", "mute", "panner", "stream", "off")
     def lr(): return stack.pw.level_at_port("kmixdeck.channel.panner", "monitor_FL"), stack.pw.level_at_port("kmixdeck.channel.panner", "monitor_FR")
-    p = stack.pw.play_into_port(ui, "input_AUX1")
+    p = stack.pw.play_into_port(ui + ".out", "playback_AUX1")
     try:
         l, r = wait_level(lambda: lr()[0], lambda v: v > HOT), lr()[1]
         assert l > HOT and r > HOT and abs(l - r) < 1.5, f"centre must be equal both sides: L={l} R={r}"
@@ -450,7 +453,7 @@ def test_dv22_pan_moves_a_mono_source_between_the_sides_and_persists(stack):
     stack.restart_daemon()
     assert stack.cli("channel", "pan", "panner").stdout.strip() == "-0.5"
     stack.pw.wait_node("kmixdeck.in.panner.in"); time.sleep(1.0)
-    p = stack.pw.play_into_port(ui, "input_AUX1")
+    p = stack.pw.play_into_port(ui + ".out", "playback_AUX1")
     try:
         wait_level(lambda: lr()[0], lambda v: v > HOT); time.sleep(0.6)   # let both meters settle on the steady tone
         diffs = []
@@ -540,27 +543,31 @@ def test_dv28_ui24r_scale_32_in_32_out_every_port_routable_and_fast(stack):
     for i in range(1, 33): stack.cli("channel", "input-add", f"in_{i}", f"{din}:AUX{i}")
     took = stack.pw.wait_nodes([f"kmixdeck.in.in_{i}" for i in range(1, 33)], timeout=30)
     assert took < 10, f"32 input edges took {took:.1f}s"
+    # DV-29: whatever a mix returns to the desk's outputs is audible on the desk's inputs of the same number — the
+    # pass-through is the point of a virtual device. A channel listening to the port a mix returns on is a feedback loop
+    # exactly like on the real desk, so the returns go to ports no channel listens to.
+    for i in (1, 2, 31, 32): stack.cli("channel", "input-remove", f"in_{i}", f"{din}:AUX{i}")
     stack.cli("mix", "output-add", "stream", f"{dout}:AUX1,AUX2")
     stack.cli("mix", "output-add", "monitor", f"{dout}:AUX31,AUX32")
     assert stack.cli("channel", "input-add", "in_21", f"{din}:AUX22>R").returncode == 0     # second wire, side-bound (DV-21/25)
     assert stack.cli("channel", "input-add", "in_1", f"{din}:AUX99", check=False).returncode != 0   # no such port → refused
     time.sleep(1.5)
-    p = stack.pw.play_into_port(din, "input_AUX32")
+    p = stack.pw.play_into_port(din + ".out", "playback_AUX30")
     try:
-        wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.in_32", "monitor_FL"), lambda x: x > HOT)
-        assert stack.pw.level_at_port("kmixdeck.channel.in_1", "monitor_FL") < SILENT, "port 32 leaked into channel 1"
-        stack.cli("cell", "volume", "in_32", "stream", "1.0", check=False)
+        wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.in_30", "monitor_FL"), lambda x: x > HOT)
+        assert stack.pw.level_at_port("kmixdeck.channel.in_3", "monitor_FL") < SILENT, "port 30 leaked into channel 3"
+        stack.cli("cell", "volume", "in_30", "stream", "1.0", check=False)
         wait_level(lambda: stack.pw.level_at_port(dout, "monitor_AUX1"), lambda x: x > HOT - 30)
         assert stack.pw.level_at_port(dout, "monitor_AUX31") > HOT - 30, "monitor mix did not reach AUX31"
         assert stack.pw.level_at_port(dout, "monitor_AUX5") < SILENT, "an unused output port carries signal"
     finally:
         p.kill(); p.wait()
     stack.restart_daemon()
-    back = stack.pw.wait_nodes([f"kmixdeck.in.in_{i}" for i in range(1, 33)] + ["kmixdeck.out.stream", "kmixdeck.out.monitor"], timeout=40)
+    back = stack.pw.wait_nodes([f"kmixdeck.in.in_{i}" for i in range(3, 31)] + ["kmixdeck.out.stream", "kmixdeck.out.monitor"], timeout=40)
     assert back < 15, f"restart: 32 edges took {back:.1f}s to return"
     assert set(stack.cli("channel", "inputs", "in_21").stdout.split()) == {f"{din}:AUX21", f"{din}:AUX22>R"}
     layout = json.loads(open(os.path.join(stack.env["XDG_CONFIG_HOME"], "kmixdeck", "layout.json")).read())
-    assert len([i for i in layout["inputs"] if i["channel"].startswith("in_")]) == 33
+    assert len([i for i in layout["inputs"] if i["channel"].startswith("in_")]) == 29   # 28 listening channels + the side wire on in_21
     # leave the module-wide stack as we found it: 32 channels + 64 loopbacks + a 32×32 device made every later test
     # in this file run in a ~150-node graph — DV-6 went red only in that state (ports-full2, 2026-09-17)
     for i in range(1, 33): stack.cli("channel", "remove", f"in_{i}", check=False)
@@ -578,7 +585,7 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
     import subprocess
     # the "laptop": speakers + headphones + a 4-in interface, one input wire, one app
     make_fake_sink(stack, "fake.speakers", "Laptop Speakers"); make_fake_sink(stack, "fake.cans", "Headphones")
-    stack.cli("devices", "virtual", "add", "Interface", "--in", "4", "--out", "2"); stack.pw.wait_nodes(["kmixdeck.virt.interface"])
+    stack.cli("devices", "virtual", "add", "Interface", "--in", "4", "--out", "4"); stack.pw.wait_nodes(["kmixdeck.virt.interface"])
     iface = "kmixdeck.virt.interface"
     for _ in range(50):   # node first, its ports a moment later (ctest25 under load: "has no port 'AUX3'")
         if "AUX3" in stack.cli("devices", "ports", iface, check=False).stdout: break
@@ -616,7 +623,7 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
         raise AssertionError("cell mute voice/stream never landed in the daemon (restore-stream race?)")
     stack.pw.wait_nodes(["kmixdeck.in.mic", "kmixdeck.out.stream", "kmixdeck.out.monitor"])
     time.sleep(1.0)
-    tone = stack.pw.play_into_port(iface, "input_AUX3")
+    tone = stack.pw.play_into_port(iface + ".out", "playback_AUX3")
     try:
         before = settled_level(lambda: stack.pw.level_at("fake.speakers"), lambda v: v > SILENT + 10, tries=15)
         assert before > SILENT + 10, "baseline: mic tone should reach the speakers via the stream mix"
@@ -638,11 +645,11 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
             log = subprocess.run(["tail", "-c", "1500", stack.daemon_log_path], capture_output=True, text=True).stdout
             raise AssertionError(f"daemon still sees a removed device after 10 s: mic InputPresent={next(c for c in st['channels'] if c['Slug'] == 'mic')['InputPresent']} stream OutputPresent={next(m for m in st['mixes'] if m['Slug'] == 'stream')['OutputPresent']}\n graph still has: {live}\n devices: {devs}\n daemon log: {log}")
         # --- wake: everything re-enumerates (new ids), in a different order than it left
-        stack.cli("devices", "virtual", "add", "Interface", "--in", "4", "--out", "2")
+        stack.cli("devices", "virtual", "add", "Interface", "--in", "4", "--out", "4")
         make_fake_sink(stack, "fake.cans", "Headphones"); make_fake_sink(stack, "fake.speakers", "Laptop Speakers")
         stack.pw.wait_nodes([iface, "fake.cans", "fake.speakers"])
         tone.kill(); tone.wait()
-        tone = stack.pw.play_into_port(iface, "input_AUX3")
+        tone = stack.pw.play_into_port(iface + ".out", "playback_AUX3")
         t0 = time.time()
         after = wait_level(lambda: stack.pw.level_at("fake.speakers"), lambda v: v > SILENT + 10, tries=25)
         if not after > SILENT + 10:
@@ -727,14 +734,14 @@ def test_dv30_rewiring_a_channel_retargets_its_links(stack):
     want = sorted([f"{node}:capture_AUX3", f"{node}:capture_AUX4"])
     wait_for(lambda: sources() == want, timeout=10, what=f"links after rewire, got {sources()}")
     # audio follows: AUX4 → right only, AUX2 (old) → nothing
-    p = stack.pw.play_into_port(node, "input_AUX4")
+    p = stack.pw.play_into_port(node + ".out", "playback_AUX4")
     try:
         right = wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.patch", "monitor_FR"), lambda v: v > HOT)
         left = stack.pw.level_at_port("kmixdeck.channel.patch", "monitor_FL")
         assert right > HOT and left < SILENT, f"AUX4 → R only: L={left} R={right}"
     finally:
         p.kill(); p.wait()
-    p = stack.pw.play_into_port(node, "input_AUX2")
+    p = stack.pw.play_into_port(node + ".out", "playback_AUX2")
     try:
         time.sleep(0.8)
         assert stack.pw.level_at_port("kmixdeck.channel.patch", "monitor_FL") < SILENT, "old port AUX2 still reaches the channel"
@@ -755,21 +762,21 @@ def test_dv30b_fd_limit_lifted_and_a_failed_edge_is_reported_not_swallowed(stack
     # (b) restart the daemon under a hard limit too small for even one loopback client
     stack.daemon.terminate(); stack.daemon.wait(timeout=5)
     def clamp():
-        # 40: enough for the daemon core + one null node (measured: idle daemon 14 fds, a virtual device ~8), not for a
-        # loopback module (own client: socket + memfds + eventfds ≈ 10). Do not tune this by feel — re-measure.
-        resource.setrlimit(resource.RLIMIT_NOFILE, (40, 40))
+        # 24: enough for the daemon core + one null node (measured 2026-09-19: idle daemon 14 fds, the .out sink → 23), not for the
+        # pass-through loopback (own client: socket + memfds + eventfds → 29 with it). Do not tune this by feel — re-measure.
+        resource.setrlimit(resource.RLIMIT_NOFILE, (24, 24))
     stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL,
                                     stderr=open(stack.daemon_log_path, "a"), text=True, preexec_fn=clamp)
     wait_for(lambda: stack.cli("status", check=False).returncode == 0, timeout=15, what="daemon up under fd clamp")
     node = stack.cli("devices", "virtual", "add", "Clamp", "--in", "2", "--out", "2").stdout.strip()
-    stack.pw.wait_node(node)
-    stack.cli("channel", "add", "Starved"); stack.cli("channel", "input", "starved", f"{node}:AUX1", check=False)
+    stack.pw.wait_node(node + ".out")   # the sink is a plain null node; the source side is a loopback (DV-29) — the first starved edge
     err = wait_for(lambda: stack.cli("status", json_out=True)["lastError"], timeout=10, what="LastError after a starved edge")
     assert "edge could not be created" in err, err
     assert "!! edge could not be created" in stack.cli("status").stdout
-    assert "Too many open files" in open(stack.daemon_log_path).read()
+    log = open(stack.daemon_log_path).read()   # either path names the edge: synchronous load failure or the async watcher
+    assert "edge could not be created" in log and ("never appeared" in log or "failed to load" in log), log[-600:]
     # back to a healthy daemon for the rest of the session
-    stack.cli("channel", "remove", "starved", check=False); stack.cli("devices", "virtual", "remove", "clamp", check=False)
+    stack.cli("devices", "virtual", "remove", "clamp", check=False)
     stack.restart_daemon()
     assert stack.cli("status", json_out=True)["lastError"] == ""
 
@@ -779,7 +786,7 @@ def test_dv30c_thirtytwo_by_thirtytwo_desk_never_loses_an_edge(stack):
     Every edge node must come up and LastError must stay empty — this is exactly what failed on hardware at fd 1024."""
     node = stack.cli("devices", "virtual", "add", "Desk", "--in", "32", "--out", "32").stdout.strip()
     din, dout = node, node + ".out"
-    stack.pw.wait_node(din); stack.pw.wait_node(dout)
+    stack.pw.wait_node(dout); stack.pw.wait_node(din, timeout=15)
     for i in range(1, 33):
         stack.cli("channel", "add", f"d{i}"); stack.cli("channel", "input", f"d{i}", f"{din}:AUX{i}")
     for k in range(4):
@@ -792,3 +799,32 @@ def test_dv30c_thirtytwo_by_thirtytwo_desk_never_loses_an_edge(stack):
     for k in range(4): stack.cli("mix", "remove", f"r{k}")
     for i in range(1, 33): stack.cli("channel", "remove", f"d{i}")
     stack.cli("devices", "virtual", "remove", "desk")
+
+
+def test_dv31_zero_based_hardware_gets_one_based_labels_and_refs_accept_both(stack):
+    """DV-31 (Ui24R 2026-09-18): the desk's USB ports are AUX0..AUX31 in PipeWire while its surface counts 1-based, so
+    'Aux 1/2 = Main' was patched as AUX1/AUX2 — one channel off. `devices ports` must show the 1-based label next to the
+    PipeWire name, and a ref may use either. Virtual devices (AUX1..) and FL/FR keep position == label."""
+    # a 0-based hardware stand-in (null source with AUX0..AUX3, like the USB driver names them)
+    # Audio/Source/Virtual, not plain Audio/Source: a null *source* without an input side drops AUX0 from its port set
+    # (measured 2026-09-19 — sinks and virtual sources keep it; the driver-backed Ui24R node has AUX0 as well)
+    make_device(stack, "fake.desk", "Desk 0-based", "Audio/Source/Virtual", positions=["AUX0", "AUX1", "AUX2", "AUX3"])
+    stack.pw.wait_node("fake.desk"); wait_for(lambda: "fake.desk" in stack.cli("devices", "in").stdout, timeout=10, what="fake.desk listed")
+    wait_for(lambda: len(stack.cli("--json", "devices", "ports", "fake.desk", json_out=True)) == 4, timeout=10, what="4 ports registered")
+    ports = stack.cli("--json", "devices", "ports", "fake.desk", json_out=True)
+    by_pos = {p["position"]: p for p in ports}
+    assert by_pos["AUX0"]["label"] == "USB 1" and by_pos["AUX3"]["label"] == "USB 4", ports
+    text = stack.cli("devices", "ports", "fake.desk").stdout
+    assert "AUX0" in text and "USB 1" in text, text
+    # a ref by label resolves to the position, and the layout stores the position (stable across restarts, DV-9)
+    stack.cli("channel", "add", "Main"); assert stack.cli("channel", "input", "main", "fake.desk:USB 1,USB 2").returncode == 0
+    assert stack.cli("channel", "inputs", "main").stdout.split() == ["fake.desk:AUX0,AUX1"]
+    # by position still works, and a wrong one is refused with a message that names both spellings
+    assert stack.cli("channel", "input", "main", "fake.desk:AUX2,AUX3").returncode == 0
+    r = stack.cli("channel", "input", "main", "fake.desk:AUX4", check=False)
+    assert r.returncode != 0 and "USB " in r.stderr and "AUX" in r.stderr, r.stderr   # both spellings offered
+    # virtual devices are 1-based already: label == position, no relabeling
+    node = stack.cli("devices", "virtual", "add", "Plain", "--in", "2", "--out", "2").stdout.strip(); stack.pw.wait_node(node)
+    vports = stack.cli("--json", "devices", "ports", node, json_out=True)
+    assert all(p["label"] == p["position"] for p in vports), vports
+    stack.cli("channel", "remove", "main"); stack.cli("devices", "virtual", "remove", "plain"); destroy_node(stack, "fake.desk")

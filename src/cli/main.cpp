@@ -183,10 +183,14 @@ struct Cli {
         return Ok; }
     // ADR 0009: "node[:POS,POS]" — the daemon logs a refusal but a D-Bus property Set cannot carry an error, so
     // the CLI checks the reference against Mixer.DevicePorts first and verifies the write by reading back.
-    bool checkRef(QString ref, bool source, QString *why) {
+    /// Validates a ref and, on success, rewrites it to canonical form: positions as PipeWire names them (DV-31 — a user
+    /// may type the 1-based label "USB 1"; the daemon stores and echoes AUX0, so the round-trip check below must compare
+    /// against that).
+    bool checkRef(QString &refInOut, bool source, QString *why) {
+        QString ref = refInOut, sideSuffix;
         int arrow = ref.lastIndexOf(QLatin1Char('>')); if (arrow < 0) arrow = ref.lastIndexOf(QLatin1Char('<'));   // ADR 0009 A2 side
         bool hasSide = false;
-        if (arrow > 0) { const QString side = ref.mid(arrow + 1).toUpper(); if (side != "L" && side != "R") { *why = QStringLiteral("side must be L or R: node:POS>L"); return false; } ref = ref.left(arrow); hasSide = true; }
+        if (arrow > 0) { const QString side = ref.mid(arrow + 1).toUpper(); if (side != "L" && side != "R") { *why = QStringLiteral("side must be L or R: node:POS>L"); return false; } sideSuffix = ref.mid(arrow); ref = ref.left(arrow); hasSide = true; }
         if (hasSide && ref.count(QLatin1Char(',')) > 0) { *why = QStringLiteral("a side (>L / >R) takes exactly one port: node:POS>L"); return false; }
         const QString node = ref.section(QLatin1Char(':'), 0, 0);
         const StringMap devs = qdbus_cast<StringMap>(o.mixer.value(source ? "InputDevices" : "OutputDevices"));
@@ -194,8 +198,17 @@ struct Cli {
         if (!ref.contains(QLatin1Char(':'))) return true;
         const QStringList want = ref.section(QLatin1Char(':'), 1).split(QLatin1Char(','), Qt::SkipEmptyParts);
         if (want.isEmpty() || want.size() > 2) { *why = QStringLiteral("a virtual device is mono (1 port) or stereo (2 ports): node:POS or node:POS,POS"); return false; }
-        QStringList have; for (const auto &t : qdbus_cast<PortMap>(o.mixer.value("DevicePorts")).value(node)) have << t.section(QLatin1Char('|'), 0, 0);
-        for (const auto &w : want) if (!have.contains(w)) { *why = QStringLiteral("device '%1' has no port '%2' (see `kmixdeck devices ports %1`)").arg(node, w); return false; }
+        // DV-31: a ref may name a port by PipeWire position (AUX0) or by its label (USB 1); the daemon stores the position
+        QStringList have, labels; for (const auto &t : qdbus_cast<PortMap>(o.mixer.value("DevicePorts")).value(node)) { have << t.section(QLatin1Char('|'), 0, 0); labels << t.section(QLatin1Char('|'), 3, 3); }
+        QStringList canon;
+        for (const auto &w : want) {
+            const QString t = w.trimmed();
+            if (have.contains(t)) { canon << t; continue; }
+            int li = -1; for (int i = 0; i < labels.size(); ++i) if (labels[i].compare(t, Qt::CaseInsensitive) == 0) { li = i; break; }
+            if (li < 0) { *why = QStringLiteral("device '%1' has no port '%2' — name it as PipeWire does (%3) or by label (%4); see `kmixdeck devices ports %1`").arg(node, t, have.value(0), labels.value(0)); return false; }
+            canon << have[li];
+        }
+        refInOut = node + QLatin1Char(':') + canon.join(QLatin1Char(',')) + sideSuffix;
         return true;
     }
 
@@ -306,13 +319,14 @@ struct Cli {
                 }
             if (g_json) {
                 QJsonArray arr;
-                for (const auto &t : pm.value(a[2])) { const auto f = t.split(QLatin1Char('|')); arr.append(QJsonObject{{"position", f.value(0)}, {"port", f.value(1)}, {"alias", f.value(2)}, {"usedBy", QJsonArray::fromStringList(users.value(f.value(0)) + users.value(QStringLiteral("*")))}}); }
+                for (const auto &t : pm.value(a[2])) { const auto f = t.split(QLatin1Char('|')); arr.append(QJsonObject{{"position", f.value(0)}, {"port", f.value(1)}, {"alias", f.value(2)}, {"label", f.value(3, f.value(0))}, {"usedBy", QJsonArray::fromStringList(users.value(f.value(0)) + users.value(QStringLiteral("*")))}}); }
                 out << QJsonDocument(arr).toJson(); return Ok;
             }
             for (const auto &t : pm.value(a[2])) {
                 const auto f = t.split(QLatin1Char('|'));
                 const QStringList u = users.value(f.value(0)) + users.value(QStringLiteral("*"));
-                out << QStringLiteral("%1  %2%3\n").arg(f.value(0), -8).arg(f.value(1), -28).arg(u.isEmpty() ? QString() : QStringLiteral("in use by ") + u.join(QStringLiteral(", ")));
+                const QString label = f.value(3, f.value(0));
+                out << QStringLiteral("%1  %2  %3%4\n").arg(f.value(0), -8).arg(label == f.value(0) ? QString() : label, -8).arg(f.value(1), -28).arg(u.isEmpty() ? QString() : QStringLiteral("in use by ") + u.join(QStringLiteral(", ")));
             }
             return Ok;
         }
@@ -397,7 +411,7 @@ struct Cli {
         if (sub == "mute" && ch) { bool b; if (!parseBool(a, 3, &b)) return fail(Usage, "on|off"); return setProp(pathOf(a[2]), iface, "Muted", b, &e) ? Ok : fail(Rejected, e); }
         if (sub == "input" && ch) {   // channel input <slug> [<node[:POS,POS]>|none] — ADR 0009 refs
             if (a.size() < 4) { const QString ref = unwrap(objs.value(pathOf(a[2])).value("InputDevice")).toString(); if (g_json) out << QJsonDocument(QJsonObject{{"InputDevice", ref}}).toJson(); else out << (ref.isEmpty() ? QStringLiteral("none") : ref) << "\n"; return Ok; }
-            const QString dev = a[3] == "none" ? QString() : a[3];
+            QString dev = a[3] == "none" ? QString() : a[3];
             if (!dev.isEmpty() && !checkRef(dev, true, &e)) return fail(NotFound, e);
             if (!setProp(pathOf(a[2]), iface, "InputDevice", dev, &e)) return fail(Rejected, e);
             QDBusInterface chObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
@@ -447,6 +461,7 @@ struct Cli {
         }
         if ((sub == "output-add" || sub == "output-remove") && !ch) {
             if (!need(4)) return Usage;
+            if (sub == "output-add" && !checkRef(a[3], false, &e)) return fail(NotFound, e);   // DV-31: labels → positions
             QDBusInterface mixObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
             const QDBusMessage r = mixObj.call(sub == "output-add" ? "AddOutput" : "RemoveOutput", a[3]);
             return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
@@ -457,7 +472,7 @@ struct Cli {
         }
         if (sub == "output" && !ch) {   // mix output <slug> <node[:POS,POS]|none> — ADR 0009 refs
             if (!need(4)) return Usage;
-            const QString dev = a[3] == "none" ? QString() : a[3];
+            QString dev = a[3] == "none" ? QString() : a[3];
             if (!dev.isEmpty() && !checkRef(dev, false, &e)) return fail(NotFound, e);
             if (!setProp(pathOf(a[2]), iface, "OutputDevice", dev, &e)) return fail(Rejected, e);
             QDBusInterface mxObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
