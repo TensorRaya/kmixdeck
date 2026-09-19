@@ -716,19 +716,10 @@ bool Mixer::deleteScene(const QString &name) {
     Q_EMIT scenesChanged();
     return true;
 }
-bool Mixer::recallScene(const QString &name, bool exclusive) {
-    const QString path = scenePath(name);
-    QFile f(path);
-    if (path.isEmpty() || !f.open(QIODevice::ReadOnly)) { qCWarning(lcMixer) << "scene: no such scene" << name; return false; }
-    const QJsonObject sc = QJsonDocument::fromJson(f.readAll()).object();
-    f.close();
-    if (sc.isEmpty()) { qCWarning(lcMixer) << "scene: unreadable" << name; return false; }
-
-    // Undo first (CH-9): the CURRENT state becomes the undo entry, so a recall is one Ctrl-Z away.
-    m_undo = QJsonObject{{QStringLiteral("what"), tr("Recalled scene “%1”").arg(name)},
-                         {QStringLiteral("kind"), QStringLiteral("scene")},
-                         {QStringLiteral("scene"), captureScene()}};
-
+// CT-9: the apply half of a scene, shared by recallScene() and undo(). Pulled out 2026-09-19 when the
+// scene-undo branch needed exactly this and duplicating it would have meant two places to keep in sync.
+bool Mixer::applyScene(const QJsonObject &sc, bool exclusive) {
+    if (sc.isEmpty()) return false;
     // Everything in one pass, then a single reconcile: faders move together rather than one after another.
     for (const auto &v : sc.value(QStringLiteral("cells")).toArray()) {
         const auto o = v.toObject();
@@ -772,6 +763,22 @@ bool Mixer::recallScene(const QString &name, bool exclusive) {
     if (!dev.isEmpty() && dev != m_layout.listeningDevice) setListeningDevice(dev);
 
     saveLayout(); reconcile();
+    return true;
+}
+bool Mixer::recallScene(const QString &name, bool exclusive) {
+    const QString path = scenePath(name);
+    QFile f(path);
+    if (path.isEmpty() || !f.open(QIODevice::ReadOnly)) { qCWarning(lcMixer) << "scene: no such scene" << name; return false; }
+    const QJsonObject sc = QJsonDocument::fromJson(f.readAll()).object();
+    f.close();
+    if (sc.isEmpty()) { qCWarning(lcMixer) << "scene: unreadable" << name; return false; }
+
+    // Undo first (CH-9): the CURRENT state becomes the undo entry, so a recall is one Ctrl-Z away.
+    m_undo = QJsonObject{{QStringLiteral("what"), tr("Recalled scene “%1”").arg(name)},
+                         {QStringLiteral("kind"), QStringLiteral("scene")},
+                         {QStringLiteral("scene"), captureScene()}};
+
+    if (!applyScene(sc, exclusive)) return false;
     qCInfo(lcMixer) << "scene recalled:" << name << (exclusive ? "(exclusive)" : "(additive)");
     Q_EMIT sceneRecalled(name);
     Q_EMIT layoutChanged();
@@ -1410,6 +1417,17 @@ void Mixer::snapshotForUndo(const QString &kind, const QString &slug) {
 bool Mixer::undo() {
     if (m_undo.isEmpty()) return false;
     const QJsonObject u = m_undo; m_undo = {};
+    // CT-9/CH-9: a scene recall parks the PREVIOUS mixable state here, not a deleted channel or mix. It has
+    // no "layout" member, so without this branch the slug below stays empty and undo() bailed out with
+    // false — while UndoDescription still advertised “Recalled scene …”. The CLI checked the description
+    // first, so `kmixdeck undo` after a recall printed "nothing to undo" and exited 4: the spec's
+    // "Recall MUST be undoable" was simply not true. Found 2026-09-19 by the first CT-9 test.
+    if (u.value(QStringLiteral("kind")).toString() == QLatin1String("scene")) {
+        const bool ok = applyScene(u.value(QStringLiteral("scene")).toObject(), /*exclusive=*/false);
+        Q_EMIT undoChanged();
+        if (ok) Q_EMIT layoutChanged();
+        return ok;
+    }
     const QJsonObject lay = u.value(QStringLiteral("layout")).toObject();
     const QString slug = lay.value(QStringLiteral("slug")).toString();
     const bool isCh = u.value(QStringLiteral("kind")).toString() == QLatin1String("channel");

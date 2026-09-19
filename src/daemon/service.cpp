@@ -377,9 +377,24 @@ void MixerAdaptor::Undo() {
     if (!m_mixer->undo()) static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.Failed"), QStringLiteral("nothing to undo"));
 }
 QStringList MixerAdaptor::scenes() const { return m_mixer->scenes(); }
-void MixerAdaptor::SaveScene(const QString &name) { m_mixer->saveScene(name); }
-void MixerAdaptor::RecallScene(const QString &name, bool exclusive) { m_mixer->recallScene(name, exclusive); }
-void MixerAdaptor::DeleteScene(const QString &name) { m_mixer->deleteScene(name); }
+// CT-9: these three return void on the bus (see interfaces/org.kmixdeck1.Mixer.xml) — so a failure has to
+// travel through the D-Bus ERROR channel, not a return value. Dropping the bool on the floor made every
+// call look like a success: `kmixdeck scene recall does-not-exist` exited 0 and printed nothing, and a
+// frontend had no way to tell a recalled scene from a typo. Found 2026-09-19 by the first CT-9 test.
+// replyError (NOT sendErrorReply — MixerAdaptor is no QDBusContext, that is the CellObject/ChannelObject
+// pattern) keeps the signature and the shipped XML exactly as they are: this is not a contract change.
+void MixerAdaptor::SaveScene(const QString &name) {
+    if (!m_mixer->saveScene(name))
+        static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.Failed"), QStringLiteral("cannot save scene '%1': see the daemon log").arg(name));
+}
+void MixerAdaptor::RecallScene(const QString &name, bool exclusive) {
+    if (!m_mixer->recallScene(name, exclusive))
+        static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no such scene '%1'").arg(name));
+}
+void MixerAdaptor::DeleteScene(const QString &name) {
+    if (!m_mixer->deleteScene(name))
+        static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no such scene '%1'").arg(name));
+}
 QString MixerAdaptor::FirstRunPlan() { return QString::fromUtf8(QJsonDocument(m_mixer->firstRunPlan()).toJson(QJsonDocument::Compact)); }
 QString MixerAdaptor::FirstRunApply() {
     QString why; const QJsonObject done = m_mixer->firstRunApply(&why);

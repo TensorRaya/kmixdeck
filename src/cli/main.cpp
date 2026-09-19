@@ -39,6 +39,7 @@ constexpr const char *ROOT = "/org/kmixdeck1";
 enum Exit { Ok = 0, Usage = 1, NoService = 2, NotFound = 3, Rejected = 4 };
 QTextStream out(stdout), err(stderr);
 bool g_json = false;
+bool g_once = false;   // FX-10: with --once the JSON stream must stay ONE object — see Watcher::peaks()
 
 QVariant unwrap(const QVariant &v) {
     if (v.canConvert<QDBusVariant>()) return unwrap(v.value<QDBusVariant>().variant());
@@ -122,6 +123,7 @@ int cmdStatus(const Objects &o) {
 
 class Watcher : public QObject {
     Q_OBJECT
+    int m_maxKeys = 0, m_stableTicks = 0, m_ticks = 0;   // FX-10: see peaks() — the key set grows in stages
 Q_SIGNALS:
     void gotPeaks();   // `levels --once` quits on the first tick
     void gotLoudness();   // `loudness --once` quits on the first reading
@@ -168,8 +170,22 @@ public Q_SLOTS:
     void peaks(const QVariantMap &p) {
         // The first tick after Subscribe() is empty: the daemon is still building the peak streams for the
         // targets it just learned about. `--once` waits for a tick that actually carries readings.
-        if (!p.isEmpty()) Q_EMIT gotPeaks();
-        if (g_json) { if (p.isEmpty()) return; out << QJsonDocument(QJsonObject::fromVariantMap(p)).toJson(QJsonDocument::Compact) << "\n"; out.flush(); return; }
+        // 🔴 "not empty" was the wrong bar (fixed 2026-09-19 while chasing the FX-10 test). Building those
+        // streams is NOT atomic and not even single-staged: channel/* report first, mix/* a few ticks later,
+        // and out/* (the edge behind a mix's FX chain) later still. A reader that quits on the first non-empty
+        // tick therefore sees a TRUNCATED set — FX-10's gr/<mix> needs both mix/ and out/, so it saw nothing
+        // and concluded the limiter was broken. Waiting for one specific prefix only moves the goalpost, so
+        // the bar is STABILITY: quit once the set of keys stopped growing for three consecutive ticks
+        // (25 Hz → 120 ms of quiet), capped so a permanently growing graph cannot hang the caller.
+        if (p.isEmpty()) return;
+        const int n = p.size();
+        if (n > m_maxKeys) { m_maxKeys = n; m_stableTicks = 0; } else { ++m_stableTicks; }
+        const bool finalTick = m_stableTicks >= 3 || ++m_ticks >= 40;   // 40 ticks ≈ 1.6 s hard ceiling
+        // With --once the caller parses ONE object (json.loads), so the ticks we skip while the set grows must
+        // not be printed — otherwise this fix would trade a missing key for a parse error.
+        if (g_once && !finalTick) return;
+        if (finalTick) Q_EMIT gotPeaks();
+        if (g_json) { out << QJsonDocument(QJsonObject::fromVariantMap(p)).toJson(QJsonDocument::Compact) << "\n"; out.flush(); return; }
         QStringList keys = p.keys(); keys.sort();
         QString line;
         for (const auto &k : keys) {
@@ -331,6 +347,8 @@ struct Cli {
         if (sub == QLatin1String("save")) {
             const QDBusMessage r = mx.call(QStringLiteral("SaveScene"), name);
             if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
+            // The re-read stays on purpose: SaveScene now reports its own failures (2026-09-19), but this also
+            // catches a scene that was written and then vanished — cheap, and it is the user's proof it is stored.
             if (!mx.property("Scenes").toStringList().contains(name)) return fail(Rejected, QStringLiteral("daemon did not store scene '%1' (see its log)").arg(name));
             return Ok;
         }
@@ -718,6 +736,7 @@ struct Cli {
         QDBusReply<void> sub = lv.call("Subscribe");
         if (!sub.isValid()) return fail(NoService, sub.error().message());
         const bool once = a.contains(QStringLiteral("--once"));
+        g_once = once;
         auto *w = new Watcher; w->setParent(&app);
         QDBusConnection::sessionBus().connect(BUS, ROOT, "org.kmixdeck1.Levels", "Peaks", w, SLOT(peaks(QVariantMap)));
         if (once) {   // scripts and tests want one reading, not a stream — quit after the first non-empty tick

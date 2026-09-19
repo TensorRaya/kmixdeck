@@ -137,6 +137,34 @@ Kirigami.AbstractApplicationWindow {
             }
             Kirigami.Separator { Layout.fillWidth: true }
             RowLayout {
+                // CT-9: recall a scene straight from the tray — the one place where you switch a whole
+                // setup without opening the window. Opt-in rule (owner 2026-09-18): absent until a scene
+                // exists, and saving stays in the window where the name can be typed.
+                QQC2.ToolButton {
+                    objectName: "traySceneRecall"
+                    visible: Mixer.scenes.length > 0
+                    icon.name: "view-presentation"
+                    text: i18np("Scene", "Scenes", Mixer.scenes.length)
+                    display: QQC2.AbstractButton.TextBesideIcon
+                    QQC2.ToolTip.text: i18n("Recall a saved scene: %1", Mixer.scenes.join(", ")); QQC2.ToolTip.visible: hovered
+                    onClicked: sceneMenu.popup()
+                    QQC2.Menu {
+                        id: sceneMenu
+                        objectName: "traySceneMenu"
+                        Instantiator {
+                            model: Mixer.scenes
+                            delegate: QQC2.MenuItem {
+                                required property string modelData
+                                objectName: "traySceneItem/" + modelData
+                                text: modelData
+                                icon.name: "media-playback-start"
+                                onTriggered: { Mixer.recallScene(modelData, true); pop.close() }
+                            }
+                            onObjectAdded: (index, object) => sceneMenu.insertItem(index, object)
+                            onObjectRemoved: (index, object) => sceneMenu.removeItem(object)
+                        }
+                    }
+                }
                 Item { Layout.fillWidth: true }
                 QQC2.Button { objectName: "trayOpenWindow"; icon.name: "view-fullscreen"; text: i18n("Open mixer"); onClicked: { pop.close(); applicationWindow().raiseFromTray() } }
             }

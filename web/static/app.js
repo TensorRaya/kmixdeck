@@ -29,7 +29,7 @@ function render() {
       main.replaceChildren(el("div", { class: "empty disconnected", probe: "disconnected" },
         el("h2", {}, "kmixdeck is not running"), el("p", {}, "The bridge is up, but the daemon is not on the bus. Start kmixdeck on the desk machine and this page picks it up by itself.")));
     } else VIEWS[view].render(main);
-    hearing(); undo();
+    hearing(); undo(); scenes();
   });
 }
 
@@ -52,6 +52,29 @@ function hearing() {
 function undo() {
   const b = document.getElementById("undo"), d = C.state.root.UndoDescription;
   b.hidden = !d; if (d) { b.textContent = `↶ ${d}`; b.onclick = () => C.call(C.ROOT, "Undo").catch((e) => toast(e.message, true)); }
+}
+
+// CT-9 — same three verbs the CLI and the window have, because AR-8/AR-9 say every frontend answers the
+// same question. The picker stays hidden while Scenes is empty (opt-in rule), the save button never does.
+function scenes() {
+  const pick = document.getElementById("scenePick"), save = document.getElementById("sceneSave");
+  const names = C.state.root.Scenes || [];
+  pick.hidden = names.length === 0;
+  pick.dataset.count = String(names.length);
+  const keep = pick.value;
+  pick.replaceChildren(el("option", { value: "" }, names.length ? `▶ scene (${names.length})` : "no scenes"));
+  for (const n of names) pick.append(el("option", { value: n, selected: n === keep }, n));
+  pick.onchange = (ev) => {
+    const n = ev.target.value;
+    if (!n) return;
+    C.call(C.ROOT, "RecallScene", n, true).catch((e) => toast(e.message, true));
+    ev.target.value = "";
+  };
+  save.onclick = () => {
+    const n = prompt("Save the current faders, mutes and FX bypass states as:", names[0] || "Stream");
+    if (n === null || !n.trim()) return;
+    C.call(C.ROOT, "SaveScene", n.trim()).catch((e) => toast(e.message, true));
+  };
 }
 
 const conn = document.getElementById("conn");

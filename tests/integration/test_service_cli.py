@@ -701,3 +701,156 @@ def daemon_log_tail(stack, needles=(), n=3000):
     except FileNotFoundError: return "<no daemon log>"
     lines = [l for l in text.splitlines() if not needles or any(k in l for k in needles)]
     return "\n".join(lines)[-n:]
+
+
+
+def _mix_volume(stack, mix):
+    """Mix master volume. There is no `mix get` in the CLI (checked, not assumed) — the property lives on
+    the Mix object, so read it the same way the existing tests do."""
+    out = stack.busctl("get-property", "org.kmixdeck1", f"/org/kmixdeck1/mix/{mix}",
+                       "org.kmixdeck1.Mix", "Volume").stdout.strip()
+    return float(out.split()[-1])          # busctl prints e.g. "d 0.8"
+
+# ---------------------------------------------------------------- CT-9: Scenes (named snapshots)
+# These are the first automated tests for CT-9. Until now the requirement sat at 📝 with a full D-Bus
+# surface, a CLI and working Mixer logic behind it — and nothing that proved any of it, which is exactly
+# what the status legend forbids ("agreed alone is not a status"). The three contract bugs found on
+# 2026-09-19 (scenes() exported as a method, SceneRecalled not introspectable, Scenes missing from
+# GetManagedObjects) all lived in that blind spot: the contract test caught the SHAPE, nothing checked
+# the BEHAVIOUR.
+
+def test_ct9_scene_roundtrip_restores_cells_mixes_and_survives_a_daemon_restart(stack):
+    """save -> change everything -> recall must restore it, and the scene must be a file that outlives the daemon.
+
+    Covers the spec's concrete promises: per-cell faders and mutes, mix master and mute, scenes are files
+    under the layout dir (DV-5) and therefore survive a restart."""
+    stack.cli("cell", "set", "game", "stream", "0.5")
+    stack.cli("cell", "mute", "voice", "stream", "on")
+    stack.busctl("set-property", "org.kmixdeck1", "/org/kmixdeck1/mix/stream", "org.kmixdeck1.Mix", "Volume", "d", "0.8")
+
+    assert stack.cli("scene", "save", "loud", check=False).returncode == 0
+    assert "loud" in stack.cli("scene", "list", json_out=True)
+
+    # move everything away from the saved values
+    stack.cli("cell", "set", "game", "stream", "1.0")
+    stack.cli("cell", "mute", "voice", "stream", "off")
+    stack.busctl("set-property", "org.kmixdeck1", "/org/kmixdeck1/mix/stream", "org.kmixdeck1.Mix", "Volume", "d", "0.2")
+
+    assert stack.cli("scene", "recall", "loud", check=False).returncode == 0
+    assert math.isclose(stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"], 0.5, abs_tol=0.01)
+    assert stack.cli("cell", "get", "voice", "stream", json_out=True)["Muted"] is True
+    assert math.isclose(_mix_volume(stack, "stream"), 0.8, abs_tol=0.01)
+
+    # DV-5: a scene is a file, not daemon state — it must still be there after a restart.
+    stack.restart_daemon()
+    # CONTRIBUTING: wait for the observable, never for a clock — the rest of the suite still sleeps here.
+    wait_for(lambda: stack.cli("status", check=False).returncode == 0, timeout=15.0, what="daemon back on the bus")
+    assert "loud" in stack.cli("scene", "list", json_out=True), "scene did not survive the daemon restart"
+
+
+def test_ct9_recall_is_undoable_in_one_step(stack):
+    """Spec: 'Recall MUST be undoable (CH-9)'. One Ctrl-Z must put the mixer back where it was."""
+    stack.cli("cell", "set", "game", "stream", "0.3")
+    stack.cli("scene", "save", "quiet")
+    stack.cli("cell", "set", "game", "stream", "0.9")          # this is the state undo must return to
+    stack.cli("scene", "recall", "quiet")
+    assert math.isclose(stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"], 0.3, abs_tol=0.01)
+
+    assert stack.cli("undo", check=False).returncode == 0, "recall left nothing to undo"
+    assert math.isclose(stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"], 0.9, abs_tol=0.01), \
+        "undo after a scene recall did not restore the pre-recall state"
+
+
+def test_ct9_exclusive_and_add_agree_while_a_scene_covers_every_mix(stack):
+    """What exclusive recall actually guards against — measured, after a wrong first guess.
+
+    My first version of this test assumed a scene can leave a mix "unnamed" and asserted that --add would
+    then leave it alone. It failed, and the code was right: captureScene() walks m_layout.mixes and stores
+    EVERY mix, so a freshly saved scene never has a gap. The exclusive branch in recallScene() only reaches
+    mixes that are missing from the FILE — i.e. a scene saved before a mix existed, or hand-edited. So the
+    honest assertion for a normal scene is: both modes restore the saved value, and they agree.
+    """
+    stack.busctl("set-property", "org.kmixdeck1", "/org/kmixdeck1/mix/stream", "org.kmixdeck1.Mix", "Volume", "d", "0.4")
+    stack.busctl("set-property", "org.kmixdeck1", "/org/kmixdeck1/mix/monitor", "org.kmixdeck1.Mix", "Volume", "d", "0.6")
+    stack.cli("scene", "save", "bothmixes")
+
+    for mode in ([], ["--add"]):
+        stack.busctl("set-property", "org.kmixdeck1", "/org/kmixdeck1/mix/stream", "org.kmixdeck1.Mix", "Volume", "d", "0.1")
+        stack.busctl("set-property", "org.kmixdeck1", "/org/kmixdeck1/mix/monitor", "org.kmixdeck1.Mix", "Volume", "d", "0.1")
+        assert stack.cli("scene", "recall", "bothmixes", *mode, check=False).returncode == 0
+        assert math.isclose(_mix_volume(stack, "stream"), 0.4, abs_tol=0.01), f"stream not restored ({mode or 'exclusive'})"
+        assert math.isclose(_mix_volume(stack, "monitor"), 0.6, abs_tol=0.01), f"monitor not restored ({mode or 'exclusive'})"
+
+
+def test_ct9_exclusive_resets_a_mix_the_scene_file_never_mentions(stack):
+    """The exclusive branch, exercised where it really applies: a scene file with a mix missing from it
+    (saved before the mix existed, or edited by hand). Exclusive must pull it to unity, --add must not."""
+    stack.cli("scene", "save", "gap")
+    scene_file = Path(stack.env["XDG_CONFIG_HOME"]) / "kmixdeck" / "scenes" / "gap.json"
+    doc = json.loads(scene_file.read_text())
+    doc["mixes"] = [m for m in doc["mixes"] if m["mix"] != "monitor"]      # monitor is now unmentioned
+    doc["cells"] = [c for c in doc["cells"] if c["mix"] != "monitor"]
+    scene_file.write_text(json.dumps(doc))
+
+    stack.busctl("set-property", "org.kmixdeck1", "/org/kmixdeck1/mix/monitor", "org.kmixdeck1.Mix", "Volume", "d", "0.25")
+    stack.cli("scene", "recall", "gap")
+    assert math.isclose(_mix_volume(stack, "monitor"), 1.0, abs_tol=0.01), \
+        "exclusive recall must pull a mix the scene file never mentions back to unity"
+
+    stack.busctl("set-property", "org.kmixdeck1", "/org/kmixdeck1/mix/monitor", "org.kmixdeck1.Mix", "Volume", "d", "0.25")
+    stack.cli("scene", "recall", "gap", "--add")
+    assert math.isclose(_mix_volume(stack, "monitor"), 0.25, abs_tol=0.01), \
+        "--add must leave an unmentioned mix exactly where it was"
+
+
+def test_ct9_scene_recalled_signal_is_introspectable_and_fires(stack):
+    """Both halves matter. A hand-rolled QDBusMessage::createSignal reaches subscribers but never appears
+    on the interface — a frontend that ASKS the interface instead of guessing would never find it. That
+    was the real 2026-09-19 bug, and a test that only waits for the signal would have stayed green."""
+    xml = stack.busctl("introspect", "org.kmixdeck1", "/org/kmixdeck1", "--xml-interface").stdout
+    assert 'name="SceneRecalled"' in xml, "SceneRecalled is not on the interface (introspection cannot see it)"
+
+    stack.cli("scene", "save", "sig")
+    mon = subprocess.Popen(["busctl", "--user", "monitor", "--match",
+                            "type=signal,interface=org.kmixdeck1.Mixer,member=SceneRecalled"],
+                           env=stack.env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    time.sleep(0.5)
+    stack.cli("scene", "recall", "sig")
+    time.sleep(1.0)
+    mon.terminate()
+    out = mon.stdout.read()
+    mon.wait(timeout=5)
+    assert "SceneRecalled" in out, f"no SceneRecalled signal on the bus:\n{out[-400:]}"
+
+
+def test_ct9_scenes_property_is_a_property_not_a_method(stack):
+    """Qt exports every public slot as a D-Bus METHOD. Parking the Scenes READ getter in Q_SLOTS invented a
+    'scenes' method the shipped XML never declared — caught by the contract test, pinned down here."""
+    xml = stack.busctl("introspect", "org.kmixdeck1", "/org/kmixdeck1", "--xml-interface").stdout
+    assert 'name="Scenes"' in xml
+    assert '<method name="scenes"' not in xml, "a property getter leaked onto the bus as a method"
+    # and GetManagedObjects must carry it too (the second half of the contract, and the one that was missing)
+    r = stack.busctl("call", "org.kmixdeck1", "/org/kmixdeck1", "org.freedesktop.DBus.ObjectManager",
+                     "GetManagedObjects")
+    assert r.returncode == 0, r.stderr
+    assert "Scenes" in r.stdout, "Scenes is announced on the interface but absent from GetManagedObjects"
+
+
+def test_ct9_bad_names_are_refused_and_delete_works(stack):
+    """An empty name must not create a file, a missing scene must not pretend to recall, and delete must
+    actually remove it. No path traversal either: a scene name is not a path."""
+    assert stack.cli("scene", "recall", "does-not-exist", check=False).returncode != 0
+    assert stack.cli("scene", "delete", "does-not-exist", check=False).returncode != 0
+
+    stack.cli("scene", "save", "weg")
+    assert "weg" in stack.cli("scene", "list", json_out=True)
+    assert stack.cli("scene", "delete", "weg", check=False).returncode == 0
+    assert "weg" not in stack.cli("scene", "list", json_out=True)
+
+    # A scene name becomes a file name, so it must not be able to escape the scene dir. scenePath()
+    # sanitises to [A-Za-z0-9 _-] (read, not assumed), so "../escape" lands INSIDE as "___escape".
+    stack.cli("scene", "save", "../escape", check=False)
+    scene_dir = Path(stack.env["XDG_CONFIG_HOME"]) / "kmixdeck" / "scenes"
+    assert not list(scene_dir.parent.parent.glob("escape.json")), "scene name escaped the scene dir"
+    assert not list(scene_dir.parent.glob("escape.json")), "scene name escaped the scene dir"
+    assert list(scene_dir.glob("*escape*.json")), "sanitised name did not land in the scene dir either"

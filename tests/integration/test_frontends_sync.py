@@ -87,6 +87,21 @@ CORE = [
      lambda g: g["trayMixColor/stream.color"] == "#3daee9" and g["trayChannelColor/voice.color"] == "#e93d58" and g["trayMixColor/monitor.visible"] == "false",
      ["mixColorStripe/stream.computed.background-color", "channelColorStripe/voice.computed.background-color"],
      lambda g: g["mixColorStripe/stream.computed.background-color"] == "rgb(61, 174, 233)" and g["channelColorStripe/voice.computed.background-color"] == "rgb(233, 61, 88)"),
+    ("CT-9 a saved scene is recallable in every frontend",
+     # Rule 1: the change goes in through the CLI. Then each frontend must OFFER the scene — that is what
+     # "faders move visibly in every frontend" means for a snapshot feature. The opt-in rule is part of the
+     # assertion: before a scene exists the recall control is absent, so saving one is what makes it appear.
+     lambda s: (s.cli("cell", "set", "game", "stream", "0.5"), s.cli("scene", "save", "Stream")),
+     lambda s: s.cli("scene", "list", json_out=True) == ["Stream"],
+     ["recallSceneAction.visible", "sceneAction.Stream.text", "saveSceneAction.visible"],
+     lambda g: g["recallSceneAction.visible"] == "true" and g["sceneAction.Stream.text"] == "Stream" and g["saveSceneAction.visible"] == "true",
+     # The tray's scene MENU is a closed QQC2.Menu — its items do not exist in the item tree until it pops
+     # up, and the probe walker only sees the popover's contentItem. So the tray proof is the control that
+     # IS visible: the button appears (it is hidden while Scenes is empty) and names the scene it offers.
+     ["traySceneRecall.visible", "traySceneRecall.text"],
+     lambda g: g["traySceneRecall.visible"] == "true" and "Scene" in g["traySceneRecall.text"],
+     ["scenePick.dataset.count", "scenePick.hidden", "sceneSave.hidden"],
+     lambda g: g["scenePick.dataset.count"] == "1" and g["scenePick.hidden"] == "false" and g["sceneSave.hidden"] == "false"),
     ("DV-11 unplugged device is visible as such",
      lambda s: (make_fake_sink(s, "fake.gone", "Gone Sink"), time.sleep(0.5), s.cli("mix", "output-add", "monitor", "fake.gone"), time.sleep(0.5),
                 __import__("test_service_cli").destroy_node(s, "fake.gone"), time.sleep(0.8)),
@@ -108,6 +123,25 @@ def test_core_feature_reaches_cli_window_and_tray(stack, row):
     assert tcheck(g), f"{name}: tray does not show it: {g}"
     g = browser(stack, *bprobes)
     assert bcheck(g), f"{name}: web UI does not show it (AR-8/AR-9): {g}"
+
+
+def test_ct9_recall_from_the_window_and_the_tray_actually_moves_the_faders(stack):
+    """The CORE row above proves every frontend OFFERS the scene. This proves the offer does something:
+    a recall triggered through the window's own gesture path must land on the bus and move the cell back.
+    Listing a scene you cannot recall would pass a probe check and still be useless."""
+    stack.cli("cell", "set", "game", "stream", "0.25")
+    stack.cli("scene", "save", "Quiet")
+    stack.cli("cell", "set", "game", "stream", "1.0")
+
+    kde(stack, "--gesture", "recallScene:Quiet")
+    wait_for(lambda: abs(stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"] - 0.25) < 0.01,
+             timeout=10.0, what="cell back at the scene value after a window-driven recall")
+
+    # and the save gesture is the other direction: the window writes a scene the CLI can see
+    stack.cli("cell", "set", "game", "stream", "0.75")
+    kde(stack, "--gesture", "saveScene:FromWindow")
+    wait_for(lambda: "FromWindow" in stack.cli("scene", "list", json_out=True),
+             timeout=10.0, what="scene saved through the window")
 
 
 def test_tray_click_opens_overview_double_click_opens_window(stack):

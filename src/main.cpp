@@ -102,7 +102,13 @@ int main(int argc, char *argv[])
         QTimer::singleShot(900, &app, [win] { QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, QStringLiteral("channel"))); });
         QTimer::singleShot(1500, &app, [win] { QMetaObject::invokeMethod(win, "showRouting"); });
         QTimer::singleShot(2100, &app, [win] { QMetaObject::invokeMethod(win, "showPatchbay"); });
-        QTimer::singleShot(3000, &app, [&qmlWarnings] { QCoreApplication::exit(qmlWarnings > 0 ? 2 : 0); });
+        // The global drawer and the tray popover were NOT part of the smoke test until 2026-09-19 — a broken
+        // Kirigami.Action child in the drawer still let this exit 0 while every --probe test failed with a
+        // KeyError. Touch both surfaces here so a QML mistake in them fails THIS 5-second test instead of a
+        // 150-second frontend suite.
+        QTimer::singleShot(2400, &app, [win] { QMetaObject::invokeMethod(win, "openDrawerForSelfTest"); });
+        QTimer::singleShot(2700, &app, [win] { QMetaObject::invokeMethod(win, "showTrayOverview", Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)); });
+        QTimer::singleShot(3400, &app, [&qmlWarnings] { QCoreApplication::exit(qmlWarnings > 0 ? 2 : 0); });
     }
     // --gesture "connect:<fromCard>|<fromPos>|<toCard>|<toPos>" / "remove:<kind>|<channel|mix>|<ref>" — the patchbay's
     // drag/click, driven from the shell so the integration tests can prove the gestures reach the daemon (DV-24).
@@ -129,6 +135,11 @@ int main(int argc, char *argv[])
                 else if (op == QLatin1String("hear") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureHear", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 else if (op == QLatin1String("mixoutput") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureMixOutput", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
                 else if (op == QLatin1String("mute") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureMute", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
+                // CT-9: scene save/recall/delete as the window does them. saveScene goes through the real dialog
+                // handler (like gestureDuplicate) so the test covers the dialog, not a shortcut around it.
+                else if (op == QLatin1String("saveScene") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureSaveScene", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
+                else if (op == QLatin1String("recallScene") && a.size() >= 1) QMetaObject::invokeMethod(win, "gestureRecallScene", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a.value(1) != QLatin1String("add")));
+                else if (op == QLatin1String("deleteScene") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureDeleteScene", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 // CT-7: the file dialogs are native and cannot be scripted offscreen — the gesture takes the path the
                 // dialog would have returned and runs the SAME onAccepted handler (root.exportTo / root.importFrom)
                 else if (op == QLatin1String("key") && a.size() >= 1) {   // UX-4: a real key press on the focused item, e.g. key:Tab|Tab|Right|Right

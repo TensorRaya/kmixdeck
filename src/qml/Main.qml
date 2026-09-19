@@ -69,6 +69,27 @@ Kirigami.ApplicationWindow {
                 enabled: Mixer.hiddenDevices.length > 0
                 onTriggered: hiddenDevicesDialog.open()
             },
+            Kirigami.Action {   // CT-9: save the current mixable state as a named scene
+                objectName: "saveSceneAction"
+                text: i18n("Save scene…")
+                icon.name: "document-save-as"
+                onTriggered: { saveSceneDialog.sceneName = ""; saveSceneDialog.open() }
+            },
+            Kirigami.Action {   // CT-9
+                // Opt-in rule (owner 2026-09-18): a feature added after v0.2 is ABSENT by default and the UI
+                // hides its controls except the one switch that enables it. For scenes "enabled" simply means
+                // "the user saved one", so this submenu does not exist until Scenes is non-empty — and
+                // "Save scene…" above is that one always-visible switch.
+                // 🔴 The children are built OUTSIDE this block (see sceneMenuBuilder below): a Kirigami.Action
+                // accepts only Actions as children, so an Instantiator/Component/Connections parked in here
+                // breaks the whole QML load — and a Main.qml that does not load takes EVERY frontend test
+                // with it, not just the scene ones (measured 2026-09-19: one mistake, ten red tests).
+                id: recallSceneAction
+                objectName: "recallSceneAction"
+                text: i18np("Recall scene (%1)", "Recall scenes (%1)", Mixer.scenes.length)
+                icon.name: "view-presentation"
+                visible: Mixer.scenes.length > 0
+            },
             Kirigami.Action {   // CT-7
                 objectName: "exportAction"
                 text: i18n("Export settings…")
@@ -108,6 +129,10 @@ Kirigami.ApplicationWindow {
     function showApps() { root.pageStack.clear(); root.pageStack.push(appsPage) }
     function showRouting() { root.pageStack.clear(); root.pageStack.push(routingPage) }
     function showPatchbay() { root.pageStack.clear(); root.pageStack.push(patchBayPage) }
+    // --self-test hook: force the global drawer to build its actions (incl. the CT-9 scene submenu). A
+    // Kirigami.Action that cannot take its children breaks the whole QML load, and nothing opened the
+    // drawer during the smoke test before 2026-09-19.
+    function openDrawerForSelfTest() { if (root.globalDrawer) { root.globalDrawer.drawerOpen = true; root.rebuildSceneMenu() } return "" }
     // test hooks for the patchbay gestures (--gesture): same calls the drag / the wire click make
     function gestureConnect(fc, fp, tc, tp) { return Mixer.connectJacks(fc, fp, tc, tp) }
     // --probe "<objectName>.<property>": read a property of any item by objectName (MX-10/UX-10 proofs)
@@ -135,8 +160,20 @@ Kirigami.ApplicationWindow {
             }
             return null
         }
+        // Kirigami.Actions in the global drawer are NOT in the item tree (find() walks children of visual
+        // items), so before CT-9 no test could probe one. Same fallback idea as patchBayPage.probeItem for
+        // popups in the Overlay: ask the drawer for its actions by objectName, recursively for submenus.
+        function findAction(list) {
+            for (let i = 0; i < (list ? list.length : 0); ++i) {
+                const a = list[i]; if (!a) continue
+                if (a.objectName === name) return a
+                const r = findAction(a.children); if (r) return r
+            }
+            return null
+        }
         const it = find(root.contentItem) || find(root.pageStack) || findOverlay() || (patchBayPage && patchBayPage.probeItem ? patchBayPage.probeItem(name) : null)
                  || (name === "trayOverview" ? trayOverviewWin : find(trayOverviewWin.contentItem))
+                 || findAction(root.globalDrawer ? root.globalDrawer.actions : null)
         if (!it) return "<not found: " + name + ">"
         if (prop.startsWith("probe:") && it.probeItem) return String(it.probeItem(prop.slice(6)))   // item-specific diagnostics
         const v = it[prop]
@@ -208,7 +245,7 @@ Kirigami.ApplicationWindow {
 
     // Meters cost CPU in the daemon (ADR 0006): only while the window is actually shown.
     onVisibleChanged: Mixer.metersEnabled = visible
-    Component.onCompleted: { Mixer.metersEnabled = visible; if (Mixer.firstRun && Mixer.connected && !root.firstRunSuppressed) firstRunDialog.open() }
+    Component.onCompleted: { Mixer.metersEnabled = visible; if (Mixer.firstRun && Mixer.connected && !root.firstRunSuppressed) firstRunDialog.open(); root.rebuildSceneMenu() }   // CT-9 last: a second Component.onCompleted in the same object silently REPLACES this one
 
     AddDialog { id: addDialog }
     // ADR 0009 / DV-18: pick a port subset of a multichannel device as a mix output (or a channel input)
@@ -318,6 +355,32 @@ Kirigami.ApplicationWindow {
         root.showPassiveNotification(ok ? i18n("Settings imported from %1", Mixer.displayPath(url)) : i18n("Import failed: %1", Mixer.lastError), "long")
     }
     RenameDialog { id: renameDialog }
+    SaveSceneDialog { id: saveSceneDialog }   // CT-9
+    // CT-9: one child Action per saved scene, kept out of the Action block itself (see the note there).
+    Component {
+        id: sceneEntry
+        Kirigami.Action {
+            property string sceneName
+            objectName: "sceneAction." + sceneName
+            text: sceneName
+            icon.name: "media-playback-start"
+            onTriggered: Mixer.recallScene(sceneName, true)
+        }
+    }
+    function rebuildSceneMenu() {
+        const made = []
+        for (const n of Mixer.scenes) made.push(sceneEntry.createObject(root, { sceneName: n }))
+        recallSceneAction.children = made
+    }
+    Connections {
+        target: Mixer
+        function onScenesChanged() { root.rebuildSceneMenu() }
+    }
+    // CT-9 gestures: what a click does, without a pointer — the frontends_sync suite drives the window
+    // through these (same contract as gestureDuplicate above).
+    function gestureSaveScene(name) { saveSceneDialog.sceneName = name; saveSceneDialog.open(); saveSceneDialog.commit(name); saveSceneDialog.close(); return "" }
+    function gestureRecallScene(name, exclusive) { Mixer.recallScene(name, exclusive !== false); return "" }
+    function gestureDeleteScene(name) { Mixer.deleteScene(name); return "" }
     function renameDialogOpen(kind, slug) { renameDialog.open(kind, slug) }
     function duplicateDialogOpen(slug) { renameDialog.open("mix", slug, true) }   // MX-8
     function gestureDuplicate(slug, name) { renameDialog.open("mix", slug, true); renameDialog.commit(name); renameDialog.close(); return "" }

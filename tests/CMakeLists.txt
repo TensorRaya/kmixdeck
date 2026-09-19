@@ -19,6 +19,19 @@ if(BUILD_KDE_FRONTEND)
     add_test(NAME frontend-qml-loads COMMAND kmixdeck-kde --self-test)
     set_tests_properties(frontend-qml-loads PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_LOGGING_RULES=*.debug=false" TIMEOUT 60 FAIL_REGULAR_EXPRESSION "failed to load component;is not a type;unavailable")
 endif()
+# qmllint as a pre-flight: --self-test needs a full build + 5s of runtime, qmllint finds the same class of
+# mistake (a non-Action child in a Kirigami.Action, an incompatible default property) in ~2s WITHOUT running.
+# Anlass 2026-09-19: one such child in Main.qml stopped the whole QML load, and the failure surfaced as ten
+# unrelated red frontend tests (KeyError on every probe) instead of one clear message.
+find_program(QMLLINT_EXECUTABLE NAMES qmllint qmllint-qt6 HINTS /usr/lib/qt6/bin /usr/lib64/qt6/bin)
+if(QMLLINT_EXECUTABLE AND BUILD_KDE_FRONTEND)
+    file(GLOB KMIXDECK_QML_FILES ${CMAKE_SOURCE_DIR}/src/qml/*.qml)
+    add_test(NAME frontend-qmllint COMMAND ${QMLLINT_EXECUTABLE} ${KMIXDECK_QML_FILES})
+    # qmllint exits 0 on warnings, so the gate is the message itself: these two are hard QML load errors.
+    set_tests_properties(frontend-qmllint PROPERTIES TIMEOUT 120
+        FAIL_REGULAR_EXPRESSION "Cannot assign;is not a type")
+endif()
+
 # VF-2: every ✅ requirement names an existing test (tools/sot-audit.py)
 add_test(NAME sot-audit COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/sot-audit.py)
 

@@ -110,6 +110,10 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
             const QString u = props.value(QStringLiteral("UndoDescription")).toString();
             if (u != m_undoDescription) { m_undoDescription = u; Q_EMIT undoChanged(); }
         }
+        if (props.contains(QStringLiteral("Scenes"))) {   // CT-9
+            const QStringList sc = props.value(QStringLiteral("Scenes")).toStringList();
+            if (sc != m_scenes) { m_scenes = sc; Q_EMIT scenesChanged(); }
+        }
         if (rawProps.contains(QStringLiteral("InputDevices"))) {
             QVariant v = rawProps.value(QStringLiteral("InputDevices"));
             if (v.userType() == qMetaTypeId<QDBusVariant>()) v = v.value<QDBusVariant>().variant();
@@ -525,6 +529,16 @@ void MixerClient::setMixOutputDevice(const QString &slug, const QString &nodeNam
     setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("OutputDevice"), nodeName);
 }
 void MixerClient::undo() { callReportingErrors(QStringLiteral("Undo"), QVariant()); }
+// CT-9. callReportingErrors surfaces the daemon's error in lastError, which is why RecallScene had to stop
+// swallowing its return value (fixed 2026-09-19) — otherwise a typo'd scene name looked like success here too.
+void MixerClient::saveScene(const QString &name) { callReportingErrors(QStringLiteral("SaveScene"), name); }
+void MixerClient::deleteScene(const QString &name) { callReportingErrors(QStringLiteral("DeleteScene"), name); }
+void MixerClient::recallScene(const QString &name, bool exclusive) {
+    QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
+    const QDBusMessage r = iface.call(QStringLiteral("RecallScene"), name, exclusive);
+    if (r.type() == QDBusMessage::ErrorMessage) { m_lastError = r.errorMessage(); Q_EMIT lastErrorChanged(); Q_EMIT errorOccurred(m_lastError); return; }
+    m_lastError.clear(); Q_EMIT lastErrorChanged();
+}
 QVariantMap MixerClient::firstRunPlan() const {
     QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
     const QDBusReply<QString> r = iface.call(QStringLiteral("FirstRunPlan"));

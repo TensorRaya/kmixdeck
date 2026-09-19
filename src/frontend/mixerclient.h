@@ -43,6 +43,7 @@ class MixerClient : public QObject {
     Q_PROPERTY(QString defaultChannel READ defaultChannel WRITE setDefaultChannel NOTIFY defaultChannelChanged)   // CH-5, slug or ""
     Q_PROPERTY(QString listeningDevice READ listeningDevice WRITE setListeningDevice NOTIFY listeningDeviceChanged)   // UX-2, node.name or ""
     Q_PROPERTY(QString undoDescription READ undoDescription NOTIFY undoChanged)   // CH-9
+    Q_PROPERTY(QStringList scenes READ scenes NOTIFY scenesChanged)   // CT-9: named snapshots, empty until the user saves one
 public:
     explicit MixerClient(QObject *parent = nullptr);
 
@@ -58,7 +59,12 @@ public:
     void setHideToTray(bool v) { if (m_hideToTray == v) return; m_hideToTray = v; Q_EMIT hideToTrayChanged(); }
     void setListeningDevice(const QString &node);
     QString undoDescription() const { return m_undoDescription; }
+    QStringList scenes() const { return m_scenes; }
     Q_INVOKABLE void undo();
+    // CT-9: the window and the tray drive scenes through these — no frontend talks to the daemon directly (AR-13).
+    Q_INVOKABLE void saveScene(const QString &name);
+    Q_INVOKABLE void recallScene(const QString &name, bool exclusive = true);
+    Q_INVOKABLE void deleteScene(const QString &name);
     // CT-7: synchronous on purpose — the user waits for the file dialog's result anyway, and the notification needs
     // the outcome. URLs from FileDialog, plain paths from the CLI-style probes both work.
     Q_INVOKABLE bool exportToFile(const QUrl &url);
@@ -213,6 +219,7 @@ Q_SIGNALS:
     void listeningDeviceChanged();
     void hideToTrayChanged();
     void undoChanged();   // a refused request (duplicate name, unknown device, …)
+    void scenesChanged();   // CT-9
     void connectedChanged();
     void serviceAvailableChanged();
     void layoutChanged();
@@ -254,6 +261,7 @@ private:
     PortMap m_devicePorts;                                     // node.name → ["POS|port.name|alias", …] (ADR 0009)
     int m_devicePortsVersion = 0;
     QString m_defaultChannel, m_undoDescription, m_listeningDevice;
+    QStringList m_scenes;   // CT-9
     bool m_metersEnabled = false;
     QHash<QString, double> m_peaks;
     QStringList m_channelOrder, m_mixOrder;

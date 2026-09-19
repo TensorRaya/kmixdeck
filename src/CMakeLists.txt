@@ -55,6 +55,7 @@ ecm_add_qml_module(kmixdeck-kde
         qml/MixHeader.qml
         qml/ChannelHeader.qml
         qml/RenameDialog.qml
+        qml/SaveSceneDialog.qml
         qml/IconDialog.qml
         qml/FxPanel.qml
         qml/Fader.qml

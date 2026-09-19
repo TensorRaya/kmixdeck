@@ -151,6 +151,7 @@ public:
     Q_INVOKABLE QStringList scenes() const;
     Q_INVOKABLE bool saveScene(const QString &name);
     Q_INVOKABLE bool recallScene(const QString &name, bool exclusive = true);
+    bool applyScene(const QJsonObject &sc, bool exclusive);   // CT-9: shared by recallScene() and undo()
     Q_INVOKABLE bool deleteScene(const QString &name);
     bool mixLoudness(const QString &slug) const; void setMixLoudness(const QString &slug, bool on);            // UX-18
     double mixLoudnessTarget(const QString &slug) const; void setMixLoudnessTarget(const QString &slug, double lufs);

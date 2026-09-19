@@ -767,17 +767,23 @@ def test_dv30b_fd_limit_lifted_and_a_failed_edge_is_reported_not_swallowed(stack
         resource.setrlimit(resource.RLIMIT_NOFILE, (24, 24))
     stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL,
                                     stderr=open(stack.daemon_log_path, "a"), text=True, preexec_fn=clamp)
-    wait_for(lambda: stack.cli("status", check=False).returncode == 0, timeout=15, what="daemon up under fd clamp")
-    node = stack.cli("devices", "virtual", "add", "Clamp", "--in", "2", "--out", "2").stdout.strip()
-    stack.pw.wait_node(node + ".out")   # the sink is a plain null node; the source side is a loopback (DV-29) — the first starved edge
-    err = wait_for(lambda: stack.cli("status", json_out=True)["lastError"], timeout=10, what="LastError after a starved edge")
-    assert "edge could not be created" in err, err
-    assert "!! edge could not be created" in stack.cli("status").stdout
-    log = open(stack.daemon_log_path).read()   # either path names the edge: synchronous load failure or the async watcher
-    assert "edge could not be created" in log and ("never appeared" in log or "failed to load" in log), log[-600:]
-    # back to a healthy daemon for the rest of the session
-    stack.cli("devices", "virtual", "remove", "clamp", check=False)
-    stack.restart_daemon()
+    # 🔴 try/finally, not straight-line code (2026-09-19): the `stack` fixture is scope="module", so this test
+    # hands the SHARED daemon to every test after it. When an assert below fired, the restore lines never ran
+    # and dv30c/dv31/dv29/dv29b all failed with "node ... did not appear" — one real failure, four fake ones,
+    # and the diagnosis pointed at the wrong tests. A test that breaks a shared resource must give it back.
+    try:
+        wait_for(lambda: stack.cli("status", check=False).returncode == 0, timeout=15, what="daemon up under fd clamp")
+        node = stack.cli("devices", "virtual", "add", "Clamp", "--in", "2", "--out", "2").stdout.strip()
+        stack.pw.wait_node(node + ".out")   # the sink is a plain null node; the source side is a loopback (DV-29) — the first starved edge
+        err = wait_for(lambda: stack.cli("status", json_out=True)["lastError"], timeout=10, what="LastError after a starved edge")
+        assert "edge could not be created" in err, err
+        assert "!! edge could not be created" in stack.cli("status").stdout
+        log = open(stack.daemon_log_path).read()   # either path names the edge: synchronous load failure or the async watcher
+        assert "edge could not be created" in log and ("never appeared" in log or "failed to load" in log), log[-600:]
+    finally:
+        # back to a healthy daemon for the rest of the module, whatever happened above
+        stack.cli("devices", "virtual", "remove", "clamp", check=False)
+        stack.restart_daemon()
     assert stack.cli("status", json_out=True)["lastError"] == ""
 
 
@@ -786,19 +792,25 @@ def test_dv30c_thirtytwo_by_thirtytwo_desk_never_loses_an_edge(stack):
     Every edge node must come up and LastError must stay empty — this is exactly what failed on hardware at fd 1024."""
     node = stack.cli("devices", "virtual", "add", "Desk", "--in", "32", "--out", "32").stdout.strip()
     din, dout = node, node + ".out"
-    stack.pw.wait_node(dout); stack.pw.wait_node(din, timeout=15)
-    for i in range(1, 33):
-        stack.cli("channel", "add", f"d{i}"); stack.cli("channel", "input", f"d{i}", f"{din}:AUX{i}")
-    for k in range(4):
-        stack.cli("mix", "add", f"r{k}"); stack.cli("mix", "output", f"r{k}", f"{dout}:AUX{2*k+1},AUX{2*k+2}")
-    stack.pw.wait_nodes([f"kmixdeck.in.d{i}.in" for i in range(1, 33)] + [f"kmixdeck.out.r{k}" for k in range(4)], timeout=60)
-    st = stack.cli("status", json_out=True)
-    assert st["lastError"] == "", st["lastError"]
-    fds = len(os.listdir(f"/proc/{stack.daemon.pid}/fd"))
-    assert fds > 500, f"the desk should cost >500 fds (the reason this test exists), got {fds}"
-    for k in range(4): stack.cli("mix", "remove", f"r{k}")
-    for i in range(1, 33): stack.cli("channel", "remove", f"d{i}")
-    stack.cli("devices", "virtual", "remove", "desk")
+    # 🔴 try/finally (2026-09-19, same lesson as dv30b): this builds the biggest layout in the suite —
+    # 32 channels + 4 mixes ≈ 45 loopback clients on the SHARED module-scope daemon. When one node failed
+    # to appear, the teardown below never ran and dv31/dv29/dv29b inherited a daemon with 35 leftover nodes,
+    # failing with "node ... did not appear" on their own fresh devices. One real failure, three fake ones.
+    try:
+        stack.pw.wait_node(dout); stack.pw.wait_node(din, timeout=15)
+        for i in range(1, 33):
+            stack.cli("channel", "add", f"d{i}"); stack.cli("channel", "input", f"d{i}", f"{din}:AUX{i}")
+        for k in range(4):
+            stack.cli("mix", "add", f"r{k}"); stack.cli("mix", "output", f"r{k}", f"{dout}:AUX{2*k+1},AUX{2*k+2}")
+        stack.pw.wait_nodes([f"kmixdeck.in.d{i}.in" for i in range(1, 33)] + [f"kmixdeck.out.r{k}" for k in range(4)], timeout=60)
+        st = stack.cli("status", json_out=True)
+        assert st["lastError"] == "", st["lastError"]
+        fds = len(os.listdir(f"/proc/{stack.daemon.pid}/fd"))
+        assert fds > 500, f"the desk should cost >500 fds (the reason this test exists), got {fds}"
+    finally:
+        for k in range(4): stack.cli("mix", "remove", f"r{k}", check=False)
+        for i in range(1, 33): stack.cli("channel", "remove", f"d{i}", check=False)
+        stack.cli("devices", "virtual", "remove", "desk", check=False)
 
 
 def test_dv31_zero_based_hardware_gets_one_based_labels_and_refs_accept_both(stack):
