@@ -828,3 +828,43 @@ def test_dv31_zero_based_hardware_gets_one_based_labels_and_refs_accept_both(sta
     vports = stack.cli("--json", "devices", "ports", node, json_out=True)
     assert all(p["label"] == p["position"] for p in vports), vports
     stack.cli("channel", "remove", "main"); stack.cli("devices", "virtual", "remove", "plain"); destroy_node(stack, "fake.desk")
+
+
+def test_dv29_virtual_device_passes_apps_through_to_its_input_side(stack):
+    """DV-29 (Ui24R run 2026-09-18): what an app plays into `.out` port N of a virtual device must appear on port N of
+    the input side, so a channel wired to the device hears the app — Loopback's virtual device. Measured before the
+    fix: −24 dB into .out:AUX3, −inf at :capture_AUX3 and at the channel. Other ports must stay silent."""
+    node = stack.cli("devices", "virtual", "add", "Games", "--in", "8", "--out", "8").stdout.strip()
+    stack.pw.wait_node(node + ".out"); stack.pw.wait_node(node + ".pass.in"); stack.pw.wait_node(node)   # sink, capture half, source (= playback half)
+    stack.cli("channel", "add", "Hears"); stack.cli("channel", "input", "hears", f"{node}:AUX3,AUX4")
+    stack.pw.wait_node("kmixdeck.in.hears.in"); time.sleep(0.8)
+    # the app: a tone into the device's OUTPUT side, port AUX3 (this is what `pw-play --target Games` would do)
+    p = stack.pw.play_into_port(node + ".out", "playback_AUX3")
+    try:
+        cap = wait_level(lambda: stack.pw.level_at_port(node, "capture_AUX3"), lambda v: v > HOT)
+        assert cap > HOT, f"pass-through .out:AUX3 → :AUX3 silent ({cap} dB)"
+        assert stack.pw.level_at_port(node, "capture_AUX5") < SILENT, "port 5 carries port 3's audio"
+        left = wait_level(lambda: stack.pw.level_at_port("kmixdeck.channel.hears", "monitor_FL"), lambda v: v > HOT)
+        right = stack.pw.level_at_port("kmixdeck.channel.hears", "monitor_FR")
+        assert left > HOT and right < SILENT, f"channel from AUX3,AUX4 hears AUX3 on L only: L={left} R={right}"
+    finally:
+        p.kill(); p.wait()
+    # the pass-through goes with the device, leaving nothing behind
+    stack.cli("channel", "remove", "hears"); stack.cli("devices", "virtual", "remove", "games")
+    wait_for(lambda: stack.pw.node(node + ".pass.in") is None and stack.pw.node(node) is None and stack.pw.node(node + ".out") is None, timeout=10, what="virtual device + pass-through gone")
+
+
+def test_dv29b_pass_through_survives_a_daemon_restart_and_comes_from_config_alone(stack):
+    """AR-10: the generated PipeWire fragment must carry the pass-through too (the graph must come up from config
+    without the daemon), and a daemon restart must not duplicate or lose it."""
+    node = stack.cli("devices", "virtual", "add", "Persist", "--in", "4", "--out", "8").stdout.strip()
+    stack.pw.wait_node(node + ".out"); stack.pw.wait_node(node + ".pass.in", timeout=15); stack.pw.wait_node(node)
+    conf = open(os.path.join(stack.env["XDG_CONFIG_HOME"], "pipewire", "pipewire.conf.d", "90-kmixdeck.conf")).read()
+    assert "kmixdeck.virt.persist.pass" in conf, "pass-through missing from the generated fragment"
+    line = next(l for l in conf.splitlines() if "kmixdeck.virt.persist.pass.in" in l)
+    cap = line.split("capture.props")[1].split("playback.props")[0]
+    assert "AUX4" in cap and "AUX5" not in cap, f"pass-through must carry min(in,out)=4 ports: {cap}"
+    stack.restart_daemon(); time.sleep(2.0)
+    virt = sorted(n for n in stack.pw.node_names() if n.startswith("kmixdeck.virt.persist"))
+    assert virt == ["kmixdeck.virt.persist", "kmixdeck.virt.persist.out", "kmixdeck.virt.persist.pass.in"], virt
+    stack.cli("devices", "virtual", "remove", "persist")
