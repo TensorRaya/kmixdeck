@@ -271,3 +271,56 @@ def test_fx10_brickwall_is_mix_only_and_its_gain_reduction_is_on_the_bus():
         play.terminate(); play.wait(timeout=5)
     finally:
         s.close(); pw.close()
+
+def test_ux18_loudness_is_opt_in_per_mix_and_reads_ebu_r128():
+    """UX-18: EBU R128 (LUFS) per mix — off by default, on for the Stream mix, and numerically right.
+
+    The reference is established with ffmpeg's own ebur128 filter rather than assumed: the sandbox tone is
+    normalised to a known loudness first, so a wrong K-weighting or channel count in our analyser shows up as
+    a number that disagrees with the reference instead of just "some value arrived".
+    """
+    pw, s = fixture_stack()
+    try:
+        # default state: Monitor off, Stream on (the mix a streamer is judged by)
+        assert json.loads(s.cli("--json", "mix", "loudness", "monitor").stdout)["loudness"] is False
+        assert json.loads(s.cli("--json", "mix", "loudness", "stream").stdout)["loudness"] is True
+        assert json.loads(s.cli("--json", "mix", "loudness", "stream").stdout)["target"] == -14.0
+
+        # the target line is editable, and nonsense is refused rather than stored
+        assert s.cli("mix", "loudness", "stream", "-16").returncode == 0
+        assert json.loads(s.cli("--json", "mix", "loudness", "stream").stdout)["target"] == -16.0
+        assert s.cli("mix", "loudness", "stream", "-99", check=False).returncode != 0, "outside R128 range must be refused"
+        assert json.loads(s.cli("--json", "mix", "loudness", "stream").stdout)["target"] == -16.0, "refused value must not stick"
+
+        # turn it on for Monitor and feed a tone of KNOWN loudness
+        assert s.cli("mix", "loudness", "monitor", "on").returncode == 0
+        assert json.loads(s.cli("--json", "mix", "loudness", "monitor").stdout)["loudness"] is True
+
+        tone, want = s.pw.tone_at_known_loudness()
+        play = subprocess.Popen(["pw-play", "-P", '{ application.name = "LufsProbe" node.name = "lufs-out" target.object = "kmixdeck.channel.voice" }',
+                                 str(tone)], env=s.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(5.0)   # integrated loudness needs a few seconds of gated audio to settle
+
+        lu = json.loads(s.cli("--json", "loudness", "--once").stdout)
+        assert "monitor" in lu, f"no R128 reading for the enabled mix: {sorted(lu)}"
+        m, st, i, tp = lu["monitor"]
+        # The tone reaches the mix at unity through one cell, so the mix's loudness is the file's loudness.
+        # 3 LU of slack covers the cell/master gain staging and the 400 ms window's phase against our sampling.
+        assert abs(st - want) < 3.0, f"short-term loudness {st} LUFS should be near the reference {want} LUFS"
+        assert abs(m - want) < 3.0, f"momentary loudness {m} LUFS should be near the reference {want} LUFS"
+        assert i > -70.0, f"integrated loudness must have settled after 5 s, got {i}"
+        assert tp > want - 6.0, f"true peak {tp} dBTP is implausible for a {want} LUFS tone"
+
+        # and the mix that is switched OFF must not be reported at all (opt-in means opt-in)
+        assert s.cli("mix", "loudness", "monitor", "off").returncode == 0
+        time.sleep(1.0)
+        after = json.loads(s.cli("--json", "loudness", "--once").stdout or "{}")
+        assert "monitor" not in after, f"a disabled mix must not be measured: {sorted(after)}"
+
+        # the flag survives a daemon restart (persisted in layout.json)
+        assert s.cli("mix", "loudness", "monitor", "on").returncode == 0
+        data = json.loads((pw.runtime_dir / "config" / "kmixdeck" / "layout.json").read_text())
+        assert next(m for m in data["mixes"] if m["slug"] == "monitor")["loudness"] is True
+        play.terminate(); play.wait(timeout=5)
+    finally:
+        s.close(); pw.close()

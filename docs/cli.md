@@ -27,7 +27,8 @@ Options go **before** the command: everything after it is taken literally, so th
 | Command | What it does |
 |---|---|
 | `status` | The matrix: every channel × every mix with level and mute, plus outputs, inputs, apps. `--json` gives the whole object tree — this is what the tests and the Stream Deck plugin read. |
-| `levels` | Live peak meters at 25 Hz (`#` peak, `=` RMS, `!` clip). `--json` prints one object per tick. Ctrl-C stops and unsubscribes. |
+| `levels [--once]` | Live peak meters at 25 Hz (`#` peak, `=` RMS, `!` clip). `--json` prints one object per tick. Ctrl-C stops and unsubscribes. `--once` prints a single reading and exits (scripts, tests). |
+| `loudness [--once]` | EBU R128 per mix that has the meter on (UX-18): momentary, short-term and integrated loudness in LUFS plus true peak in dBTP. `--json` prints `{slug: [M, S, I, TP]}`. |
 | `watch` | Prints every property change on the bus as it happens. Useful to see what a UI action actually did. |
 | `undo` | Restores the last removed channel or mix — including its cells, outputs and FX (CH-9). One step. |
 
@@ -122,6 +123,7 @@ gate, compressor via swh-plugins / rnnoise) are listed only when the library is 
 
 | Command | What it does |
 |---|---|
+| `mix loudness <slug> [on\|off\|<LUFS>]` | Switch the R128 meter for a mix or set its target line; no argument reads both (UX-18). |
 | `fx types` | The catalog: every effect type with its controls, ranges and defaults (JSON). |
 | `fx presets` | One-click chains ("Podcast voice", …) as editable starting points (FX-4). |
 | `fx get channel\|mix <slug>` | The current chain (JSON). |

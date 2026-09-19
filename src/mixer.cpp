@@ -8,6 +8,8 @@
 #include <QTimer>
 #include <QDateTime>
 #include <QFile>
+#include <QFileInfo>
+#include <QDir>
 #include <QRegularExpression>
 #include <QDebug>
 #include <QJsonArray>
@@ -44,6 +46,15 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     QObject::connect(&m_graph, &pw::Graph::connected, this, [this] {
         m_connected = true; m_reconnectMs = 500; Q_EMIT connectedChanged();
         QTimer::singleShot(400, this, [this] { reconcile(); });   // registry replay first, then fill the gaps
+        // UX-18: the R128 analysers are the ONLY meters nobody re-asks for after a restart. Peak meters are
+        // rebuilt by the next Subscribe(), but a loudness analyser follows the per-mix flag alone, so without
+        // this the "remember the wish and rebuild on Graph::connected" contract in Meters::setLoudnessTargets
+        // had no caller and the stream mix silently lost its meter for the rest of the daemon's life (CH-4).
+        // After reconcile(), not before: creating capture streams against a core that is still replaying its
+        // registry is exactly what took the daemon's bus name down with it.
+        QTimer::singleShot(500, this, [this] {
+            if (m_connected) m_meters.setLoudnessTargets(loudnessMixNodes());
+        });
     });
     // AR-4: PipeWire restarted under us → drop everything (nodeRemoved for each → layout/app objects vanish on
     // the bus), then reconnect with backoff; the registry replays the graph and objects reappear.
@@ -644,6 +655,149 @@ DeviceRef Mixer::mixFallbackOutput(const QString &slug) const {
 }
 void Mixer::setMixFallbackOutput(const QString &slug, const DeviceRef &dev) {
     if (auto *m = m_layout.mix(slug)) { m->fallbackOutput = dev; saveLayout(); applyFallbacks(); Q_EMIT mixChanged(slug); }
+}
+// UX-18: the analyser follows the layout flag. syncTargets() in the daemon feeds Meters with the list of mixes
+// that have it on, so switching it here is enough — no separate lifecycle to keep in step.
+// ---- CT-9: scenes -----------------------------------------------------------------------------------------
+// A scene stores VALUES against slugs, never node ids or links: it has to survive a device swap, a rename and
+// a restart. Files live next to layout.json so DV-5 (one config dir) and CT-7 (export/import) pick them up.
+QString Mixer::sceneDir() const {
+    return QFileInfo(m_layoutPath).absolutePath() + QStringLiteral("/scenes");
+}
+QString Mixer::scenePath(const QString &name) const {
+    // The name is user input and becomes a file name: keep it readable but refuse anything that could escape
+    // the directory. Everything outside [A-Za-z0-9 _-] is replaced, so "Stream/Live" cannot become a path.
+    QString safe = name;
+    safe.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9 _-]")), QStringLiteral("_"));
+    safe = safe.trimmed();
+    if (safe.isEmpty()) return {};
+    return sceneDir() + QLatin1Char('/') + safe + QStringLiteral(".json");
+}
+QStringList Mixer::scenes() const {
+    QStringList out;
+    for (const auto &fi : QDir(sceneDir()).entryInfoList({QStringLiteral("*.json")}, QDir::Files, QDir::Name))
+        out << fi.completeBaseName();
+    return out;
+}
+QJsonObject Mixer::captureScene() const {
+    QJsonArray cells;
+    for (const auto &c : m_layout.channels)
+        for (const auto &mx : m_layout.mixes)
+            cells.append(QJsonObject{{QStringLiteral("channel"), c.slug}, {QStringLiteral("mix"), mx.slug},
+                                     {QStringLiteral("volume"), cellVolume(c.slug, mx.slug)},
+                                     {QStringLiteral("mute"), cellMuted(c.slug, mx.slug)}});
+    QJsonArray mixes;
+    for (const auto &mx : m_layout.mixes)
+        mixes.append(QJsonObject{{QStringLiteral("mix"), mx.slug}, {QStringLiteral("volume"), mixVolume(mx.slug)},
+                                 {QStringLiteral("mute"), mixMuted(mx.slug)},
+                                 {QStringLiteral("fxEnabled"), mx.fx.enabled}});
+    QJsonArray channels;
+    for (const auto &c : m_layout.channels)
+        channels.append(QJsonObject{{QStringLiteral("channel"), c.slug}, {QStringLiteral("fxEnabled"), c.fx.enabled}});
+    return QJsonObject{{QStringLiteral("version"), 1}, {QStringLiteral("cells"), cells}, {QStringLiteral("mixes"), mixes},
+                       {QStringLiteral("channels"), channels}, {QStringLiteral("listeningDevice"), m_layout.listeningDevice}};
+}
+bool Mixer::saveScene(const QString &name) {
+    const QString path = scenePath(name);
+    if (path.isEmpty()) { qCWarning(lcMixer) << "scene: refusing empty name"; return false; }
+    QDir().mkpath(sceneDir());
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) { qCWarning(lcMixer) << "scene: cannot write" << path; return false; }
+    f.write(QJsonDocument(captureScene()).toJson(QJsonDocument::Indented));
+    f.close();
+    qCInfo(lcMixer) << "scene saved:" << name;
+    Q_EMIT scenesChanged();
+    return true;
+}
+bool Mixer::deleteScene(const QString &name) {
+    const QString path = scenePath(name);
+    if (path.isEmpty() || !QFile::exists(path)) return false;
+    if (!QFile::remove(path)) return false;
+    Q_EMIT scenesChanged();
+    return true;
+}
+bool Mixer::recallScene(const QString &name, bool exclusive) {
+    const QString path = scenePath(name);
+    QFile f(path);
+    if (path.isEmpty() || !f.open(QIODevice::ReadOnly)) { qCWarning(lcMixer) << "scene: no such scene" << name; return false; }
+    const QJsonObject sc = QJsonDocument::fromJson(f.readAll()).object();
+    f.close();
+    if (sc.isEmpty()) { qCWarning(lcMixer) << "scene: unreadable" << name; return false; }
+
+    // Undo first (CH-9): the CURRENT state becomes the undo entry, so a recall is one Ctrl-Z away.
+    m_undo = QJsonObject{{QStringLiteral("what"), tr("Recalled scene “%1”").arg(name)},
+                         {QStringLiteral("kind"), QStringLiteral("scene")},
+                         {QStringLiteral("scene"), captureScene()}};
+
+    // Everything in one pass, then a single reconcile: faders move together rather than one after another.
+    for (const auto &v : sc.value(QStringLiteral("cells")).toArray()) {
+        const auto o = v.toObject();
+        const QString ch = o.value(QStringLiteral("channel")).toString(), mx = o.value(QStringLiteral("mix")).toString();
+        if (!m_layout.channel(ch) || !m_layout.mix(mx)) continue;     // a scene may predate a deleted channel
+        setCellVolume(ch, mx, o.value(QStringLiteral("volume")).toDouble(1.0));
+        setCellMuted(ch, mx, o.value(QStringLiteral("mute")).toBool());
+    }
+    for (const auto &v : sc.value(QStringLiteral("mixes")).toArray()) {
+        const auto o = v.toObject();
+        const QString mx = o.value(QStringLiteral("mix")).toString();
+        auto *lm = m_layout.mix(mx);
+        if (!lm) continue;
+        setMixVolume(mx, o.value(QStringLiteral("volume")).toDouble(1.0));
+        setMixMuted(mx, o.value(QStringLiteral("mute")).toBool());
+        // FX bypass is part of the scene; the chain itself is not (that is FX-6 territory, not a snapshot).
+        if (o.contains(QStringLiteral("fxEnabled")) && lm->fx.enabled != o.value(QStringLiteral("fxEnabled")).toBool()) {
+            lm->fx.enabled = o.value(QStringLiteral("fxEnabled")).toBool();
+            applyFx(mx);
+        }
+    }
+    for (const auto &v : sc.value(QStringLiteral("channels")).toArray()) {
+        const auto o = v.toObject();
+        auto *lc = m_layout.channel(o.value(QStringLiteral("channel")).toString());
+        if (!lc || !o.contains(QStringLiteral("fxEnabled"))) continue;
+        if (lc->fx.enabled != o.value(QStringLiteral("fxEnabled")).toBool()) {
+            lc->fx.enabled = o.value(QStringLiteral("fxEnabled")).toBool();
+            applyFx(lc->slug);
+        }
+    }
+    // Exclusive (qpwgraph's Activated/Exclusive pair, adopted 2026-09-19): a mix the scene does not mention is
+    // reset to unity rather than left wherever it happened to be — otherwise a recall is not deterministic and
+    // "the same scene" sounds different depending on what was touched before. --add keeps the rest untouched.
+    if (exclusive) {
+        QSet<QString> named;
+        for (const auto &v : sc.value(QStringLiteral("mixes")).toArray()) named.insert(v.toObject().value(QStringLiteral("mix")).toString());
+        for (const auto &mx : m_layout.mixes)
+            if (!named.contains(mx.slug)) { setMixVolume(mx.slug, 1.0); setMixMuted(mx.slug, false); }
+    }
+    const QString dev = sc.value(QStringLiteral("listeningDevice")).toString();
+    if (!dev.isEmpty() && dev != m_layout.listeningDevice) setListeningDevice(dev);
+
+    saveLayout(); reconcile();
+    qCInfo(lcMixer) << "scene recalled:" << name << (exclusive ? "(exclusive)" : "(additive)");
+    Q_EMIT sceneRecalled(name);
+    Q_EMIT layoutChanged();
+    return true;
+}
+
+bool Mixer::mixLoudness(const QString &slug) const {
+    const auto *m = m_layout.mix(slug);
+    return m && m->loudness;
+}
+void Mixer::setMixLoudness(const QString &slug, bool on) {
+    if (auto *m = m_layout.mix(slug); m && m->loudness != on) { m->loudness = on; saveLayout(); Q_EMIT mixChanged(slug); Q_EMIT layoutChanged(); }
+}
+double Mixer::mixLoudnessTarget(const QString &slug) const {
+    const auto *m = m_layout.mix(slug);
+    return m ? m->loudnessTarget : -14.0;
+}
+void Mixer::setMixLoudnessTarget(const QString &slug, double lufs) {
+    // A target outside broadcast range is a typo, not a preference: R128 itself lives between -36 and 0 LUFS.
+    if (!std::isfinite(lufs) || lufs > 0.0 || lufs < -36.0) { qCWarning(lcMixer) << "refusing loudness target" << lufs << "LUFS"; return; }
+    if (auto *m = m_layout.mix(slug); m && m->loudnessTarget != lufs) { m->loudnessTarget = lufs; saveLayout(); Q_EMIT mixChanged(slug); }
+}
+QStringList Mixer::loudnessMixNodes() const {
+    QStringList out;
+    for (const auto &m : m_layout.mixes) if (m.loudness) out << Names::mixNode(m.slug);
+    return out;
 }
 double Mixer::mixOutputVolume(const QString &slug, int index) const {
     auto it = m_edges.constFind(EdgeNames::outputNode(slug, index));

@@ -8,7 +8,7 @@ add_library(kmixdeck_core STATIC
     pipewire/meters.cpp pipewire/meters.h
 )
 target_include_directories(kmixdeck_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(kmixdeck_core PUBLIC Qt6::Core PkgConfig::PipeWire)
+target_link_libraries(kmixdeck_core PUBLIC Qt6::Core PkgConfig::PipeWire PkgConfig::EBUR128)
 target_compile_options(kmixdeck_core PRIVATE -Wall -Wextra)
 
 # --- kmixdeckd: the service (ADR 0005). Only binary that links libpipewire.

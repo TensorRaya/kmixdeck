@@ -43,6 +43,11 @@
     <method name="RemoveOutput"><arg name="node_name" type="s" direction="in"/></method>
     <!-- DV-15: played to while every entry of Outputs is unplugged. Empty = silence (never the default sink). -->
     <property name="FallbackOutput" type="s" access="readwrite"/>
+    <!-- UX-18: EBU R128 loudness analyser for this mix. Off by default (one analyser costs CPU and screen
+         space); the Stream mix ships with it on. Readings arrive on org.kmixdeck1.Levels.Loudness. -->
+    <property name="Loudness" type="b" access="readwrite"/>
+    <!-- UX-18: the target line drawn on the meter, in LUFS. -14 suits Twitch/YouTube; user-editable. -->
+    <property name="LoudnessTarget" type="d" access="readwrite"/>
     <!-- master fader of the mix (MX-6), linear 0..1: applies to every hardware output and to CaptureSource alike -->
     <property name="Volume" type="d" access="readwrite"/>
     <property name="Muted" type="b" access="readwrite"/>

@@ -77,6 +77,8 @@ struct LayoutMix     {
     QVector<DeviceRef> outputs;   // MX-9: several hardware outputs at once
     DeviceRef fallbackOutput;     // DV-15: used while outputs[0] is absent; empty node = none
     fx::Chain fx;                 // FX-6: same chain model on the output side
+    bool loudness = false;        // UX-18: EBU R128 analyser on this mix — off by default (CPU + screen space)
+    double loudnessTarget = -14.0;// UX-18: the target line, -14 LUFS for Twitch/YouTube, user-editable
     static LayoutMix make(const QString &slug, const QString &name, const QString &icon = {}) { LayoutMix m; m.slug = slug; m.name = name; m.icon = icon; return m; }
 };
 

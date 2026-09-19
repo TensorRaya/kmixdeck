@@ -183,6 +183,33 @@ class PwDaemon:
         out = self.runtime_dir / f"rec-{sink}-{time.time_ns()}.wav"
         return self._record(out, 2, [(f"{sink}:monitor_{ch}", f"pw-record:input_{ch}") for ch in ("FL", "FR")], seconds, sink)
 
+    def tone_at_known_loudness(self, target_lufs: float = -20.0) -> tuple[Path, float]:
+        """A 12 s tone whose EBU R128 loudness is MEASURED, not assumed, plus that measurement.
+
+        UX-18 tests need a reference: ffmpeg's `sine` does not produce 0 dBFS (it lands near -21 dBFS) and its
+        crest factor is not the textbook sine one, so computing the expected LUFS on paper gives the wrong
+        number. The file is normalised towards `target_lufs` with ffmpeg's loudnorm, then ffmpeg's own ebur128
+        filter reports what it actually became — and that reading is what the test compares against.
+        """
+        raw = self.runtime_dir / "lufs-raw.wav"
+        out = self.runtime_dir / "lufs-ref.wav"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                        "-i", "sine=frequency=1000:sample_rate=48000:duration=12", "-ac", "2", "-ar", "48000", str(raw)], check=True)
+        # one-pass loudnorm gets close enough; the second measurement below is what the test trusts
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(raw),
+                        "-af", f"loudnorm=I={target_lufs}:TP=-2:LRA=1", "-ar", "48000", str(out)], check=True)
+        r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(out),
+                            "-filter_complex", "ebur128=peak=true", "-f", "null", "/dev/null"],
+                           capture_output=True, text=True).stderr
+        got = None
+        tail = r.split("Integrated loudness:")[-1]
+        for line in tail.splitlines():
+            if line.strip().startswith("I:"):
+                got = float(line.split("I:")[1].split("LUFS")[0])
+                break
+        assert got is not None, f"could not read the reference loudness back:\n{r[-500:]}"
+        return out, got
+
     def level_at(self, sink: str) -> float:
         return self.rms_db(self.record_monitor(sink))
 

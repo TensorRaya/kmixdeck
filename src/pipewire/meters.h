@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QHash>
 #include <QStringList>
+#include <QVector>
 #include <QTimer>
 #include <memory>
 
@@ -24,11 +25,17 @@ public:
 
     /// Meter exactly these node names (others are torn down). Empty list = no streams at all.
     void setTargets(const QStringList &nodeNames);
+    /// UX-18: nodes that additionally get an EBU R128 analyser (libebur128). Stereo, full sample data — a
+    /// loudness meter cannot work off the mono fold the peak meters use, because ITU-R BS.1770 weights the
+    /// channels. Opt-in per mix: one analyser is ~1 % of a core, and R128 only makes sense on a finished mix.
+    void setLoudnessTargets(const QStringList &nodeNames);
     QStringList targets() const;
 
 Q_SIGNALS:
     /// node.name → peak (linear 0…1) for every metered node, once per tick.
     void peaks(const QHash<QString, float> &peaks);
+    /// UX-18: per node — momentary (400 ms), short-term (3 s), integrated (gated) in LUFS and true peak in dBTP.
+    void loudness(const QHash<QString, QVector<float>> &lufs);
 
 private:
     void publish();

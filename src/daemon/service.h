@@ -126,6 +126,8 @@ class MixObject : public ExportedObject {
     Q_PROPERTY(QStringList Outputs READ outputs)                       // MX-9: all hardware outputs, node.name each
     Q_PROPERTY(QStringList OutputDescriptions READ outputDescriptions) // parallel to Outputs: last seen node.description (DV-9: name an unplugged device)
     Q_PROPERTY(QString FallbackOutput READ fallbackOutput WRITE setFallbackOutput)   // DV-15: used while every output is absent
+    Q_PROPERTY(bool Loudness READ loudness WRITE setLoudness)                       // UX-18: EBU R128 analyser on this mix
+    Q_PROPERTY(double LoudnessTarget READ loudnessTarget WRITE setLoudnessTarget)   // UX-18: target line in LUFS
     Q_PROPERTY(QString CaptureSource READ captureSource CONSTANT)
     Q_PROPERTY(QString NodeName READ nodeName CONSTANT)
     Q_PROPERTY(bool OutputPresent READ outputPresent)
@@ -149,6 +151,8 @@ public:
     QStringList outputs() const;
     QStringList outputDescriptions() const;
     QString fallbackOutput() const; void setFallbackOutput(const QString &);
+    bool loudness() const; void setLoudness(bool);
+    double loudnessTarget() const; void setLoudnessTarget(double);
     QString fxChainJson() const;
 public Q_SLOTS:
     void ToggleMute();
@@ -250,6 +254,7 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_PROPERTY(QDBusObjectPath DefaultChannel READ defaultChannel WRITE setDefaultChannel)   // CH-5; "/" = off
     Q_PROPERTY(QString ListeningDevice READ listeningDevice WRITE setListeningDevice)         // UX-2; node.name or ""
     Q_PROPERTY(QString UndoDescription READ undoDescription)   // CH-9: "" = nothing to undo, else e.g. channel “Music”
+    Q_PROPERTY(QStringList Scenes READ scenes)                 // CT-9: named snapshots of the mixable state
     Q_PROPERTY(QStringList ChannelOrder READ channelOrder)     // UX-9: display order, slugs
     Q_PROPERTY(QStringList MixOrder READ mixOrder)
     Q_PROPERTY(QString FxTypes READ fxTypes CONSTANT)          // FX-4: built-in catalog as JSON [{type,label,params:[…]}]
@@ -276,8 +281,16 @@ public:
     QString fxPresets() const;
     QStringList channelOrder() const;
     QStringList mixOrder() const;
+    // CT-9: the Scenes READ getter belongs next to the other property getters, NOT in Q_SLOTS.
+    // Qt exports every public slot as a D-Bus method, so a getter parked there shows up as a
+    // bogus `scenes` method on org.kmixdeck1.Mixer that the shipped XML does not declare —
+    // exactly what the service_cli contract test caught (live−shipped={('method','scenes')}).
+    QStringList scenes() const;
 public Q_SLOTS:
     void Undo();                                      // CH-9: restore the last removed channel/mix
+    void SaveScene(const QString &name);              // CT-9
+    void RecallScene(const QString &name, bool exclusive);
+    void DeleteScene(const QString &name);
     QString Export();                                 // CT-7
     QString FirstRunPlan();                           // UX-3: JSON of what FirstRunApply would do
     QString FirstRunApply();                          // UX-3: does it, returns JSON of what was done
@@ -295,6 +308,12 @@ public Q_SLOTS:
     void RemoveChannel(const QDBusObjectPath &path);
     void RemoveMix(const QDBusObjectPath &path);
     void Save();
+Q_SIGNALS:
+    // CT-9: a recall is a signal, and it must be a real Qt signal on the adaptor — only then does
+    // Qt's introspection export it. Sending a hand-rolled QDBusMessage::createSignal() from Service
+    // does reach subscribers, but the member never appears on the interface, so the shipped XML
+    // declares a SceneRecalled that introspection cannot find (shipped−live={('signal','SceneRecalled')}).
+    void SceneRecalled(const QString &name);
 private:
     Mixer *m_mixer;
 };

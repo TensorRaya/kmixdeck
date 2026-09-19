@@ -107,6 +107,8 @@ One column of the mixer: an output group at `/org/kmixdeck1/mix/<slug>`. A mix s
 | `Outputs` | string[] | read | Every wire of this mix as `<ref>` strings. |
 | `OutputDescriptions` | string[] | read | Parallel to Outputs: last seen description per entry, so a frontend can name an unplugged device (DV-9). |
 | `FallbackOutput` | string | readwrite | Where to play while every entry of Outputs is unplugged (DV-15). Empty means silence — never silently the system default. |
+| `Loudness` | bool | readwrite | UX-18: run an EBU R128 loudness analyser on this mix. Off by default (one analyser costs CPU); the Stream mix ships with it on. Readings arrive on `org.kmixdeck1.Levels.Loudness`. |
+| `LoudnessTarget` | double | readwrite | UX-18: the target line drawn on this mix's loudness meter, in LUFS. −14 suits Twitch/YouTube. Values outside the R128 range (−36…0) are refused. |
 | `Volume` | double | readwrite | Master fader of the mix, linear 0…1 (MX-6): applies to every hardware output and to the capture source alike. |
 | `Muted` | bool | readwrite | Mix mute on top of the master. |
 | `FxChain` | string | read | Same chain contract as on Channel (FX-6); a limiter on the Stream mix is the common case. |
@@ -182,3 +184,4 @@ Meter data for `/org/kmixdeck1/levels`. One shared set of meter streams feeds ev
 | Name | Signature | Meaning |
 |---|---|---|
 | `Peaks` | (peaks: dict<string,double>) | One tick: bus key → peak level linear 0…1. Keys: `channel/<s>`, `mix/<s>`, `cell/<c>/<m>` (post-fader), `in/<s>`, `out/<m>` (post master), `app/<id>`; `rms/` and `clip/` prefixes carry the CH-7 companions. |
+| `Loudness` | (loudness: `a{sad}`) | UX-18: EBU R128 for every mix whose `Loudness` property is on — mix slug → `[M, S, I, TP]`: momentary (400 ms), short-term (3 s) and gated integrated loudness in LUFS, plus true peak in dBTP. Same tick rate as `Peaks`. The analyser runs continuously while the flag is set (its windows need seconds of audio), not only while somebody listens. |

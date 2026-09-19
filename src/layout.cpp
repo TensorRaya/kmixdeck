@@ -41,6 +41,8 @@ Layout Layout::starter() {
                   LayoutChannel::make(QStringLiteral("voice"), QStringLiteral("Voice"), QStringLiteral("audio-input-microphone"))};
     l.mixes = {LayoutMix::make(QStringLiteral("monitor"), QStringLiteral("Monitor"), QStringLiteral("audio-headphones")),
                LayoutMix::make(QStringLiteral("stream"), QStringLiteral("Stream"), QStringLiteral("camera-video"))};
+    // UX-18: "The Stream mix SHOULD default it on." That is the one mix whose loudness a streamer is judged by.
+    for (auto &m : l.mixes) if (m.slug == QLatin1String("stream")) m.loudness = true;
     return l;
 }
 
@@ -89,6 +91,9 @@ QJsonObject Layout::toJson() const {
         if (!outs.isEmpty()) o.insert(QStringLiteral("outputDevice"), m.outputs.first().node);   // v1-compatible view: first entry
         if (!m.fallbackOutput.node.isEmpty()) o.insert(QStringLiteral("fallbackOutput"), m.fallbackOutput.toJson());
         if (!m.fx.effects.isEmpty() || !m.fx.enabled) o.insert(QStringLiteral("fx"), QJsonObject{{QStringLiteral("enabled"), m.fx.enabled}, {QStringLiteral("chain"), fxChainArray(m.fx)}});
+        // UX-18: only written when it deviates from the default, so existing layouts stay byte-identical
+        if (m.loudness) o.insert(QStringLiteral("loudness"), true);
+        if (m.loudnessTarget != -14.0) o.insert(QStringLiteral("loudnessTarget"), m.loudnessTarget);
         mx.append(o);
     }
     for (const auto &i : inputs) in.append(QJsonObject{{QStringLiteral("slug"), i.slug}, {QStringLiteral("name"), i.name}, {QStringLiteral("device"), i.device.toJson()}, {QStringLiteral("channel"), i.channel}});
@@ -120,6 +125,8 @@ Layout Layout::fromJson(const QJsonObject &o) {
         if (lm.outputs.isEmpty() && !legacy.isEmpty()) lm.outputs.push_back(DeviceRef{legacy, legacy, {}, {}});
         if (m.contains(QStringLiteral("fallbackOutput"))) lm.fallbackOutput = DeviceRef::fromJson(m.value(QStringLiteral("fallbackOutput")).toObject());
         lm.fx = readFx(m);
+        lm.loudness = m.value(QStringLiteral("loudness")).toBool(false);                      // UX-18
+        lm.loudnessTarget = m.value(QStringLiteral("loudnessTarget")).toDouble(-14.0);
         l.mixes.push_back(lm);
     }
     for (const auto &v : o.value(QStringLiteral("inputs")).toArray()) {

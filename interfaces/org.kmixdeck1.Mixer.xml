@@ -42,6 +42,19 @@
     <!-- FX-4: one-click chains as JSON {name: chain}; a preset is just a starting point, editable afterwards -->
     <property name="FxPresets" type="s" access="read"/>
     <method name="Undo"/>
+    <!-- CT-9: named snapshots of the mixable state — cell faders/mutes, mix masters/mutes, listening device,
+         FX bypass. NOT the channel/mix set and not the wiring, so a scene stays applicable after a rename or
+         a device swap. Files live under the layout dir; export/import (CT-7) carries them. A recall applies in
+         one graph pass and is undoable (CH-9). `exclusive` resets mixes the scene does not mention to unity —
+         without it a recall is not deterministic. -->
+    <property name="Scenes" type="as" access="read"/>
+    <method name="SaveScene"><arg name="name" type="s" direction="in"/></method>
+    <method name="RecallScene">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="exclusive" type="b" direction="in"/>
+    </method>
+    <method name="DeleteScene"><arg name="name" type="s" direction="in"/></method>
+    <signal name="SceneRecalled"><arg name="name" type="s"/></signal>
     <!-- CT-7 backup/restore. Export: the complete layout plus every fader, trim and mute as one JSON document (what
          layout.json holds, plus "levels"). Import: replaces the layout with the document, rebuilds the graph, applies
          the levels; rejects anything that is not a kmixdeck export and leaves the running config untouched then. -->

@@ -26,9 +26,21 @@
            app/<nodeId>          the application's own output — "who is talking right now"
          CH-7 companions, same tick, same keys with a prefix (absent when there is nothing to say):
            rms/<key>             RMS of the tick's samples, linear (no ballistics — a true average)
-           clip/<key>            1.0 while the clip indicator is lit: a sample reached full scale within the last ≈ 1.5 s -->
+           clip/<key>            1.0 while the clip indicator is lit: a sample reached full scale within the last ≈ 1.5 s
+         FX-10, present only while a mix carries an active FX chain:
+           gr/<mix>              gain reduction of that chain in dB (>= 0), derived from mix/<mix> minus out/<mix> -->
     <signal name="Peaks">
       <arg name="peaks" type="a{sd}"/>
+    </signal>
+    <!-- UX-18: EBU R128 (ITU-R BS.1770) readings, same tick rate as Peaks, only for mixes whose Loudness
+         property is on. Key is the mix slug; the array is always four values, in LUFS except the last:
+           [0] M  momentary loudness, 400 ms window
+           [1] S  short-term loudness, 3 s window
+           [2] I  integrated loudness, gated — -70 until enough audio has accumulated
+           [3] TP true peak in dBTP (this is the value a brick-wall ceiling is set against, FX-10)
+         Computed in the daemon so every frontend shows the same numbers (as with the peak ballistics, UX-16). -->
+    <signal name="Loudness">
+      <arg name="loudness" type="a{sad}"/>
     </signal>
   </interface>
 </node>

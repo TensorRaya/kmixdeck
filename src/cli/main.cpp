@@ -124,6 +124,7 @@ class Watcher : public QObject {
     Q_OBJECT
 Q_SIGNALS:
     void gotPeaks();   // `levels --once` quits on the first tick
+    void gotLoudness();   // `loudness --once` quits on the first reading
 public Q_SLOTS:
     // Slot with a QDBusMessage parameter receives the raw message → we get the object path.
     void propertiesChanged(const QDBusMessage &msg) {
@@ -131,6 +132,37 @@ public Q_SLOTS:
         const QString iface = args.value(0).toString(); const QVariantMap changed = qdbus_cast<QVariantMap>(args.value(1));
         if (g_json) { QJsonObject j{{"event", "changed"}, {"path", path}, {"interface", iface}, {"properties", QJsonObject::fromVariantMap(plain(changed))}}; out << QJsonDocument(j).toJson(QJsonDocument::Compact) << "\n"; }
         else { out << path.mid(QString(ROOT).size() + 1) << ":"; const auto pl = plain(changed); for (auto it = pl.cbegin(); it != pl.cend(); ++it) out << " " << it.key() << "=" << it.value().toString(); out << "\n"; }
+        out.flush();
+    }
+    // UX-18: mix slug → [M, S, I, TP]. The signal is a{sad}, so the slot takes the raw message and demarshals
+    // the dictionary by hand — a QVariantMap slot would hand us un-demarshalled QDBusArgument values (null).
+    void loudnessSig(const QDBusMessage &msg) {
+        QMap<QString, QList<double>> p;
+        const auto arg = msg.arguments().value(0).value<QDBusArgument>();
+        arg.beginMap();
+        while (!arg.atEnd()) {
+            QString k; QList<double> v;
+            arg.beginMapEntry(); arg >> k >> v; arg.endMapEntry();
+            p.insert(k, v);
+        }
+        arg.endMap();
+        if (p.isEmpty()) return;
+        Q_EMIT gotLoudness();
+        if (g_json) {
+            QJsonObject j;
+            for (auto it = p.cbegin(); it != p.cend(); ++it) {
+                QJsonArray vals;
+                for (double d : it.value()) vals.append(d);
+                j.insert(it.key(), vals);
+            }
+            out << QJsonDocument(j).toJson(QJsonDocument::Compact) << "\n"; out.flush(); return;
+        }
+        for (auto it = p.cbegin(); it != p.cend(); ++it) {
+            const QList<double> &v = it.value();
+            if (v.size() < 4) continue;
+            out << QStringLiteral("%1  M %2  S %3  I %4 LUFS   TP %5 dBTP\n")
+                       .arg(it.key(), -12).arg(v[0], 6, 'f', 1).arg(v[1], 6, 'f', 1).arg(v[2], 6, 'f', 1).arg(v[3], 6, 'f', 1);
+        }
         out.flush();
     }
     void peaks(const QVariantMap &p) {
@@ -281,6 +313,41 @@ struct Cli {
         const QDBusMessage r = mixer.call("Import", QString::fromUtf8(f.readAll()));
         if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
         out << "imported " << a[1] << "\n"; return Ok;
+    }
+    int cmdScene() {   // CT-9: scene save|recall|list|delete <name>  [--add]
+        if (!need(2)) return Usage;
+        QDBusInterface mx(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
+        if (!mx.isValid()) return fail(NoService, mx.lastError().message());
+        const QString sub = a[1];
+        if (sub == QLatin1String("list")) {
+            const QStringList names = mx.property("Scenes").toStringList();
+            if (g_json) { QJsonArray arr; for (const auto &n : names) arr.append(n); out << QJsonDocument(arr).toJson(QJsonDocument::Compact) << "\n"; }
+            else for (const auto &n : names) out << n << "\n";
+            out.flush();
+            return Ok;
+        }
+        if (!need(3)) return Usage;
+        const QString name = a[2];
+        if (sub == QLatin1String("save")) {
+            const QDBusMessage r = mx.call(QStringLiteral("SaveScene"), name);
+            if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
+            if (!mx.property("Scenes").toStringList().contains(name)) return fail(Rejected, QStringLiteral("daemon did not store scene '%1' (see its log)").arg(name));
+            return Ok;
+        }
+        if (sub == QLatin1String("recall")) {
+            // Exclusive by default (qpwgraph's Activated/Exclusive pair): a mix the scene does not mention goes
+            // back to unity, so the same scene always sounds the same. --add leaves the rest where it is.
+            const bool exclusive = !a.contains(QStringLiteral("--add"));
+            const QDBusMessage r = mx.call(QStringLiteral("RecallScene"), name, exclusive);
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        if (sub == QLatin1String("delete")) {
+            const QDBusMessage r = mx.call(QStringLiteral("DeleteScene"), name);
+            if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
+            if (mx.property("Scenes").toStringList().contains(name)) return fail(NotFound, QStringLiteral("no scene '%1'").arg(name));
+            return Ok;
+        }
+        return fail(Usage, QStringLiteral("scene: expected save|recall|list|delete, got '%1'").arg(sub));
     }
     int cmdUndo() {
         const QString what = unwrap(o.mixer.value("UndoDescription")).toString();
@@ -476,6 +543,26 @@ struct Cli {
             if (!need(4)) return Usage;
             return setProp(pathOf(a[2]), iface, "FallbackOutput", a[3] == "none" ? QString() : a[3], &e) ? Ok : fail(Rejected, e);
         }
+        if (sub == "loudness" && !ch) {   // UX-18: mix loudness <slug> [on|off|<target LUFS>]
+            if (!need(3)) return Usage;
+            QDBusInterface mxObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
+            if (a.size() < 4) {           // read: the flag and its target line
+                if (g_json) out << QJsonDocument(QJsonObject{{QStringLiteral("loudness"), mxObj.property("Loudness").toBool()},
+                                                             {QStringLiteral("target"), mxObj.property("LoudnessTarget").toDouble()}}).toJson(QJsonDocument::Compact) << "\n";
+                else out << (mxObj.property("Loudness").toBool() ? "on" : "off") << "  target " << mxObj.property("LoudnessTarget").toDouble() << " LUFS\n";
+                out.flush();
+                return Ok;
+            }
+            if (a[3] == QLatin1String("on") || a[3] == QLatin1String("off"))
+                return setProp(pathOf(a[2]), iface, "Loudness", a[3] == QLatin1String("on"), &e) ? Ok : fail(Rejected, e);
+            bool okNum = false; const double lufs = a[3].toDouble(&okNum);
+            if (!okNum) return fail(Usage, QStringLiteral("expected 'on', 'off' or a target in LUFS, got '%1'").arg(a[3]));
+            if (!setProp(pathOf(a[2]), iface, "LoudnessTarget", lufs, &e)) return fail(Rejected, e);
+            // the daemon refuses a target outside R128 range silently on the property — verify it took
+            if (!qFuzzyCompare(mxObj.property("LoudnessTarget").toDouble(), lufs))
+                return fail(Rejected, QStringLiteral("daemon refused %1 LUFS (R128 range is -36…0)").arg(lufs));
+            return Ok;
+        }
         if (sub == "output" && !ch) {   // mix output <slug> <node[:POS,POS]|none> — ADR 0009 refs
             if (!need(4)) return Usage;
             QString dev = a[3] == "none" ? QString() : a[3];
@@ -640,6 +727,21 @@ struct Cli {
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&lv] { lv.call("Unsubscribe"); });
         return app.exec();
     }
+    int cmdLoudness() {   // UX-18: live LUFS for every mix that has the meter on. --once: one reading, then exit.
+        QDBusInterface lv(BUS, ROOT, "org.kmixdeck1.Levels", QDBusConnection::sessionBus());
+        QDBusReply<void> sub = lv.call("Subscribe");
+        if (!sub.isValid()) return fail(NoService, sub.error().message());
+        const bool once = a.contains(QStringLiteral("--once"));
+        auto *w = new Watcher; w->setParent(&app);
+        QDBusConnection::sessionBus().connect(BUS, ROOT, "org.kmixdeck1.Levels", "Loudness", w, SLOT(loudnessSig(QDBusMessage)));
+        if (once) {
+            QObject::connect(w, &Watcher::gotLoudness, &app, [] { QCoreApplication::quit(); });
+            // No mix with the meter on means no signal at all — say so instead of hanging until the timeout.
+            QTimer::singleShot(6000, &app, [] { out << "{}\n"; out.flush(); QCoreApplication::quit(); });
+        }
+        QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&lv] { lv.call("Unsubscribe"); });
+        return app.exec();
+    }
     int cmdWatch() {
         Watcher w; auto bus = QDBusConnection::sessionBus();
         bus.connect(BUS, QString(), "org.freedesktop.DBus.Properties", "PropertiesChanged", &w, SLOT(propertiesChanged(QDBusMessage)));
@@ -652,11 +754,13 @@ struct Cli {
         using Fn = int (Cli::*)();
         static const QMap<QString, Fn> table = {
             {QStringLiteral("status"), &Cli::cmdStatus},
+            {QStringLiteral("loudness"), &Cli::cmdLoudness},
             {QStringLiteral("streamdeck"), &Cli::cmdStreamdeck},
             {QStringLiteral("setup"), &Cli::cmdSetup},
             {QStringLiteral("export"), &Cli::cmdExport},
             {QStringLiteral("import"), &Cli::cmdImport},
             {QStringLiteral("undo"), &Cli::cmdUndo},
+            {QStringLiteral("scene"), &Cli::cmdScene},
             {QStringLiteral("devices"), &Cli::cmdDevices},
             {QStringLiteral("channel"), &Cli::cmdChannelMix},
             {QStringLiteral("mix"), &Cli::cmdChannelMix},
@@ -701,6 +805,9 @@ int main(int argc, char *argv[]) {
         "  mix     fallback <slug> <node.name|none>   played while every output is unplugged (DV-15)\n"
         "  devices [in]                               hardware outputs a mix can play to (in: sources a channel can be fed by)\n"
         "  devices hide|unhide <node.name>|hidden      CH-11: keep a device out of every picker (still routable by name)\n"
+        "  mix loudness <slug> [on|off|<LUFS>]        EBU R128 meter for a mix; no argument reads the state\n"
+        "  scene save|recall|list|delete <name>      named snapshots of faders/mutes; recall --add keeps other mixes\n"
+        "  loudness [--once]                          live LUFS (M/S/I) and true peak per mix that has it on\n"
         "  levels [--once]                            live meters: peak '#', RMS '=', clip '!' (Ctrl-C to stop; --once = one reading)\n"
         "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
         "  cell    link <ch> <mix> <other-mix|none>   MX-7: this cell follows the other mix's cell (volume+mute)\n"

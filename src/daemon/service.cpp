@@ -138,6 +138,10 @@ bool MixObject::SetFxControl(const QString &control, double value) {
     return true;
 }
 void MixObject::setFallbackOutput(const QString &n) { m_mixer->setMixFallbackOutput(m_slug, m_mixer->deviceRef(n)); }
+bool MixObject::loudness() const { return m_mixer->mixLoudness(m_slug); }
+void MixObject::setLoudness(bool on) { m_mixer->setMixLoudness(m_slug, on); }
+double MixObject::loudnessTarget() const { return m_mixer->mixLoudnessTarget(m_slug); }
+void MixObject::setLoudnessTarget(double lufs) { m_mixer->setMixLoudnessTarget(m_slug, lufs); }
 void MixObject::AddOutput(const QString &n) {
     if (n.isEmpty()) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("empty node name")); return; }
     const DeviceRef ref = m_mixer->deviceRef(n);
@@ -163,7 +167,7 @@ void MixObject::RemoveOutput(const QString &n) {
 void MixObject::ToggleMute() { m_mixer->setMixMuted(m_slug, !m_mixer->mixMuted(m_slug)); }
 QVariantMap MixObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), icon()}, {QStringLiteral("Color"), color()},
-            {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("Outputs"), outputs()}, {QStringLiteral("OutputDescriptions"), outputDescriptions()}, {QStringLiteral("FallbackOutput"), fallbackOutput()},
+            {QStringLiteral("OutputDevice"), outputDevice()}, {QStringLiteral("Loudness"), loudness()}, {QStringLiteral("LoudnessTarget"), loudnessTarget()}, {QStringLiteral("Outputs"), outputs()}, {QStringLiteral("OutputDescriptions"), outputDescriptions()}, {QStringLiteral("FallbackOutput"), fallbackOutput()},
             {QStringLiteral("CaptureSource"), captureSource()}, {QStringLiteral("NodeName"), nodeName()},
             {QStringLiteral("OutputPresent"), outputPresent()}, {QStringLiteral("Volume"), volume()}, {QStringLiteral("Muted"), muted()},
             {QStringLiteral("FxChain"), fxChainJson()}};
@@ -211,6 +215,23 @@ void AppObject::notifyChanged() {
 LevelsAdaptor::LevelsAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor(parent), m_mixer(mixer) {
     m_teardown.setSingleShot(true); m_teardown.setInterval(3000);
     connect(&m_teardown, &QTimer::timeout, this, &LevelsAdaptor::syncTargets);
+    connect(m_mixer->meters(), &pw::Meters::loudness, this, [this](const QHash<QString, QVector<float>> &lu) {
+        // UX-18: node name → mix slug, so the signal speaks the same language as every other Levels key.
+        // The signal is a{sad}: a QVariantList inside a QVariantMap marshals as a{sv} with a nested variant
+        // (the reader then sees null), so the value type has to be a real QList<double>.
+        QMap<QString, QList<double>> out;
+        for (auto it = lu.cbegin(); it != lu.cend(); ++it) {
+            QString slug = it.key();
+            if (slug.startsWith(QLatin1String("kmixdeck.mix."))) slug = slug.mid(13);
+            QList<double> vals;
+            for (float v : it.value()) vals << double(v);
+            out.insert(slug, vals);
+        }
+        if (out.isEmpty()) return;
+        QDBusMessage sig = QDBusMessage::createSignal(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Loudness"));
+        sig << QVariant::fromValue(out);
+        QDBusConnection::sessionBus().send(sig);
+    });
     connect(m_mixer->meters(), &pw::Meters::peaks, this, [this](const QHash<QString, float> &raw) {
         QHash<QString, float> p = raw;
         // FX-10: gain reduction of a mix's brick-wall limiter. swh's limiter has an "Attenuation (dB)" OUTPUT
@@ -232,7 +253,17 @@ LevelsAdaptor::LevelsAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdapt
         Q_EMIT Peaks(out);
     });
     // layout / app set changes while subscribed → meter the new set (UX-13: apps come and go)
-    connect(m_mixer, &Mixer::layoutChanged, this, [this] { if (!m_subscribers.isEmpty()) syncTargets(); });
+    // UX-18: the loudness flag must take effect even with nobody subscribed, so this one is unconditional.
+    connect(m_mixer, &Mixer::layoutChanged, this, [this] {
+        if (!m_subscribers.isEmpty()) syncTargets();
+        // UX-18: the loudness flag must take effect without a subscriber, but NOT synchronously from here.
+        // layoutChanged() also fires while the graph is reconnecting after a PipeWire restart (CH-4), and
+        // creating capture streams in that window took the daemon's bus name down with it — A/B verified
+        // 2026-09-19: with the call inline test_ch4_routing_survives_pipewire_restart fails, queued it passes.
+        else QTimer::singleShot(0, this, [this] {
+            if (m_subscribers.isEmpty()) m_mixer->meters()->setLoudnessTargets(m_mixer->loudnessMixNodes());
+        });
+    });
     connect(m_mixer, &Mixer::appAdded,   this, [this](uint32_t) { if (!m_subscribers.isEmpty()) syncTargets(); });
     connect(m_mixer, &Mixer::appRemoved, this, [this](uint32_t) { if (!m_subscribers.isEmpty()) syncTargets(); });
     // subscribers that leave the bus without Unsubscribe()
@@ -286,7 +317,22 @@ void LevelsAdaptor::syncTargets() {
         for (uint32_t id : m_mixer->appIds()) if (const auto a = m_mixer->app(id); a && !a->nodeName.isEmpty()) { t << a->nodeName; m_appNodes.insert(a->nodeName, id); }
     }
     m_mixer->meters()->setTargets(t);
+    // UX-18: the R128 analysers follow the per-mix flag ALONE, not the subscriber count. A 3 s short-term window
+    // and a gated integration need seconds of continuous audio, so an analyser that is torn down between readings
+    // can never produce a valid number — measured 2026-09-19: a verified -20 LUFS tone read -32.7 / -41.5 / -70
+    // when the reader's own Subscribe() created the analyser, and -20.0 / -20.1 / -20.1 once it had been running.
+    // That is the trade the opt-in buys: the user enables the meter per mix and pays for it continuously.
+    m_mixer->meters()->setLoudnessTargets(m_mixer->loudnessMixNodes());
 }
+
+namespace {
+// UX-18: a{sad} for the Loudness signal. Qt marshals QMap<QString, QList<double>> only after the type is
+// registered — without this the send fails with "type is not registered with D-Bus" on every tick.
+struct LoudnessTypeRegistration {
+    LoudnessTypeRegistration() { qDBusRegisterMetaType<QMap<QString, QList<double>>>(); }
+};
+const LoudnessTypeRegistration s_loudnessTypeRegistration;
+} // namespace
 
 // ---- Mixer root
 MixerAdaptor::MixerAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdaptor(parent), m_mixer(mixer) {}
@@ -330,6 +376,10 @@ void MixerAdaptor::Audition(const QDBusObjectPath &p) {
 void MixerAdaptor::Undo() {
     if (!m_mixer->undo()) static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.Failed"), QStringLiteral("nothing to undo"));
 }
+QStringList MixerAdaptor::scenes() const { return m_mixer->scenes(); }
+void MixerAdaptor::SaveScene(const QString &name) { m_mixer->saveScene(name); }
+void MixerAdaptor::RecallScene(const QString &name, bool exclusive) { m_mixer->recallScene(name, exclusive); }
+void MixerAdaptor::DeleteScene(const QString &name) { m_mixer->deleteScene(name); }
 QString MixerAdaptor::FirstRunPlan() { return QString::fromUtf8(QJsonDocument(m_mixer->firstRunPlan()).toJson(QJsonDocument::Compact)); }
 QString MixerAdaptor::FirstRunApply() {
     QString why; const QJsonObject done = m_mixer->firstRunApply(&why);
@@ -449,6 +499,14 @@ Service::Service(QObject *parent) : QObject(parent) {
     connect(&m_mixer, &Mixer::undoChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("UndoDescription"), m_mixer.undoDescription()}});
     });
+    // CT-9: the scene list is a property, a recall is a signal — frontends refresh their picker on the first
+    // and move their faders on the second (the fader values arrive through the usual per-cell notifications).
+    connect(&m_mixer, &Mixer::scenesChanged, this, [this] {
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("Scenes"), m_mixer.scenes()}});
+    });
+    connect(&m_mixer, &Mixer::sceneRecalled, this, [this](const QString &name) {
+        if (m_mixerAdaptor) Q_EMIT m_mixerAdaptor->SceneRecalled(name);
+    });
     connect(&m_mixer, &Mixer::defaultDevicesChanged, this, [this] {   // UX-3
         const QJsonObject p = m_mixer.firstRunPlan();
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("DefaultSink"), p.value(QStringLiteral("defaultSink")).toString()}, {QStringLiteral("DefaultSource"), p.value(QStringLiteral("defaultSource")).toString()}});
@@ -520,7 +578,7 @@ ManagedObjects Service::managedObjects() const {
         {{QStringLiteral("Version"), m_mixerAdaptor->version()}, {QStringLiteral("Connected"), m_mixerAdaptor->connected()}, {QStringLiteral("LastError"), m_mixerAdaptor->lastError()},
          {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())},
          {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor->devicePorts())}, {QStringLiteral("VirtualDevices"), m_mixerAdaptor->virtualDevices()}, {QStringLiteral("HiddenDevices"), m_mixerAdaptor->hiddenDevices()}, {QStringLiteral("FirstRun"), m_mixerAdaptor->firstRun()}, {QStringLiteral("DefaultSink"), m_mixerAdaptor->defaultSink()}, {QStringLiteral("DefaultSource"), m_mixerAdaptor->defaultSource()},
-         {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("ListeningDevice"), m_mixer.listeningDevice()}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}, {QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()},
+         {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("ListeningDevice"), m_mixer.listeningDevice()}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}, {QStringLiteral("Scenes"), m_mixerAdaptor->scenes()}, {QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()},
          {QStringLiteral("FxTypes"), m_mixerAdaptor->fxTypes()}, {QStringLiteral("FxPresets"), m_mixerAdaptor->fxPresets()}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)
         out.insert(QDBusObjectPath(it.key()), InterfaceMap{{it.value()->interfaceName(), it.value()->properties()}});

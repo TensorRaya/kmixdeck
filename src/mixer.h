@@ -145,6 +145,16 @@ public:
     /// Input trim/mute (DV-14) = channelVolumes on kmixdeck.in.<slug> (playback side).
     double inputVolume(const QString &slug) const;
     bool mixChainActive(const QString &slug) const;   // FX-10: is a mix chain live (gain-reduction meter)?
+    // CT-9: named snapshots of the MIXABLE state — cell faders/mutes, mix masters/mutes, listening device, FX
+    // bypass. Not the channel/mix set and not the wiring: a scene must stay applicable after a rename or a
+    // device swap, so it stores slugs and values, never node ids or link topology.
+    Q_INVOKABLE QStringList scenes() const;
+    Q_INVOKABLE bool saveScene(const QString &name);
+    Q_INVOKABLE bool recallScene(const QString &name, bool exclusive = true);
+    Q_INVOKABLE bool deleteScene(const QString &name);
+    bool mixLoudness(const QString &slug) const; void setMixLoudness(const QString &slug, bool on);            // UX-18
+    double mixLoudnessTarget(const QString &slug) const; void setMixLoudnessTarget(const QString &slug, double lufs);
+    QStringList loudnessMixNodes() const;   // UX-18: mix sinks that want an R128 analyser
     double inputTrimLayout(const QString &slug) const;                    // DV-14: the wire's persisted value (also while unplugged)
     bool   inputMutedLayout(const QString &slug) const;
     double mixOutputTrimLayout(const QString &slug, int index) const;
@@ -283,6 +293,8 @@ Q_SIGNALS:
     void inputsChanged();                       // list of inputs changed
     void defaultChannelChanged();
     void listeningDeviceChanged();
+    void scenesChanged();                 // CT-9
+    void sceneRecalled(const QString &name);
     void defaultDevicesChanged();   // UX-3
     void undoChanged();
     void hiddenDevicesChanged();
@@ -317,6 +329,9 @@ private:
     void restorePendingCellStates();
     QJsonObject m_undo;                                  // {"what","kind","layout":{…},"cells":[{ch,mix,volume,mute}], "links":[…], "inputs":[…]}
     QHash<QString, QPair<float, bool>> m_pendingCellState;   // cell node → (volume, mute) to apply once the node exists
+    QString sceneDir() const;                                // CT-9: <layout dir>/scenes
+    QString scenePath(const QString &name) const;
+    QJsonObject captureScene() const;                        // CT-9: the snapshot, without layout structure
     void applyFx(const QString &slug);                                   // rebuild one chain live (ADR 0008)
     void propagateLinks(const QString &ch, const QString &sourceMix);   // source cell changed → push to followers
     void propagateGroupTrim(const QString &slug, float oldLinear, float newLinear);   // CH-8

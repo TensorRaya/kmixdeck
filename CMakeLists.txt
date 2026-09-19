@@ -40,6 +40,9 @@ endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PipeWire REQUIRED IMPORTED_TARGET libpipewire-0.3>=1.0)
+# UX-18: EBU R128 loudness (libebur128). Required, not optional: a loudness meter that silently is not there
+# is worse than a build error — the streamer would trust an empty reading.
+pkg_check_modules(EBUR128 REQUIRED IMPORTED_TARGET libebur128>=1.2)
 
 # UX-5: catalogs in po/<lang>/kmixdeck.po → <KDE_INSTALL_LOCALEDIR>/kmixdeck/<lang>/LC_MESSAGES/kmixdeck.mo
 ki18n_install(po)
