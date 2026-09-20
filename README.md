@@ -10,7 +10,7 @@ hardware lock-in and without the artificial limits.
 
 ![kmixdeck — six mixes at 1280 px](docs/screenshots/six-mixes-1280.png)
 
-*Qt 6 / Kirigami · PipeWire-native · GPL-3.0-or-later · v0.1.1*
+*Qt 6 / Kirigami · PipeWire-native · GPL-3.0-or-later · v0.3.0*
 
 ## Why
 
@@ -31,6 +31,11 @@ never solved independent per-mix levels ([#72](https://codeberg.org/sonusmix/son
   mix can go to `AUX3,AUX4`, a side can be bound left-only ([ADR 0009](docs/adr/0009-port-based-virtual-devices.md)).
 - **Effects.** Ordered insert chains on channels and mixes — builtin plus LADSPA (noise suppression, gate, compressor),
   presets, bypass, live controls ([ADR 0008](docs/adr/0008-effects-filter-chain.md)).
+- **Named scenes.** Store a whole mix state and recall it from any frontend — *stream night*, *just recording*, *talkback
+  on*. Stored per name, survives a restart, and recall is one undoable graph pass. Deliberately independent of the
+  channel set and the wiring, so a scene still fits after a rename or a repatch ([CLI](docs/cli.md#scenes)).
+- **Loudness per mix.** EBU R128 measurement with a target line, plus a broadcast limiter that works on the summed
+  mix instead of the individual channels — so the stream lands where it should without riding the faders.
 - **Devices that survive real life.** Identified by stable `node.name`; unplug, replug, sleep, wake — routing and levels
   come back without a restart. Tested with every device vanishing at once.
 - **Live meters everywhere.** Cells, apps, inputs, outputs — 25 Hz over one D-Bus signal that only runs while somebody
@@ -57,6 +62,10 @@ sudo ninja -C build install
 systemctl --user daemon-reload && systemctl --user enable --now kmixdeckd   # or let D-Bus start it on first use
 kmixdeck-kde
 ```
+
+**Headless host?** `-DBUILD_KDE_FRONTEND=OFF` builds the service, the CLI and the web bridge without the desktop
+stack — no Kirigami, no KDE Frameworks beyond the basics. That is the build for a streaming box with the interface on
+USB and no monitor attached; drive it from the web UI on your phone or over the CLI via SSH.
 
 The first start offers to set up defaults (*Monitor* → your speakers, *Voice* ← your mic, running apps by role). From then on
 PipeWire builds the graph at every login from `~/.config/pipewire/pipewire.conf.d/kmixdeck.conf`, which the service keeps

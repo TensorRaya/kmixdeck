@@ -28,6 +28,20 @@ Rules for such tests:
 - **Wait for the observable, never for a clock.** WirePlumber writes state on a timer, PipeWire links a stream a tick
   later under load, a daemon exports objects after the bus name — every one of those bit us on 2026-09-16. Poll the
   value you actually need (file content, node present, level above threshold).
+- **A waiting helper must confirm or raise — never return an unconfirmed value.** On 2026-09-20 seven helpers
+  ended in `return v` / `return cur` / `return pred()` after their last attempt, handing back whatever was
+  measured even when the condition never held. That turns a timeout into a WRONG NUMBER that looks exactly
+  like a product bug: `wait_prop` reported `assert 'fake.mic' == ''` for a property that had simply never
+  arrived, and dv14 reported `-12 dB output trim, got -4.1 dB`. Fixing the helpers immediately surfaced two
+  genuinely broken tests (dv25, dv28) that had been hiding behind nonsense messages. If the predicate does
+  not hold, raise and name what was last seen; never hand the caller a value nobody waited for. `waiting.py`
+  is the reference.
+- **Count the MEASUREMENT, not the sleep, when you size a level wait.** Each `wait_level` attempt records
+  ~1.5 s, so `tries=6` is ~11.4 s of waiting and `tries=20` is 38 s — enough to push `integration-ports`
+  past its 600 s ctest limit (done on 2026-09-20, by me, while "fixing" a timeout that was not one). And
+  patience is rarely the answer: a wire trim is fully applied **26 ms** after the CLI returns and holds
+  within 0.3 dB (measured), because the product sets `channelVolumes` hard — there is no fade anywhere in
+  it. A level that is `-inf` after three recordings is a routing fault, not a slow one.
 - **Measure audio where the requirement is audio.** `pw_sandbox.level_at_port()` / `record_monitor()`; "property is
   true" is not proof that anything is audible (UX-12 headphone bug, 2026-09-16).
 - **One test per feature, all six steps in it.** Spreading the life cycle over several tests hides the ordering

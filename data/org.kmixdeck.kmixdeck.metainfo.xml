@@ -13,6 +13,18 @@
   <url type="bugtracker">https://github.com/TensorRaya/kmixdeck/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.3.0" date="2026-09-20">
+      <description>
+        <p>Named scenes: store a full mix state and recall it from any frontend. EBU R128 loudness measurement per mix, and a broadcast limiter that lands on the summed signal instead of the individual channels.</p>
+        <p>Large desks work: a 32x32 interface no longer loses routing edges at the file-descriptor limit, virtual devices patch through, and rewiring retargets the existing links instead of rebuilding them. Port labels follow the device's own numbering, whether it counts from zero or one.</p>
+        <p>New BUILD_KDE_FRONTEND option so headless hosts build the service, CLI and web bridge without pulling in the desktop stack. Warnings (-Wall -Wextra) are on by default.</p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-09-18">
+      <description>
+        <p>Unit and integration test grid, logging categories, and D-Bus documentation at 100% coverage.</p>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-09-18">
       <description><p>kmixdeck --version prints the version.</p></description>
     </release>

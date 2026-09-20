@@ -41,13 +41,21 @@ class PwDaemon:
         return {o.get("info", {}).get("props", {}).get("node.name") for o in self.dump() if o.get("type", "").endswith("Node")}
 
     def wait_nodes(self, names, timeout: float = 30.0) -> float:
-        """Wait until every name exists; returns the seconds it took. Raises with the missing set on timeout."""
+        """Wait until every name exists; returns the seconds it took. Raises with the missing set on timeout.
+
+        On timeout the message carries the FULL missing list plus context (how many nodes exist at all),
+        because a truncated "[:6]" tells you nothing about whether one edge lagged or nothing came up at
+        all — that distinction cost a measurement round on 2026-09-20 (B8)."""
         want = set(names); t0 = time.time()
         while time.time() - t0 < timeout:
             missing = want - self.node_names()
             if not missing: return time.time() - t0
             time.sleep(0.05)
-        raise AssertionError(f"nodes never appeared within {timeout}s: {sorted(want - self.node_names())[:6]}")
+        da = self.node_names()
+        fehlt = sorted(want - da)
+        raise AssertionError(
+            f"nodes never appeared within {timeout}s: {len(fehlt)} of {len(want)} missing: {fehlt}\n"
+            f"  graph has {len(da)} nodes, {len([n for n in da if n.startswith('kmixdeck.')])} of them kmixdeck.*")
 
     def node_id(self, name: str) -> int:
         n = self.node(name)
@@ -62,6 +70,28 @@ class PwDaemon:
                 return n
             time.sleep(0.1)
         raise AssertionError(f"node {name} did not appear within {timeout}s")
+
+    def wait_props(self, name: str, timeout: float = 8.0, **want) -> dict:
+        """Wait until the node's Props MATCH `want` — not merely until the node exists.
+
+        🔴 wait_node() is not enough after restart() (B6, 2026-09-20): WirePlumber creates the node
+        first and applies the persisted stream-properties a moment later, so there is a window in
+        which the node is up and still carries the DEFAULT volume 1.0. A test reading right after
+        restart() sees 1.0 and fails — one in three full-suite runs did (dv7). Whoever reads first
+        wins the race, which is why the same test passed when read a few ms later.
+        Compares with a tolerance, because volumes come back as floats.
+        """
+        t0 = time.time(); last = None
+        while time.time() - t0 < timeout:
+            try:
+                last = self.props(name)
+                if all(abs(last[k] - v) < 1e-6 if isinstance(v, float) else last[k] == v
+                       for k, v in want.items()):
+                    return last
+            except AssertionError:
+                pass          # node not there yet
+            time.sleep(0.1)
+        raise AssertionError(f"{name}: props never became {want} within {timeout}s (last: {last})")
 
     def props(self, name: str) -> dict:
         """channelVolumes[0] and mute from the node's Props param."""

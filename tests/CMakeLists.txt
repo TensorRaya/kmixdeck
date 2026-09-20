@@ -35,6 +35,20 @@ endif()
 # VF-2: every ✅ requirement names an existing test (tools/sot-audit.py)
 add_test(NAME sot-audit COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/sot-audit.py)
 
+# CL-1: docs/kmixdeck.md is the ONE source for the man page, --help and docs/cli.md. These two tests keep it that
+# way: `pruefen` rejects invented section names and any deviation from the man-pages(7) order, and groff -z parses
+# the generated roff. Without the groff test, typography (—, →, Ü) silently drops out of the rendered page: 20 such
+# warnings existed when the generator was first wired up on 2026-09-21 and none were visible in the markdown.
+add_test(NAME doku-abschnitte COMMAND python3 ${CMAKE_SOURCE_DIR}/docs/generiere-doku.py pruefen)
+find_program(GROFF_EXECUTABLE groff)
+if(GROFF_EXECUTABLE)
+    add_test(NAME doku-groff COMMAND ${CMAKE_COMMAND}
+            -DGENERATOR=${CMAKE_SOURCE_DIR}/docs/generiere-doku.py
+            -DGROFF=${GROFF_EXECUTABLE}
+            -DOUT=${CMAKE_CURRENT_BINARY_DIR}/kmixdeck-test.1
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/pruefe-manpage.cmake)
+endif()
+
 # Integration tests: private PipeWire daemon per session (pytest). Skipped if tools are missing.
 find_program(PYTEST_EXECUTABLE NAMES pytest pytest-3 py.test)
 find_program(PIPEWIRE_EXECUTABLE pipewire)

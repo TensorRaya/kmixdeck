@@ -94,6 +94,9 @@ def test_dv7_levels_and_mute_survive_daemon_restart(pw):
         time.sleep(0.1)
     else: pytest.fail("WirePlumber never persisted the volume to stream-properties")
     pw.restart()
+    # Auf den WERT warten, nicht auf die Existenz des Nodes (B6): wait_props statt props direkt.
+    pw.wait_props(cell("voice", "stream"), volume=0.25, mute=False)
+    pw.wait_props(cell("voice", "monitor"), volume=1.0, mute=True)
     assert pw.props(cell("voice", "stream")) == {"volume": pytest.approx(0.25), "mute": False}
     assert pw.props(cell("voice", "monitor")) == {"volume": pytest.approx(1.0), "mute": True}
     pw.set_volume(cell("voice", "stream"), 1.0); pw.set_volume(cell("voice", "monitor"), 1.0, mute=False)

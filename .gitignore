@@ -10,3 +10,7 @@ streamdeck/**/__pycache__/
 # Vorsorge: nie eine lokale Umgebungsdatei mitcommitten (release-gate SOLL)
 .env
 .env.*
+
+# CL-1: kmixdeck.1 wird aus docs/kmixdeck.md erzeugt (CMake-Target manpage).
+# Eingecheckt waere sie eine Einladung, sie von Hand zu aendern.
+kmixdeck.1

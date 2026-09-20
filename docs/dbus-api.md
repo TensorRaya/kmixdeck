@@ -18,7 +18,7 @@ The root object at `/org/kmixdeck1`. Everything else hangs below it; `GetManaged
 ### Properties
 | Name | Type | Access | Meaning |
 |---|---|---|---|
-| `Version` | string | read | Service version, e.g. `0.1.1`. Constant for the life of the process. |
+| `Version` | string | read | Service version, e.g. `0.3.0`. Constant for the life of the process. |
 | `Connected` | bool | read | True while a PipeWire connection is alive. `false` means the daemon is waiting for PipeWire — the layout is intact and re-applies itself. |
 | `LastError` | string | read | Last graph-level failure the daemon could not repair on its own — an edge module that did not load (open-files limit hit, bad arguments). Empty when everything the layout asks for exists. Frontends show it as a banner; `kmixdeck status` prints it. |
 | `OutputDevices` | dict<string,string> | read | Hardware sinks a mix may play to: `node.name` → human description. Unplugged devices stay in here with their last description. |

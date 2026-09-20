@@ -11,6 +11,7 @@ drops its first position, PipeWire 1.x quirk)."""
 import os
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
@@ -21,22 +22,40 @@ from waiting import wait_for
 HOT, SILENT = -30.0, -60.0
 POS = "[ AUX1 AUX2 AUX3 AUX4 ]"
 
-# ---------------------------------------------------------------- DV-30b fd clamp
-# The clamp must sit INSIDE the window where the .out sink still comes up but the pass-through
-# loopback (its own client: socket + memfds + eventfds) does not — that window IS the test.
-# Measured 2026-09-20, fresh PipeWire sandbox per limit, harness asserting monotonicity:
-#   limit 20, 24   → sink missing, LastError EMPTY        (too tight: the precondition fails and
-#                                                          the test proves nothing at all)
-#   limit 26 … 39  → sink up, loopback starved,
-#                    LastError "edge could not be created"  ← the window
-#   limit 40 +     → both up, LastError empty              (too loose: nothing fails)
-# The old note said "idle daemon 14 fds, sink → 23" and picked 24; today the idle daemon alone
-# costs 24 fds in a fresh sandbox — and MORE inside the full file, because the module-scope daemon
-# has served 15 tests by then. That context dependency is why this is a module constant with the
-# measurement written down: raise it and you must re-measure BOTH edges, in the suite, not alone.
-# Do not tune by feel. A stepped run over shared state came back non-monotonic and was worthless
-# (see ops-xobkq) — any harness for this must assert monotonicity first.
-FD_CLAMP = 36
+# ---------------------------------------------------------------- DV-30b: starving ONE edge
+# The report path (LastError on the bus + "!!" in `status`) needs exactly one edge to fail while
+# everything else stays up. Until 2026-09-20 this was done with a hard fd limit (FD_CLAMP) that had
+# to sit inside the window "sink still comes up, loopback client does not". That window cannot be
+# hit reliably: measured in the FULL file, the daemon's idle fd cost swings between 25 and 43 fds
+# from run to run (clamp 40 → idle 40, clamp 42 → idle 25, clamp 44 → idle 43) — wider than the
+# window itself, so any constant is a coin flip. Worse, the same number means opposite things in
+# different contexts: 44 was "too loose" with -k and "too tight" in the full file.
+#
+# Deterministic instead, using an asymmetry in graph.cpp:
+#   sink  = pw_core_create_object("adapter", …)      → created SERVER-side, unaffected
+#   edge  = pw_context_load_module(d->context, …)    → loaded in the DAEMON's own pw_context (:301),
+#                                                      resolved via PIPEWIRE_MODULE_DIR
+# So: run pipewire/wireplumber against the real module dir, start only kmixdeckd against a mirror
+# that symlinks every module EXCEPT libpipewire-module-loopback. The sink comes up, the pass-through
+# edge cannot load, the report path fires. No calibration, no timing, nothing to re-measure.
+# (Setting the variable globally does NOT work — pipewire itself builds starter.conf out of loopback
+# modules, so the sandbox never comes up. Verified 2026-09-20.)
+_MODULE_MIRROR = Path("/var/tmp/kmixdeck-test-modules-noloopback")
+
+
+def module_dir_without_loopback() -> Path:
+    """A PIPEWIRE_MODULE_DIR containing every module except the loopback one."""
+    real = Path(subprocess.run(["pkg-config", "--variable=moduledir", "libpipewire-0.3"],
+                               capture_output=True, text=True, check=True).stdout.strip())
+    assert real.is_dir(), f"pipewire module dir not found: {real}"
+    _MODULE_MIRROR.mkdir(parents=True, exist_ok=True)
+    for stale in _MODULE_MIRROR.iterdir():
+        stale.unlink()
+    for so in real.iterdir():
+        if so.name != "libpipewire-module-loopback.so":
+            (_MODULE_MIRROR / so.name).symlink_to(so)
+    assert not (_MODULE_MIRROR / "libpipewire-module-loopback.so").exists()
+    return _MODULE_MIRROR
 
 
 @pytest.fixture(scope="module")
@@ -62,26 +81,44 @@ def make_device(stack, name, desc, media_class, positions=None):
     raise AssertionError(f"daemon never listed {name}")
 
 
-def wait_level(fn, pred, tries=6):
+def wait_level(fn, pred, tries=6, what="level"):
+    """Repeat an audio MEASUREMENT until pred(level) holds; return that level. Raise if it never holds.
+
+    🔴 Until 2026-09-20 this ended in `return v` — it handed back the last reading even when the predicate
+    never held, so a missed level became a WRONG NUMBER instead of a timeout, and the caller's assertion
+    then read like a product bug. That is the whole reason this raises. Same bug class as wait_prop and the
+    two `return pred()` helpers; see CONTRIBUTING and docs/review-v0.3.md B9.
+
+    On `tries`: each fn() call is a ~1.5 s RECORDING, so 6 tries are ~11.4 s of real waiting, not 2.4 s —
+    do not reason about this window from the sleep alone (I got that wrong on 2026-09-20 and "fixed" a
+    non-problem by raising tries to 20, which pushed integration-ports over its 600 s ctest limit).
+    MEASURED (/var/tmp/trim_wahrheit.py): a wire trim is fully applied 26 ms after the CLI returns and stays
+    within 0.3 dB over the next 5 s — there is no fade in the product (graph.cpp:369 sets channelVolumes
+    hard via pw_node_set_param). So 6 tries are generous for a settle; if a level never arrives at all,
+    more patience cannot help and only burns the suite's time budget."""
     v = float("-inf")
     for _ in range(tries):
         v = fn()
         if pred(v): return v
         time.sleep(0.4)
-    return v
+    raise AssertionError(f"{what} never satisfied the predicate in {tries} recordings (~{tries * 1.9:.0f}s), last reading {v:.2f} dB")
 
 
-def settled_level(fn, pred, tries=12, within=1.0):
+def settled_level(fn, pred, tries=12, within=1.0, what="settled level"):
     """Like wait_level, but returns the level only once two consecutive readings agree within `within` dB — right
     after a device comes back the meter is still rising (loopback buffers filling) and a first-above-threshold
-    reading is 5 dB short of the steady state under ctest load (DV-6, ctest29). Comparing levels needs settled ones."""
+    reading is 5 dB short of the steady state under ctest load (DV-6, ctest29). Comparing levels needs settled ones.
+
+    🔴 Raises instead of returning `prev` or -inf (2026-09-20, same fix as wait_level): a level that never
+    settled is a timeout, not a measurement. Returning -inf made the CALLER's assertion fail with a nonsense
+    number instead of saying "it never settled"."""
     prev = None
     for _ in range(tries):
         v = fn()
         if pred(v) and prev is not None and abs(v - prev) < within: return v
         prev = v if pred(v) else None
         time.sleep(0.4)
-    return prev if prev is not None else float("-inf")
+    raise AssertionError(f"{what} never settled within {within} dB over {tries} readings (last: {prev!r})")
 
 
 def test_dv20_daemon_publishes_ports_of_a_device(stack):
@@ -771,7 +808,6 @@ def test_dv30b_fd_limit_lifted_and_a_failed_edge_is_reported_not_swallowed(stack
     """DV-30, second finding (Ui24R 2026-09-18): 47 edges = 47 PipeWire clients ≈ 913 fds; at the 1024 soft limit
     PipeWire logged only 'Protocol error' and the new wire was silently missing. Now: (a) the daemon lifts its soft
     fd limit to the hard one on start, (b) an edge module that still fails lands in Mixer.LastError and in `status`."""
-    import resource
     limits = open(f"/proc/{stack.daemon.pid}/limits").read()
     soft, hard = [int(x) for x in [l for l in limits.splitlines() if l.startswith("Max open files")][0].split()[3:5]]
     assert soft == hard, f"daemon soft fd limit {soft} != hard {hard}"
@@ -785,28 +821,22 @@ def test_dv30b_fd_limit_lifted_and_a_failed_edge_is_reported_not_swallowed(stack
     stack.restart_daemon()
     assert stack.cli("status", json_out=True)["lastError"] == "", \
         "LastError not empty on a freshly restarted daemon — it is set at startup, see the journal"
-    # (b) restart the daemon under a hard limit too small for even one loopback client
+    # (b) restart the daemon with a module dir that has no loopback module: the edge CANNOT load.
     stack.daemon.terminate(); stack.daemon.wait(timeout=5)
-    def clamp():
-        resource.setrlimit(resource.RLIMIT_NOFILE, (FD_CLAMP, FD_CLAMP))
-    stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL,
-                                    stderr=open(stack.daemon_log_path, "a"), text=True, preexec_fn=clamp)
+    env = dict(stack.env); env["PIPEWIRE_MODULE_DIR"] = str(module_dir_without_loopback())
+    stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=env, stdout=subprocess.DEVNULL,
+                                    stderr=open(stack.daemon_log_path, "a"), text=True)
     # 🔴 try/finally, not straight-line code (2026-09-19): the `stack` fixture is scope="module", so this test
     # hands the SHARED daemon to every test after it. When an assert below fired, the restore lines never ran
     # and dv30c/dv31/dv29/dv29b all failed with "node ... did not appear" — one real failure, four fake ones,
     # and the diagnosis pointed at the wrong tests. A test that breaks a shared resource must give it back.
     try:
-        wait_for(lambda: stack.cli("status", check=False).returncode == 0, timeout=15, what="daemon up under fd clamp")
-        idle_fds = len(os.listdir(f"/proc/{stack.daemon.pid}/fd"))
+        wait_for(lambda: stack.cli("status", check=False).returncode == 0, timeout=20, what="daemon up with no loopback module")
         node = stack.cli("devices", "virtual", "add", "Clamp", "--in", "2", "--out", "2").stdout.strip()
-        # The sink is a plain null node; the source side is a loopback (DV-29) — the first starved edge.
-        # If THIS times out the clamp is too tight for the precondition: report the measured idle cost,
-        # because that is the number the constant above is derived from (2026-09-20).
-        try:
-            stack.pw.wait_node(node + ".out")
-        except AssertionError as e:
-            raise AssertionError(f"{e} — daemon idle cost {idle_fds} fds under the clamp of {FD_CLAMP}; "
-                                 f"the sink needs ~3 more. Re-measure the window, do not just raise the number.") from None
+        # The sink is created server-side via pw_core_create_object("adapter") and must still come up;
+        # only the pass-through edge is a loopback MODULE loaded in the daemon's own pw_context. That
+        # asymmetry is the whole point: precondition satisfied, exactly one edge starved.
+        stack.pw.wait_node(node + ".out")
         err = wait_for(lambda: stack.cli("status", json_out=True)["lastError"], timeout=10, what="LastError after a starved edge")
         assert "edge could not be created" in err, err
         assert "!! edge could not be created" in stack.cli("status").stdout
@@ -825,16 +855,24 @@ def test_dv30c_thirtytwo_by_thirtytwo_desk_never_loses_an_edge(stack):
     node = stack.cli("devices", "virtual", "add", "Desk", "--in", "32", "--out", "32").stdout.strip()
     din, dout = node, node + ".out"
     # 🔴 try/finally (2026-09-19, same lesson as dv30b): this builds the biggest layout in the suite —
-    # 32 channels + 4 mixes ≈ 45 loopback clients on the SHARED module-scope daemon. When one node failed
-    # to appear, the teardown below never ran and dv31/dv29/dv29b inherited a daemon with 35 leftover nodes,
-    # failing with "node ... did not appear" on their own fresh devices. One real failure, three fake ones.
+    # MEASURED 2026-09-20, three isolated runs: 554 kmixdeck nodes and ~3900 fds, not the "≈45 loopback
+    # clients" this comment claimed for a year (wrong by a factor of 12). The graph grows linearly:
+    # +56 nodes per 8 channels, +75 nodes per mix. Building it takes ~20-23 s of CLI calls, after which
+    # every node is present within 2.1-2.4 s when the machine is idle.
+    # The 60 s timeout below was sized for the imaginary 45 and is why this test was flaky (1 in 6 full
+    # runs, never alone): after 19 preceding tests on the shared daemon, 554 nodes need longer than that.
+    # 180 s now — not padding, the isolated number times a load factor. If this ever times out again,
+    # the cause is NOT patience: measure the node count first (the assertion prints it).
+    # When one node failed to appear, the teardown below never ran and dv31/dv29/dv29b inherited a daemon
+    # with 35 leftover nodes, failing with "node ... did not appear" on their own fresh devices.
+    # One real failure, three fake ones.
     try:
         stack.pw.wait_node(dout); stack.pw.wait_node(din, timeout=15)
         for i in range(1, 33):
             stack.cli("channel", "add", f"d{i}"); stack.cli("channel", "input", f"d{i}", f"{din}:AUX{i}")
         for k in range(4):
             stack.cli("mix", "add", f"r{k}"); stack.cli("mix", "output", f"r{k}", f"{dout}:AUX{2*k+1},AUX{2*k+2}")
-        stack.pw.wait_nodes([f"kmixdeck.in.d{i}.in" for i in range(1, 33)] + [f"kmixdeck.out.r{k}" for k in range(4)], timeout=60)
+        stack.pw.wait_nodes([f"kmixdeck.in.d{i}.in" for i in range(1, 33)] + [f"kmixdeck.out.r{k}" for k in range(4)], timeout=180)
         st = stack.cli("status", json_out=True)
         assert st["lastError"] == "", st["lastError"]
         fds = len(os.listdir(f"/proc/{stack.daemon.pid}/fd"))

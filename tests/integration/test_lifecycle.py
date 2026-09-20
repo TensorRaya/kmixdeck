@@ -27,12 +27,18 @@ def our_nodes(stack, prefix):
     return sorted(n for n in node_names(stack) if n and n.startswith(prefix))
 
 
-def wait(pred, tries=60, dt=0.1):
+def wait(pred, tries=60, dt=0.1, what="condition"):
+    """Poll until pred() is truthy; return it. Raise naming what failed on timeout.
+
+    🔴 Until 2026-09-20 the last line was `return pred()` — a hidden 61st attempt whose result was returned
+    unchecked, so `tries` was not the real bound and a failure surfaced as a bare `assert False` with no clue
+    which condition died. Every call site is `assert wait(lambda: ...)`; raising with context is strictly
+    better. Same bug class as wait_level/wait_prop (see docs/review-v0.3.md, B9)."""
     for _ in range(tries):
         v = pred()
         if v: return v
         time.sleep(dt)
-    return pred()
+    raise AssertionError(f"{what} never became true within {tries * dt:.1f}s")
 
 
 def layout(stack):

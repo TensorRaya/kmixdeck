@@ -22,12 +22,17 @@ def layout(stack):
     return json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
 
 
-def wait(pred, tries=50, dt=0.1):
+def wait(pred, tries=50, dt=0.1, what="condition"):
+    """Poll until pred() is truthy; return it. Raise naming what failed on timeout.
+
+    🔴 Until 2026-09-20 the last line was `return pred()` — a hidden 51st attempt returned unchecked, so
+    `tries` was not the real bound and a failure read as a bare `assert False`. See test_lifecycle.wait and
+    docs/review-v0.3.md B9 for the whole family of this bug."""
     for _ in range(tries):
         v = pred()
         if v: return v
         time.sleep(dt)
-    return pred()
+    raise AssertionError(f"{what} never became true within {tries * dt:.1f}s")
 
 
 def prop(stack, path, iface, name):

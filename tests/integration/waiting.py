@@ -36,13 +36,24 @@ def wait_eq(fn, want, timeout=5.0, dt=0.1, what=None):
 
 
 def wait_level(fn, pred, tries=6, what="level"):
-    """Repeat an audio MEASUREMENT (each call records ~1.5 s) until `pred(level)`; return the last level.
-    Not time-based: a measurement is the clock. Returns the last value even on failure so the caller can assert with it."""
+    """Repeat an audio MEASUREMENT (each call records ~1.5 s) until `pred(level)`; return that level.
+    Not time-based: a measurement is the clock.
+
+    🔴 Until 2026-09-20 the last line was `return v` — it handed back the final reading even when `pred`
+    never held, and the docstring sold that as a feature ("so the caller can assert with it"). It is the
+    opposite: the caller then asserts on a value nobody waited for, so a timeout turns into a wrong NUMBER
+    that looks like a product bug. Now it raises, like wait_for and wait_eq do. Never reintroduce a silent
+    return here.
+
+    On `tries`: 6 recordings are ~11.4 s of real waiting, not 2.4 s — the sleep is the small part. MEASURED
+    (/var/tmp/trim_wahrheit.py, 2026-09-20): a wire trim is fully applied 26 ms after the CLI returns and
+    holds within 0.3 dB for the next 5 s; the product has no fade at all (graph.cpp:369 sets channelVolumes
+    hard). Raising tries does not fix a level that never arrives — it only burns the ctest time budget."""
     v = None
     for _ in range(tries):
         v = fn()
         if pred(v): return v
-    return v
+    raise Timeout(f"{what} never satisfied the predicate in {tries} measurements (last: {v!r})")
 
 
 def settle(seconds):

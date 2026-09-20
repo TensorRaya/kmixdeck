@@ -495,13 +495,21 @@ def destroy_node(stack, name):
     raise AssertionError(f"{name} still in graph")
 
 
-def wait_prop(stack, kind, slug, prop, want, tries=50):
+def wait_prop(stack, kind, slug, prop, want, tries=50, dt=0.1):
+    """Poll a daemon property until it equals `want`; return it. Raise naming both values on timeout.
+
+    🔴 Until 2026-09-20 the last line was `return cur` — the CURRENT, wrong value after 50 tries. Every one
+    of the 12 call sites does `assert wait_prop(...) == want`, so a property that never arrived showed up as
+    "assert 'fake.mic' == ''" — indistinguishable from the daemon having the wrong value. Same bug class as
+    wait_level/dv14: a timeout must say "it never arrived", not hand back a value nobody waited for."""
+    cur = None
     for _ in range(tries):
         objs = stack.cli(kind, "list", json_out=True)
         cur = next(o for o in objs if o["Slug"] == slug)[prop]
         if cur == want: return cur
-        time.sleep(0.1)
-    return cur
+        time.sleep(dt)
+    raise AssertionError(
+        f"{kind} {slug}.{prop} never became {want!r} within {tries * dt:.1f}s (last: {cur!r})")
 
 
 def test_ch3_devices_in_lists_sources_and_channel_input_is_settable(stack):

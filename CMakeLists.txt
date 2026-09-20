@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(kmixdeck VERSION 0.1.1 LANGUAGES CXX)
+project(kmixdeck VERSION 0.3.0 LANGUAGES CXX)
 
 set(QT_MIN_VERSION 6.6.0)
 set(KF_MIN_VERSION 6.0.0)
@@ -17,6 +17,14 @@ include(FeatureSummary)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Warnings on by default (review v0.3, 2026-09-20): without these, a build reporting "0 warnings" says almost
+# nothing — it only means the compiler was asked nothing. Measured against the whole tree at that point: 90/90
+# targets, zero warnings, so this costs nothing today and catches the next mistake. Deliberately NOT -Werror:
+# a new compiler version must not break a user's build over a warning we have never seen.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-Wall -Wextra)
+endif()
 
 ecm_setup_version(${PROJECT_VERSION}
     VARIABLE_PREFIX KMIXDECK
@@ -55,6 +63,27 @@ install(DIRECTORY streamdeck/me.kmixdeck.sdPlugin DESTINATION ${KDE_INSTALL_DATA
 # AR-8: browser frontend. The bridge is a python script (python3-gi + python3-websockets at runtime); the UI is static files.
 install(PROGRAMS web/kmixdeck-web DESTINATION ${KDE_INSTALL_BINDIR})
 install(DIRECTORY web/static/ DESTINATION ${KDE_INSTALL_DATADIR}/kmixdeck/web)
+
+# CL-1: kmixdeck.1 is GENERATED from docs/kmixdeck.md, never edited by hand and not checked in — one source for the
+# man page, `--help` and docs/cli.md, so the three cannot drift apart. docs/generiere-doku.py also enforces the
+# man-pages(7) section order and rejects invented section names, and `pruefen` runs as a test (see tests/).
+# 🔴 add_custom_command has NO shell and NO OUTPUT_FILE: `> file` and `OUTPUT_FILE file` both end up as literal
+# arguments to the script (verified 2026-09-21 — the target built "successfully" and wrote nothing). The redirect
+# has to happen inside a -P script, which is what erzeuge-manpage.cmake is for.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(KMIXDECK_MAN ${CMAKE_CURRENT_BINARY_DIR}/kmixdeck.1)
+add_custom_command(OUTPUT ${KMIXDECK_MAN}
+        COMMAND ${CMAKE_COMMAND}
+                -DPYTHON3=${Python3_EXECUTABLE}
+                -DGENERATOR=${CMAKE_CURRENT_SOURCE_DIR}/docs/generiere-doku.py
+                -DVERSION=${PROJECT_VERSION}
+                -DOUT=${KMIXDECK_MAN}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/erzeuge-manpage.cmake
+        DEPENDS docs/kmixdeck.md docs/generiere-doku.py cmake/erzeuge-manpage.cmake
+        COMMENT "Generating kmixdeck.1 from docs/kmixdeck.md"
+        VERBATIM)
+add_custom_target(manpage ALL DEPENDS ${KMIXDECK_MAN})
+install(FILES ${KMIXDECK_MAN} DESTINATION ${KDE_INSTALL_MANDIR}/man1)
 
 add_subdirectory(src)
 add_subdirectory(data)
