@@ -12,8 +12,11 @@
   <url type="homepage">https://github.com/TensorRaya/kmixdeck</url>
   <url type="bugtracker">https://github.com/TensorRaya/kmixdeck/issues</url>
   <content_rating type="oars-1.1"/>
+  <developer id="org.kmixdeck">
+    <name>kmixdeck</name>
+  </developer>
   <releases>
-    <release version="0.3.0" date="2026-09-20">
+    <release version="0.3.0" date="2026-09-21">
       <description>
         <p>Named scenes: store a full mix state and recall it from any frontend. EBU R128 loudness measurement per mix, and a broadcast limiter that lands on the summed signal instead of the individual channels.</p>
         <p>Large desks work: a 32x32 interface no longer loses routing edges at the file-descriptor limit, virtual devices patch through, and rewiring retargets the existing links instead of rebuilding them. Port labels follow the device's own numbering, whether it counts from zero or one.</p>
