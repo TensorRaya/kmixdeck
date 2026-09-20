@@ -21,6 +21,23 @@ from waiting import wait_for
 HOT, SILENT = -30.0, -60.0
 POS = "[ AUX1 AUX2 AUX3 AUX4 ]"
 
+# ---------------------------------------------------------------- DV-30b fd clamp
+# The clamp must sit INSIDE the window where the .out sink still comes up but the pass-through
+# loopback (its own client: socket + memfds + eventfds) does not — that window IS the test.
+# Measured 2026-09-20, fresh PipeWire sandbox per limit, harness asserting monotonicity:
+#   limit 20, 24   → sink missing, LastError EMPTY        (too tight: the precondition fails and
+#                                                          the test proves nothing at all)
+#   limit 26 … 39  → sink up, loopback starved,
+#                    LastError "edge could not be created"  ← the window
+#   limit 40 +     → both up, LastError empty              (too loose: nothing fails)
+# The old note said "idle daemon 14 fds, sink → 23" and picked 24; today the idle daemon alone
+# costs 24 fds in a fresh sandbox — and MORE inside the full file, because the module-scope daemon
+# has served 15 tests by then. That context dependency is why this is a module constant with the
+# measurement written down: raise it and you must re-measure BOTH edges, in the suite, not alone.
+# Do not tune by feel. A stepped run over shared state came back non-monotonic and was worthless
+# (see ops-xobkq) — any harness for this must assert monotonicity first.
+FD_CLAMP = 36
+
 
 @pytest.fixture(scope="module")
 def stack():
@@ -758,13 +775,20 @@ def test_dv30b_fd_limit_lifted_and_a_failed_edge_is_reported_not_swallowed(stack
     limits = open(f"/proc/{stack.daemon.pid}/limits").read()
     soft, hard = [int(x) for x in [l for l in limits.splitlines() if l.startswith("Max open files")][0].split()[3:5]]
     assert soft == hard, f"daemon soft fd limit {soft} != hard {hard}"
-    assert stack.cli("status", json_out=True)["lastError"] == ""
+    # 🔴 PRECONDITION, not an assertion about other tests (2026-09-20): LastError is write-only in
+    # the daemon — src/mixer.cpp sets it in exactly two places and clears it nowhere, so it lives as
+    # long as the Mixer object. A predecessor that lost an edge (dv28 dropped "Input: in_16" under
+    # the 32×32 load) therefore made THIS test fail on its clean-slate assert before the clamp was
+    # even applied: dv30b accused itself of someone else's finding. A fresh daemon process means a
+    # fresh Mixer, so restart first and only then demand the clean slate. (Do not look for an
+    # `errors clear` verb — there is none, and inventing one would be a product change for a test.)
+    stack.restart_daemon()
+    assert stack.cli("status", json_out=True)["lastError"] == "", \
+        "LastError not empty on a freshly restarted daemon — it is set at startup, see the journal"
     # (b) restart the daemon under a hard limit too small for even one loopback client
     stack.daemon.terminate(); stack.daemon.wait(timeout=5)
     def clamp():
-        # 24: enough for the daemon core + one null node (measured 2026-09-19: idle daemon 14 fds, the .out sink → 23), not for the
-        # pass-through loopback (own client: socket + memfds + eventfds → 29 with it). Do not tune this by feel — re-measure.
-        resource.setrlimit(resource.RLIMIT_NOFILE, (24, 24))
+        resource.setrlimit(resource.RLIMIT_NOFILE, (FD_CLAMP, FD_CLAMP))
     stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL,
                                     stderr=open(stack.daemon_log_path, "a"), text=True, preexec_fn=clamp)
     # 🔴 try/finally, not straight-line code (2026-09-19): the `stack` fixture is scope="module", so this test
@@ -773,8 +797,16 @@ def test_dv30b_fd_limit_lifted_and_a_failed_edge_is_reported_not_swallowed(stack
     # and the diagnosis pointed at the wrong tests. A test that breaks a shared resource must give it back.
     try:
         wait_for(lambda: stack.cli("status", check=False).returncode == 0, timeout=15, what="daemon up under fd clamp")
+        idle_fds = len(os.listdir(f"/proc/{stack.daemon.pid}/fd"))
         node = stack.cli("devices", "virtual", "add", "Clamp", "--in", "2", "--out", "2").stdout.strip()
-        stack.pw.wait_node(node + ".out")   # the sink is a plain null node; the source side is a loopback (DV-29) — the first starved edge
+        # The sink is a plain null node; the source side is a loopback (DV-29) — the first starved edge.
+        # If THIS times out the clamp is too tight for the precondition: report the measured idle cost,
+        # because that is the number the constant above is derived from (2026-09-20).
+        try:
+            stack.pw.wait_node(node + ".out")
+        except AssertionError as e:
+            raise AssertionError(f"{e} — daemon idle cost {idle_fds} fds under the clamp of {FD_CLAMP}; "
+                                 f"the sink needs ~3 more. Re-measure the window, do not just raise the number.") from None
         err = wait_for(lambda: stack.cli("status", json_out=True)["lastError"], timeout=10, what="LastError after a starved edge")
         assert "edge could not be created" in err, err
         assert "!! edge could not be created" in stack.cli("status").stdout
