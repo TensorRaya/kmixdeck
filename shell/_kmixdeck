@@ -1,0 +1,19 @@
+#compdef kmixdeck
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CL-7: zsh completion for kmixdeck.
+#
+# Wie die bash-Variante: keine eigene Kommandoliste. `kmixdeck complete` ist die
+# einzige Quelle, damit die Completion nicht hinter dem CLI zurueckbleibt.
+#
+# Ohne Daemon liefert `complete` nur die statischen Kandidaten und Exit 0 — nie
+# einen Fehler, sonst bleibt der Tab stumm.
+
+_kmixdeck() {
+    local -a kandidaten
+    # CURRENT ist 1-basiert und zaehlt `words` mit dem Programm auf Position 1;
+    # `complete` erwartet die 0-basierte Zaehlung von COMP_CWORD, also CURRENT-1.
+    kandidaten=(${(f)"$(kmixdeck complete $((CURRENT - 1)) ${words[@]} 2>/dev/null)"})
+    (( ${#kandidaten} )) && compadd -- ${kandidaten}
+}
+
+_kmixdeck "$@"

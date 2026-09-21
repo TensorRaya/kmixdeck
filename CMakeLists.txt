@@ -64,6 +64,23 @@ install(DIRECTORY streamdeck/me.kmixdeck.sdPlugin DESTINATION ${KDE_INSTALL_DATA
 install(PROGRAMS web/kmixdeck-web DESTINATION ${KDE_INSTALL_BINDIR})
 install(DIRECTORY web/static/ DESTINATION ${KDE_INSTALL_DATADIR}/kmixdeck/web)
 
+# CL-7: shell completion for bash and zsh. Both scripts are deliberately thin — they carry no command list of their
+# own but ask `kmixdeck complete`, which answers from the same table the CLI dispatches on. A completion with its own
+# list drifts silently: `tree` and `patch` arrived on 2026-09-21 and no test would have caught a stale list, because a
+# missing completion is invisible.
+#
+# Paths: bash-completion's own pkg-config variable when the package is installed (that is where the distro wants it),
+# otherwise the documented fallback share/bash-completion/completions. zsh has no pkg-config file, so site-functions
+# under the install prefix is the only correct answer; a file named `_kmixdeck` there is picked up by compinit.
+find_package(bash-completion QUIET)
+if(BASH_COMPLETION_COMPLETIONSDIR)
+    set(_kmixdeck_bashdir "${BASH_COMPLETION_COMPLETIONSDIR}")
+else()
+    set(_kmixdeck_bashdir "${KDE_INSTALL_DATADIR}/bash-completion/completions")
+endif()
+install(FILES shell/kmixdeck.bash DESTINATION ${_kmixdeck_bashdir} RENAME kmixdeck)
+install(FILES shell/_kmixdeck DESTINATION ${KDE_INSTALL_DATADIR}/zsh/site-functions)
+
 # CL-1: kmixdeck.1 is GENERATED from docs/kmixdeck.md, never edited by hand and not checked in — one source for the
 # man page, `--help` and docs/cli.md, so the three cannot drift apart. docs/generiere-doku.py also enforces the
 # man-pages(7) section order and rejects invented section names, and `pruefen` runs as a test (see tests/).

@@ -93,6 +93,7 @@ const char *codeName(Exit code) {
 constexpr const char *KOMMANDO_NAMEN[] = {
     "status", "tree", "patch", "loudness", "streamdeck", "setup", "export", "import", "undo", "scene",
     "devices", "channel", "mix", "fx", "cell", "app", "listen", "audition", "levels", "watch",
+    "complete",   // CL-7: kein Alltagskommando, aber `help complete` und die Doku-Pruefung brauchen den Namen
 };
 
 bool istKommando(const QString &name) {
@@ -232,6 +233,118 @@ QStringList fxNamen(const QString &json) {
         if (!typ.isEmpty()) namen << typ;
     }
     return namen;
+}
+
+/// CL-7: `kmixdeck complete <wort-index> <wort>...` — Kandidaten fuer bash und zsh.
+///
+/// 🔴 Warum das im CLI steckt und nicht im Shell-Skript: eine Completion, die die
+/// Kommandotabelle abschreibt, driftet. `patch` und `tree` kamen heute dazu — ein
+/// Skript mit eigener Liste haette sie nicht gekannt, und niemand haette es gemerkt,
+/// weil eine fehlende Vervollstaendigung keinen Test rot macht. Darum ist HIER die
+/// Quelle: die Namen kommen aus KOMMANDO_NAMEN (derselbe Array, den `istKommando`
+/// benutzt), die Unterkommandos aus dem generierten Hilfetext (derselbe, den
+/// `help <cmd>` zeigt, Quelle docs/kmixdeck.md). Die Shell-Skripte fragen nur.
+///
+/// Dynamische Werte (Slugs, Geraete, Szenen) kommen vom laufenden Daemon. Ist er
+/// nicht da, bleibt es bei den statischen Kandidaten — die Anforderung verlangt
+/// ausdruecklich, dass Completion ohne Daemon nicht bricht. Darum wird der Bus hier
+/// NIE als Fehler behandelt: keine Antwort heisst leere Liste, nicht Exit ungleich 0.
+/// Eine Completion, die Exit 2 liefert, macht die Shell stumm.
+int cmdComplete(const QStringList &argv) {
+    // argv: ["complete", "<index>", "kmixdeck", "<wort1>", ...] — Index zaehlt ab 0 auf
+    // die Wortliste NACH dem Programmnamen, so wie COMP_CWORD es liefert.
+    const int index = argv.size() > 1 ? argv[1].toInt() : 0;
+    QStringList worte = argv.mid(2);            // ["kmixdeck", "channel", "mu"]
+    if (!worte.isEmpty()) worte.removeFirst();  // Programmname weg
+    const QString praefix = index >= 1 && index - 1 < worte.size() ? worte[index - 1] : QString();
+    const QString kommando = worte.isEmpty() ? QString() : worte.first();
+
+    QStringList kandidaten;
+
+    // Wort 1: die Kommandos. Aus KOMMANDO_NAMEN, nicht abgeschrieben.
+    if (index <= 1) {
+        for (const char *k : KOMMANDO_NAMEN) kandidaten << QString::fromLatin1(k);
+        kandidaten << QStringLiteral("help") << QStringLiteral("--help") << QStringLiteral("--version")
+                   << QStringLiteral("--json");
+    } else {
+        // Wort 2: die Unterkommandos dieses Kommandos, aus dem generierten Hilfetext.
+        // Synopsis-Zeilen sind mit ZWEI Leerzeichen eingerueckt, Prosa mit sechs —
+        // sonst liest man "channel and" und "channel can" aus dem Fliesstext mit.
+        if (index == 2) {
+            for (const auto &kh : kmixdeck::KOMMANDO_HILFE) {
+                if (kommando != QLatin1String(kh.name)) continue;
+                for (const QString &zeile : QString::fromUtf8(kh.text).split(QLatin1Char('\n'))) {
+                    // Nur Synopsis-Zeilen: zwei Leerzeichen Einrueckung, Prosa hat sechs.
+                    // 🔴 Gemessen (2026-09-21): diese Pruefung allein aendert NICHTS am
+                    // Ergebnis — Prosa beginnt nie mit dem Kommandonamen als ERSTEM Wort
+                    // ("Pre-fader gain of the channel itself" hat "channel" in der Mitte),
+                    // und darauf filtert `w.first() == kommando` unten schon. Sie bleibt
+                    // trotzdem, weil sie die Absicht festhaelt und eine kuenftige
+                    // Doku-Zeile wie "  channel groups move together" sonst durchkaeme.
+                    // Der WIRKSAME Filter ist die Wortposition, nicht die Einrueckung.
+                    if (!zeile.startsWith(QLatin1String("  ")) || zeile.startsWith(QLatin1String("   "))) continue;
+                    // "  channel mute <slug> [on|off]" -> "mute"; "  channel list" -> "list".
+                    // Mehrere Varianten pro Zeile trennt " · ".
+                    for (const QString &teil : zeile.trimmed().split(QStringLiteral(" · "))) {
+                        const QStringList w = teil.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                        if (w.size() >= 2 && w.first() == kommando
+                            && !w[1].startsWith(QLatin1Char('<')) && !w[1].startsWith(QLatin1Char('[')))
+                            kandidaten << w[1];
+                    }
+                }
+            }
+        }
+
+        // Dynamische Werte. Ab hier darf der Bus fehlen — dann bleibt die Liste kurz.
+        const bool willSlugKanal = (kommando == QLatin1String("channel") && index == 3)
+                                || (kommando == QLatin1String("cell") && index == 3)
+                                || (kommando == QLatin1String("fx") && index == 4 && worte.size() > 2
+                                    && worte[2] == QLatin1String("channel"));
+        const bool willSlugMix = (kommando == QLatin1String("mix") && index == 3)
+                              || (kommando == QLatin1String("cell") && index == 4)
+                              || (kommando == QLatin1String("listen") && index == 2)
+                              || (kommando == QLatin1String("fx") && index == 4 && worte.size() > 2
+                                  && worte[2] == QLatin1String("mix"));
+        const bool willGeraet = (kommando == QLatin1String("channel") && index == 4 && worte.size() > 1
+                                 && (worte[1] == QLatin1String("input") || worte[1] == QLatin1String("input-add")
+                                     || worte[1] == QLatin1String("input-remove") || worte[1] == QLatin1String("wire")))
+                             || (kommando == QLatin1String("mix") && index == 4 && worte.size() > 1
+                                 && worte[1] == QLatin1String("output"))
+                             || (kommando == QLatin1String("devices") && index == 2);
+        const bool willSzene = kommando == QLatin1String("scene") && index == 3;
+
+        if (willSlugKanal || willSlugMix || willGeraet || willSzene) {
+            // Ohne Daemon bleibt `o` leer und `fetch` meldet einen Fehler, den wir
+            // ABSICHTLICH verwerfen: die Completion soll dann nur die statischen
+            // Kandidaten zeigen, nicht abbrechen.
+            Objects o; QString egal; fetch(o, &egal);
+            if (willSlugKanal)
+                for (const auto &c : o.channels) kandidaten << unwrap(c.value("Slug")).toString();
+            if (willSlugMix)
+                for (const auto &m : o.mixes) kandidaten << unwrap(m.value("Slug")).toString();
+            if (willGeraet) {
+                QDBusInterface mx(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
+                // InputDevices/OutputDevices sind a{ss} (node.name -> Beschreibung): der
+                // SCHLUESSEL ist der Name, den die Kommandos erwarten. Auspacken mit
+                // qdbus_cast wie im ganzen Rest der Datei — `QDBusArgument >>` direkt auf
+                // dem Property-Wert bricht mit "read from a write-only object".
+                // Beide Listen stehen schon in `o.mixer`, also kein zweiter Bus-Aufruf.
+                for (const char *prop : {"InputDevices", "OutputDevices"})
+                    kandidaten << qdbus_cast<StringMap>(o.mixer.value(QString::fromLatin1(prop))).keys();
+            }
+            if (willSzene) {
+                QDBusInterface mx(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
+                kandidaten << unwrap(mx.property("Scenes")).toStringList();
+            }
+        }
+    }
+
+    kandidaten.removeAll(QString());
+    kandidaten.removeDuplicates();
+    kandidaten.sort();
+    for (const QString &k : kandidaten)
+        if (praefix.isEmpty() || k.startsWith(praefix)) out << k << "\n";
+    return Ok;
 }
 
 /// CL-6: ist diese Property schreibbar? Aus der Introspection des Daemons, nicht geraten.
@@ -741,6 +854,7 @@ struct Cli {
 
     int cmdStatus() { return ::cmdStatus(o); }
     int cmdTree() { return ::cmdTree(o); }
+    int cmdComplete() { return ::cmdComplete(QStringList{QStringLiteral("complete")} + a.mid(1)); }
     int cmdPatch() {
         if (!need(2)) return Usage;
         // --dry-run steht als Positionsargument in `a`, weil der Parser Optionen nach dem
@@ -1269,6 +1383,7 @@ struct Cli {
             {QStringLiteral("status"), &Cli::cmdStatus},
             {QStringLiteral("tree"), &Cli::cmdTree},
             {QStringLiteral("patch"), &Cli::cmdPatch},
+            {QStringLiteral("complete"), &Cli::cmdComplete},
             {QStringLiteral("loudness"), &Cli::cmdLoudness},
             {QStringLiteral("streamdeck"), &Cli::cmdStreamdeck},
             {QStringLiteral("setup"), &Cli::cmdSetup},
@@ -1361,6 +1476,12 @@ int main(int argc, char *argv[]) {
                 || (!argumente.isEmpty() && argumente.first() == QStringLiteral("help"));
         const bool willVersion = argumente.contains(QStringLiteral("--version"))
                 || argumente.contains(QStringLiteral("-v"));
+        // CL-7: `complete` gehoert HIERHIN, aus demselben Grund wie --help: es muss ohne
+        // Daemon gehen. Eine Shell, deren Completion auf einen Bus-Fehler laeuft, gibt
+        // beim Tab gar nichts mehr aus. Unterkommandos kommen statisch aus dem Hilfetext,
+        // Slugs/Geraete/Szenen nur wenn der Bus antwortet.
+        if (!argumente.isEmpty() && argumente.first() == QStringLiteral("complete"))
+            return cmdComplete(argumente);
         if (willVersion) {
             QTextStream(stdout) << "kmixdeck " << KMIXDECK_VERSION_STRING << "\n";
             return Ok;

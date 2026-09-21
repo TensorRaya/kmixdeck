@@ -6,7 +6,7 @@ kmixdeckd is started on that bus; the CLI is the test client — so every assert
 The acoustic checks reuse the same measurement helpers as test_audio_graph.py.
 """
 import json
-import math, os, subprocess, tempfile, time, pytest
+import math, os, shutil, subprocess, tempfile, time, pytest
 from pathlib import Path
 from pw_sandbox import start_private_pipewire, REPO
 from waiting import wait_for
@@ -1171,3 +1171,125 @@ def test_cl6_patch_applies_all_or_nothing(stack):
     r = subprocess.run([str(BIN / "kmixdeck"), "patch", "a.json", "b.json"], env=stack.env,
                        capture_output=True, text=True)
     assert r.returncode == 1 and "one file" in r.stderr, r.stderr
+
+def test_cl7_shell_completion_uses_one_source(stack):
+    """CL-7: Completion fuer bash und zsh, mit dynamischen Werten vom Daemon.
+
+    Der Kern der Anforderung ist nicht "es gibt eine Completion", sondern dass sie nicht
+    driftet. Darum tragen die Shell-Skripte KEINE Kommandoliste: sie fragen
+    `kmixdeck complete`, das aus KOMMANDO_NAMEN und dem generierten Hilfetext antwortet —
+    denselben Quellen, aus denen Dispatch und `help` kommen.
+
+    Darum prueft dieser Test beides: die Kandidaten UND dass die Skripte keine eigene
+    Liste haben. Ein Skript mit Handliste besteht jeden Kandidatentest und ist nach dem
+    naechsten neuen Kommando still veraltet — `tree` und `patch` kamen am 2026-09-21 dazu,
+    und eine fehlende Vervollstaendigung macht keinen Test rot.
+
+    bash wird echt ausgefuehrt. zsh ist auf dieser Maschine nicht installiert; geprueft
+    wird, was ohne zsh pruefbar ist (compdef-Kopf, CURRENT-1-Umrechnung, keine eigene
+    Liste) — der interaktive Rest bleibt offen statt vorgetaeuscht.
+    """
+    shell = REPO / "shell"
+
+    def comp(index, *worte):
+        r = subprocess.run([str(BIN / "kmixdeck"), "complete", str(index), "kmixdeck", *worte],
+                           env=stack.env, capture_output=True, text=True)
+        assert r.returncode == 0, f"complete darf nie scheitern: rc={r.returncode} {r.stderr!r}"
+        return r.stdout.split()
+
+    make_fake_source(stack, "fake.mic", "Fake Microphone")
+    make_fake_sink(stack, "fake.headphones", "Fake Headphones")
+    wait_for(lambda: "fake.mic" in stack.cli("devices", "in", json_out=True), timeout=10.0,
+             what="'fake.mic' in stack.cli('devices','in',json_out=True)")
+    stack.cli("scene", "save", "podcast")
+
+    # 1. Kommandos, inklusive der heute dazugekommenen. Genau hier stirbt eine Handliste.
+    kommandos = comp(1, "")
+    for neu in ("tree", "patch", "complete", "channel", "scene"):
+        assert neu in kommandos, f"{neu} fehlt in der Completion: {kommandos}"
+
+    # 2. Unterkommandos aus dem generierten Hilfetext.
+    #
+    # 🔴 Ehrlichkeitsnotiz zu diesem Block: die Prosa-Pruefung unten habe ich per
+    # Gegenprobe NICHT rot bekommen. Weder das Abschalten des Einrueckungsfilters noch
+    # das Ignorieren der Wortposition aendert das Ergebnis, weil die Hilfetexte in
+    # docs/kmixdeck.md so gebaut sind, dass Prosa den Kommandonamen nie als erstes Wort
+    # einer zweifach eingerueckten Zeile traegt. Die Behauptung "filtert Prosa" ist also
+    # derzeit unbewiesen — sie bleibt als Schranke fuer kuenftige Doku-Zeilen stehen,
+    # aber sie ist kein Nachweis. Was dieser Block BEWEIST, ist die Vollstaendigkeit:
+    # Zweig abgeschaltet (`if (index == 2)` -> `if (false)`) -> rot, Binary-Hash
+    # verschieden (19c834704d gegen 57dc940143).
+    unter = comp(2, "channel", "")
+    assert {"mute", "trim", "list", "input-remove"} <= set(unter), unter
+    for prosa in ("and", "can", "or", "the", "itself"):
+        assert prosa not in unter, f"Fliesstext als Unterkommando gelesen: {prosa!r} in {unter}"
+
+    # 3. Dynamische Werte vom Daemon: Slugs, Geraete, Szenen.
+    assert "voice" in comp(3, "channel", "mute", "")
+    assert "stream" in comp(3, "mix", "volume", "")
+    assert "fake.mic" in comp(4, "channel", "input", "voice", "")
+    assert "fake.headphones" in comp(4, "mix", "output", "stream", "")
+    assert "podcast" in comp(3, "scene", "recall", "")
+    assert comp(3, "channel", "mute", "vo") == ["voice"], "Praefix filtert nicht"
+
+    # 4. Ohne Daemon: statische Kandidaten, Exit 0. Eine Completion, die scheitert, macht
+    #    die Shell beim Tab stumm — schlimmer als gar keine Completion.
+    ohne = dict(stack.env, DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
+    r = subprocess.run([str(BIN / "kmixdeck"), "complete", "1", "kmixdeck", ""],
+                       env=ohne, capture_output=True, text=True)
+    assert r.returncode == 0, f"ohne Daemon rc={r.returncode}, muss 0 sein"
+    assert "channel" in r.stdout.split() and "tree" in r.stdout.split(), r.stdout
+    r = subprocess.run([str(BIN / "kmixdeck"), "complete", "3", "kmixdeck", "channel", "mute", ""],
+                       env=ohne, capture_output=True, text=True)
+    assert r.returncode == 0 and r.stdout.strip() == "", (
+        f"ohne Daemon darf es keine Slugs erfinden: {r.stdout!r}")
+
+    # 5. Die Skripte tragen keine eigene Kommandoliste — gemessen, nicht behauptet.
+    for datei in ("kmixdeck.bash", "_kmixdeck"):
+        text = (shell / datei).read_text()
+        code = "\n".join(z for z in text.splitlines() if not z.lstrip().startswith("#"))
+        for name in ("channel", "mix ", "scene", "devices", "trim", "mute"):
+            assert name not in code, (
+                f"{datei} nennt '{name}' selbst — das driftet. Nur `kmixdeck complete` fragen.")
+        assert "kmixdeck complete" in code, f"{datei} fragt das CLI nicht"
+
+    # 6. bash echt: Skript laden, Completion-Funktion aufrufen, COMPREPLY lesen.
+    bash_code = (
+        'export PATH="__BIN__:$PATH"\n'
+        'source __SKRIPT__\n'
+        '[[ "$(complete -p kmixdeck)" == *"-F _kmixdeck"* ]] || { echo FAIL_REG; exit 1; }\n'
+        'COMP_WORDS=(kmixdeck ch); COMP_CWORD=1; _kmixdeck; echo "WORT1:${COMPREPLY[*]}"\n'
+        'COMP_WORDS=(kmixdeck channel mu); COMP_CWORD=2; _kmixdeck; echo "WORT2:${COMPREPLY[*]}"\n'
+        'COMP_WORDS=(kmixdeck channel mute vo); COMP_CWORD=3; _kmixdeck; echo "WORT3:${COMPREPLY[*]}"\n'
+    ).replace("__BIN__", str(BIN)).replace("__SKRIPT__", str(shell / "kmixdeck.bash"))
+    r = subprocess.run(["bash", "-c", bash_code], env=stack.env, capture_output=True, text=True)
+    assert r.returncode == 0, f"bash: {r.stdout}\n{r.stderr}"
+    assert "WORT1:channel" in r.stdout, r.stdout
+    assert "WORT2:mute" in r.stdout, r.stdout
+    assert "WORT3:voice" in r.stdout, r.stdout
+
+    # 7. zsh: ohne `#compdef`-Kopf laedt compinit die Datei nicht, und ohne CURRENT-1 ist
+    #    jede Position um eins verschoben (zsh zaehlt 1-basiert, `complete` 0-basiert).
+    zsh = (shell / "_kmixdeck").read_text()
+    assert zsh.startswith("#compdef kmixdeck"), "compinit findet die Datei nur mit #compdef-Kopf"
+    assert "CURRENT - 1" in zsh, "zsh zaehlt 1-basiert; ohne -1 ist die Position verschoben"
+    assert "compadd" in zsh
+
+    # 8. CMake installiert beide — die Anforderung verlangt es ausdruecklich. Geprueft
+    #    wird mit einem echten `cmake --install` in ein DESTDIR, nicht durch Lesen der
+    #    CMakeLists: ein install()-Aufruf mit falscher Variable steht da genauso gut da
+    #    und legt nichts ab. Die Dateinamen sind vorgegeben, nicht frei — bash-completion
+    #    laedt `completions/<programm>`, compinit findet `_<programm>`.
+    ziel = tempfile.mkdtemp(prefix="kmixdeck-install-")
+    try:
+        r = subprocess.run(["cmake", "--install", str(REPO / "build")],
+                           env=dict(os.environ, DESTDIR=ziel), capture_output=True, text=True)
+        assert r.returncode == 0, f"cmake --install: {r.stderr[-400:]}"
+        gefunden = [str(pf.relative_to(ziel)) for pf in Path(ziel).rglob("*")
+                    if pf.is_file() and ("bash-completion" in str(pf) or "site-functions" in str(pf))]
+        assert any(g.endswith("bash-completion/completions/kmixdeck") for g in gefunden), (
+            f"bash-Completion nicht installiert (gefunden: {gefunden})")
+        assert any(g.endswith("zsh/site-functions/_kmixdeck") for g in gefunden), (
+            f"zsh-Completion nicht installiert (gefunden: {gefunden})")
+    finally:
+        shutil.rmtree(ziel, ignore_errors=True)

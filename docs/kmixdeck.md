@@ -156,6 +156,17 @@ individual properties and leaves everything it does not mention alone.
 > kmixdeck patch quiet-night.json --dry-run       # show what it would do
 > echo '{"objects":{"/org/kmixdeck1/channel/voice":{"Muted":true}}}' | kmixdeck patch -
 
+`complete <index> <words>…`
+: Prints completion candidates, one per line — the machinery behind the bash and
+zsh completions, not meant to be typed by hand. `<index>` is the 0-based position
+being completed (`COMP_CWORD`), followed by the whole command line. Candidates
+come from the CLI's own dispatch table and generated help, so a new command is
+completable the moment it exists; slugs, device node names and scene names come
+from the running daemon. Without a daemon it prints the static candidates and
+still exits 0 — a completion helper that fails makes the shell go quiet.
+> kmixdeck complete 1 kmixdeck ch          # -> channel
+> kmixdeck complete 3 kmixdeck channel mute vo   # -> voice
+
 ## First run, backup, restore
 
 `setup`
