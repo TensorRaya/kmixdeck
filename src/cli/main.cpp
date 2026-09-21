@@ -91,7 +91,7 @@ const char *codeName(Exit code) {
 /// dann an der falschen Stelle. Beide Listen haelt der Test cl9-hilfe-gegen-code
 /// zusammen, der die Dispatch-Tabelle aus dieser Datei liest.
 constexpr const char *KOMMANDO_NAMEN[] = {
-    "status", "loudness", "streamdeck", "setup", "export", "import", "undo", "scene",
+    "status", "tree", "loudness", "streamdeck", "setup", "export", "import", "undo", "scene",
     "devices", "channel", "mix", "fx", "cell", "app", "listen", "audition", "levels", "watch",
 };
 
@@ -215,6 +215,201 @@ int cmdStatus(const Objects &o) {
     }
     return Ok;
 }
+
+/// FX-Kette lesbar machen: die Property ist ein JSON-String `{enabled, chain:[{type,…}]}`,
+/// nicht eine Liste. Und sie haengt an Kanal UND Mix (service.h:86 und :136) — NICHT an der
+/// Zelle. Das war mein erster Fehlgriff bei CL-5: `Cell` hat Volume, Muted, Follows und
+/// sonst nichts. Ein Baum, der FX unter der Zelle zeigt, behauptet eine Struktur, die es
+/// im Daemon nicht gibt.
+QStringList fxNamen(const QString &json) {
+    if (json.isEmpty()) return {};
+    const auto d = QJsonDocument::fromJson(json.toUtf8()).object();
+    if (!d.value("enabled").toBool(true)) return {};
+    QStringList namen;
+    for (const auto &v : d.value("chain").toArray()) {
+        const auto o = v.toObject();
+        const QString typ = o.value("type").toString();
+        if (!typ.isEmpty()) namen << typ;
+    }
+    return namen;
+}
+
+/// CL-5: der Signalweg als Baum — was haengt an was, in einem Blick.
+///
+/// Warum ueberhaupt: `status` ist eine Matrix aus Kanaelen x Mixes. Die beantwortet
+/// "wie laut ist Kanal X in Mix Y", aber nicht "wo kommt der Ton her und wo geht er
+/// hin". Genau das ist die Frage, wenn etwas stumm ist. Der Baum zeigt die Kette
+/// Geraet -> Kanal -> Zelle -> Mix -> Ausgang, dazu die Programme am Kanal und die
+/// Effekte in der Zelle.
+///
+/// 80 Spalten: die Breite ist nicht willkuerlich, sondern die Vorgabe (CL-5). Namen
+/// werden gekuerzt, nie umgebrochen — ein umgebrochener Baum ist unlesbar, weil die
+/// Fortsetzungszeile wie ein neuer Knoten aussieht.
+int cmdTree(const Objects &o) {
+    if (g_json) {
+        // JSON kennt keine Box-Zeichen: derselbe Inhalt als verschachtelte Struktur.
+        // Wichtig fuer Skripte — die sollen den Baum nicht aus ASCII zurueckparsen.
+        QJsonArray kanaele;
+        for (auto c = o.channels.cbegin(); c != o.channels.cend(); ++c) {
+            const QString slug = c.value().value("Slug").toString();
+            // "ref" ist die Zeichenkette, mit der man DIESEN Knoten in einem anderen
+            // Kommando adressiert (CL-5 verlangt das ausdruecklich). Bei Kanaelen ist das
+            // `channel <slug>`, bei Zellen `cell <kanal> <mix>` — man soll den Wert
+            // abschreiben koennen, ohne die Syntax nachzuschlagen.
+            QJsonObject k{{"slug", slug}, {"name", c.value().value("Name").toString()},
+                          {"path", c.key()}, {"ref", slug}};
+            const QString gerVal = c.value().value("InputDevice").toString();
+            if (!gerVal.isEmpty()) k["inputDevice"] = gerVal;
+            const QStringList kfx = fxNamen(c.value().value("FxChain").toString());
+            if (!kfx.isEmpty()) k["fx"] = QJsonArray::fromStringList(kfx);
+
+            QJsonArray zellen;
+            for (auto m = o.mixes.cbegin(); m != o.mixes.cend(); ++m) {
+                const QString mslug = m.value().value("Slug").toString();
+                const auto zelle = o.cells.value(cellPath(slug, mslug));
+                if (zelle.isEmpty()) continue;
+                QJsonObject z{{"mix", mslug},
+                              {"volume", zelle.value("Volume").toDouble()},
+                              {"muted", zelle.value("Muted").toBool()},
+                              {"ref", QStringLiteral("%1 %2").arg(slug, mslug)}};
+                zellen.append(z);
+            }
+            k["cells"] = zellen;
+
+            QJsonArray programme;
+            for (auto a = o.apps.cbegin(); a != o.apps.cend(); ++a) {
+                const QStringList alle = a.value().value("Channels").toStringList();
+                const QString einer = a.value().value("Channel").toString().section('/', -1);
+                if (!alle.contains(slug) && einer != slug) continue;
+                programme.append(QJsonObject{{"name", a.value().value("Name").toString()},
+                                             {"nodeId", a.value().value("NodeId").toString()},
+                                             {"running", a.value().value("Running").toBool()}});
+            }
+            if (!programme.isEmpty()) k["apps"] = programme;
+            kanaele.append(k);
+        }
+
+        QJsonArray mixe;
+        for (auto m = o.mixes.cbegin(); m != o.mixes.cend(); ++m) {
+            QJsonObject mo{{"slug", m.value().value("Slug").toString()},
+                           {"name", m.value().value("Name").toString()},
+                           {"ref", m.value().value("Slug").toString()}};
+            const QStringList aus = m.value().value("Outputs").toStringList();
+            if (!aus.isEmpty()) mo["outputs"] = QJsonArray::fromStringList(aus);
+            const QStringList mfx = fxNamen(m.value().value("FxChain").toString());
+            if (!mfx.isEmpty()) mo["fx"] = QJsonArray::fromStringList(mfx);
+            mixe.append(mo);
+        }
+        // Szenen: CL-5 nennt sie ausdruecklich. Sie haengen am Mixer, nicht an einem
+        // Kanal — im Baum darum eine eigene Wurzel, nicht unter einem Kanal versteckt.
+        QJsonArray szenen;
+        for (const QString &s : unwrap(o.mixer.value("Scenes")).toStringList())
+            szenen.append(QJsonObject{{"name", s}, {"ref", s}});
+        QJsonObject wurzel{{"channels", kanaele}, {"mixes", mixe}};
+        if (!szenen.isEmpty()) wurzel["scenes"] = szenen;
+        out << QJsonDocument(wurzel).toJson();
+        return Ok;
+    }
+
+    const Baumzeichen bz = baumzeichen();
+    const bool farbe = farbeAn();
+    // Farbcodes nur, wenn farbeAn(). Sonst leere Strings — dann ist der Code unten
+    // identisch und es gibt keinen zweiten Ausgabepfad, der auseinanderlaufen kann.
+    const QString dim   = farbe ? QStringLiteral("\033[2m")  : QString();
+    const QString stumm = farbe ? QStringLiteral("\033[33m") : QString();
+    const QString aus   = farbe ? QStringLiteral("\033[0m")  : QString();
+
+    if (o.channels.isEmpty()) {
+        out << "(no channels configured — run `kmixdeck setup` or `kmixdeck channel add <name>`)\n";
+        return Ok;
+    }
+
+    int kanalNr = 0;
+    for (auto c = o.channels.cbegin(); c != o.channels.cend(); ++c, ++kanalNr) {
+        const bool letzterKanal = (kanalNr == o.channels.size() - 1);
+        const QString slug = c.value().value("Slug").toString();
+        const QString gerName = c.value().value("InputDevice").toString();
+
+        out << (letzterKanal ? bz.letzter : bz.ast)
+            << c.value().value("Name").toString().left(20)
+            << dim << " (" << slug.left(16) << ")" << aus;
+        if (!gerName.isEmpty())
+            out << dim << "  <- " << gerName.section('/', -1).left(30) << aus;
+        out << "\n";
+
+        const QString tiefer = letzterKanal ? bz.leer : bz.strich;
+
+        // Kinder sammeln, damit `letzter` stimmt: Programme zuerst (Quelle), dann Zellen.
+        QStringList progZeilen;
+        for (auto a = o.apps.cbegin(); a != o.apps.cend(); ++a) {
+            const QStringList alle = a.value().value("Channels").toStringList();
+            const QString einer = a.value().value("Channel").toString().section('/', -1);
+            if (!alle.contains(slug) && einer != slug) continue;
+            progZeilen << QStringLiteral("%1%2 %3")
+                            .arg(a.value().value("Running").toBool() ? QStringLiteral("* ")
+                                                                    : QStringLiteral("  "))
+                            .arg(a.value().value("Name").toString().left(24))
+                            .arg(dim + a.value().value("NodeId").toString() + aus);
+        }
+
+        struct ZeileZelle { QString mix, wert; QStringList mixFx; bool stummGeschaltet; };
+        QList<ZeileZelle> zellZeilen;
+        for (auto m = o.mixes.cbegin(); m != o.mixes.cend(); ++m) {
+            const QString mslug = m.value().value("Slug").toString();
+            const auto zelle = o.cells.value(cellPath(slug, mslug));
+            if (zelle.isEmpty()) continue;
+            zellZeilen.append({mslug,
+                               zelle.value("Muted").toBool() ? QStringLiteral("muted")
+                                                             : db(zelle.value("Volume").toDouble()).trimmed() + " dB",
+                               fxNamen(m.value().value("FxChain").toString()),
+                               zelle.value("Muted").toBool()});
+        }
+
+        // FX des Kanals: eigene Zeilen direkt unter dem Kanal — sie wirken auf ALLE
+        // Zellen dieses Kanals, nicht auf eine. Die Einrueckung muss das zeigen.
+        const QStringList kanalFx = fxNamen(c.value().value("FxChain").toString());
+        const int kinder = progZeilen.size() + kanalFx.size() + zellZeilen.size();
+        int nr = 0;
+        for (const QString &z : progZeilen) {
+            out << tiefer << (++nr == kinder ? bz.letzter : bz.ast) << z << "\n";
+        }
+        for (const QString &f : kanalFx) {
+            out << tiefer << (++nr == kinder ? bz.letzter : bz.ast)
+                << dim << "fx " << f.left(24) << aus << "\n";
+        }
+        for (const ZeileZelle &z : zellZeilen) {
+            const bool letzteZelle = (++nr == kinder);
+            out << tiefer << (letzteZelle ? bz.letzter : bz.ast)
+                << (z.stummGeschaltet ? stumm : QString())
+                << QStringLiteral("%1 %2").arg(z.mix.left(16), -18).arg(z.wert)
+                << (z.stummGeschaltet ? aus : QString());
+
+            // Ausgaenge des Mix direkt dahinter: ohne die weiss man nicht, wo der Ton landet.
+            const QStringList mixAus = o.mixes.value(QStringLiteral("%1/mix/%2").arg(ROOT, z.mix))
+                                           .value("Outputs").toStringList();
+            if (!mixAus.isEmpty())
+                out << dim << " -> " << mixAus.join(QStringLiteral(",")).left(22) << aus;
+            out << "\n";
+
+            for (int i = 0; i < z.mixFx.size(); ++i)
+                out << tiefer << (letzteZelle ? bz.leer : bz.strich)
+                    << (i == z.mixFx.size() - 1 ? bz.letzter : bz.ast)
+                    << dim << "fx " << z.mixFx.at(i).left(24) << aus << "\n";
+        }
+    }
+
+    // Szenen (CT-9) gehoeren zum Mixer, nicht zu einem Kanal: eigene Wurzel. Ein Baum,
+    // der sie unter einem Kanal zeigt, behauptet eine Zugehoerigkeit, die es nicht gibt.
+    const QStringList szenen = unwrap(o.mixer.value("Scenes")).toStringList();
+    if (!szenen.isEmpty()) {
+        out << "scenes\n";
+        for (int i = 0; i < szenen.size(); ++i)
+            out << (i == szenen.size() - 1 ? bz.letzter : bz.ast)
+                << szenen.at(i).left(28)
+                << dim << "   scene recall " << szenen.at(i).left(20) << aus << "\n";
+    }
+    return Ok;
+}
 } // namespace
 
 class Watcher : public QObject {
@@ -324,6 +519,28 @@ struct Cli {
         : app(app_), p(p_), a(std::move(args)), cmd(a[0]), sub(a.value(1)) {}
 
     bool need(int n) { if (a.size() < n) { fail(Usage, "missing arguments; see --help"); return false; } return true; }
+
+    /// Obergrenze: ein Lesekommando darf ueberzaehlige Argumente NICHT schlucken.
+    ///
+    /// 🔴 Gemessen 2026-09-21: `kmixdeck mix outputs stream fake.headphones` gab Code 0 und
+    /// tat nichts. `outputs` LIEST (Schreiben ist `output`/`output-add`), das vierte Argument
+    /// fiel unter den Tisch. Der Benutzer sieht Erfolg, die Aenderung ist nie passiert — die
+    /// schlimmste Fehlerart, weil sie sich nicht als Fehler zeigt. Dasselbe bei
+    /// `channel inputs`, `devices hidden`, `channel groups`, `streamdeck path`: 5 von 6
+    /// geprueften Lesekommandos.
+    ///
+    /// Verstoesst gegen CL-8 (jeder Fehler nennt Objekt und Regel) und gegen die Regel, dass
+    /// Exit 0 "hat getan was du wolltest" bedeutet. Darum Code 1 (Usage, Tippfehler des
+    /// Benutzers) und ein Text, der sagt WELCHES Kommando stattdessen schreibt.
+    bool nurLesen(int n, const char *schreibt = nullptr) {
+        if (a.size() <= n) return true;
+        const QString hinweis = schreibt
+            ? QStringLiteral("; use `kmixdeck %1 %2` to set it").arg(cmd, QString::fromLatin1(schreibt))
+            : QStringLiteral("; see --help");
+        fail(Usage, QStringLiteral("`%1 %2` only reads, but got %3 extra argument(s): %4%5")
+                        .arg(cmd, sub).arg(a.size() - n).arg(a.mid(n).join(' '), hinweis));
+        return false;
+    }
     int printPath(const QDBusReply<QDBusObjectPath> &r) {
         if (!r.isValid()) return fail(Rejected, r.error().message());
         if (g_json) out << QJsonDocument(QJsonObject{{"path", r.value().path()}}).toJson(QJsonDocument::Compact); else out << r.value().path() << "\n"; return Ok; }
@@ -363,6 +580,7 @@ struct Cli {
     }
 
     int cmdStatus() { return ::cmdStatus(o); }
+    int cmdTree() { return ::cmdTree(o); }
     int cmdStreamdeck() {   // CT-3: kmixdeck streamdeck install|uninstall|path — hook the OpenAction plugin into OpenDeck
         const QString sub = a.size() > 1 ? a[1] : QStringLiteral("path");
         // where the plugin lives: next to this binary in a build tree, else the installed data dir
@@ -374,7 +592,7 @@ struct Cli {
         const QString home = QDir::homePath();
         QStringList targets{QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/opendeck/plugins")};
         if (QFileInfo::exists(home + QStringLiteral("/.var/app/me.amankhanna.opendeck"))) targets << home + QStringLiteral("/.var/app/me.amankhanna.opendeck/config/opendeck/plugins");
-        if (sub == "path") { out << src << "\n"; return Ok; }
+        if (sub == "path") { if (!nurLesen(2)) return Usage; out << src << "\n"; return Ok; }
         if (sub == "install") {
             for (const QString &t : targets) {
                 QDir().mkpath(t);
@@ -522,7 +740,11 @@ struct Cli {
             QDBusMessage r = mixer.call("SetDeviceHidden", a[2], sub == "hide");
             return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
         }
-        if (sub == "hidden") { for (const auto &n : unwrap(o.mixer.value("HiddenDevices")).toStringList()) out << n << "\n"; return Ok; }
+        if (sub == "hidden") {
+            if (!nurLesen(2, "hide <node>")) return Usage;
+            for (const auto &n : unwrap(o.mixer.value("HiddenDevices")).toStringList()) out << n << "\n";
+            return Ok;
+        }
         const StringMap devs = qdbus_cast<StringMap>(o.mixer.value(sub == "in" ? "InputDevices" : "OutputDevices"));
         const QStringList hidden = unwrap(o.mixer.value("HiddenDevices")).toStringList();
         if (g_json) { QJsonObject j; for (auto it = devs.cbegin(); it != devs.cend(); ++it) j[it.key()] = it.value(); out << QJsonDocument(j).toJson(); return Ok; }
@@ -541,6 +763,7 @@ struct Cli {
             return setProp(QString::fromLatin1(ROOT), "org.kmixdeck1.Mixer", "DefaultChannel", QVariant::fromValue(p), &e) ? Ok : fail(Rejected, e);
         }
         if (sub == "groups" && cmd == "channel") {   // CH-8: every group with its members
+            if (!nurLesen(2, "group <slug> <name>")) return Usage;
             QMap<QString, QStringList> groups;
             Objects fresh; if (!fetch(fresh, &e)) return fail(NoService, e);   // `o` is the snapshot from startup; groups may have changed since
             for (auto it = fresh.channels.constBegin(); it != fresh.channels.constEnd(); ++it) { const QString g = it.value().value("Group").toString(); if (!g.isEmpty()) groups[g] << it.value().value("Slug").toString(); }
@@ -606,6 +829,7 @@ struct Cli {
             return Ok;
         }
         if (sub == "inputs" && ch) {   // ADR 0009 B1: all wires into this channel
+            if (!nurLesen(3, "input <slug> <ref>")) return Usage;
             const QStringList ins = unwrap(objs.value(pathOf(a[2])).value("Inputs")).toStringList();
             if (g_json) out << QJsonDocument(QJsonArray::fromStringList(ins)).toJson(); else for (const auto &i2 : ins) out << i2 << "\n";
             return Ok;
@@ -622,6 +846,7 @@ struct Cli {
         if (sub == "volume" && !ch) { if (!need(4)) return Usage; double l; if (!parseLevel(a[3], &l)) return fail(Usage, "bad level"); return setProp(pathOf(a[2]), iface, "Volume", l, &e) ? Ok : fail(Rejected, e); }
         if (sub == "mute" && !ch) { bool b; if (!parseBool(a, 3, &b)) return fail(Usage, "on|off"); return setProp(pathOf(a[2]), iface, "Muted", b, &e) ? Ok : fail(Rejected, e); }
         if (sub == "outputs" && !ch) {
+            if (!nurLesen(3, "output <slug> <ref>")) return Usage;
             const QStringList outs = unwrap(objs.value(pathOf(a[2])).value("Outputs")).toStringList();
             if (g_json) out << QJsonDocument(QJsonArray::fromStringList(outs)).toJson(); else for (const auto &o2 : outs) out << o2 << "\n";
             return Ok;
@@ -869,6 +1094,7 @@ struct Cli {
         using Fn = int (Cli::*)();
         static const QMap<QString, Fn> table = {
             {QStringLiteral("status"), &Cli::cmdStatus},
+            {QStringLiteral("tree"), &Cli::cmdTree},
             {QStringLiteral("loudness"), &Cli::cmdLoudness},
             {QStringLiteral("streamdeck"), &Cli::cmdStreamdeck},
             {QStringLiteral("setup"), &Cli::cmdSetup},

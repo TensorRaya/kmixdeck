@@ -917,3 +917,167 @@ def test_ct9_bad_names_are_refused_and_delete_works(stack):
     assert not list(scene_dir.parent.parent.glob("escape.json")), "scene name escaped the scene dir"
     assert not list(scene_dir.parent.glob("escape.json")), "scene name escaped the scene dir"
     assert list(scene_dir.glob("*escape*.json")), "sanitised name did not land in the scene dir either"
+
+def test_cl5_tree_shows_the_signal_path(stack):
+    """CL-5: `kmixdeck tree` zeigt den Signalweg, lesbar auf 80 Spalten.
+
+    Was der Test wirklich prueft — nicht "laeuft durch", sondern die vier
+    Eigenschaften, die die Anforderung nennt:
+
+      1. Der Baum enthaelt die KETTE, nicht nur eine Liste: Kanal, darunter seine
+         Zellen mit Mix und Pegel, darunter die FX. Ein Baum, der die Verschachtelung
+         verliert, ist eine Tabelle mit Strichen davor.
+      2. 80 Spalten. Geprueft wird die ANGEZEIGTE Breite, also ohne
+         Escape-Sequenzen — sonst besteht der Test, waehrend das Terminal umbricht.
+      3. ASCII-Rueckfall: in der C-Locale duerfen keine Box-Zeichen erscheinen.
+         Auf einer seriellen Konsole oder in einem Log werden aus `├──` sonst
+         Fragezeichen, und der Baum ist unlesbar genau dort, wo man ihn braucht.
+      4. NO_COLOR (no-color.org): jede nicht-leere Belegung schaltet Farbe ab.
+         Zusaetzlich darf in eine Pipe generell keine Sequenz gehen — die Ausgabe
+         landet sonst als Muell in Logdateien.
+    """
+    import re
+    stack.cli("channel", "add", "Mikrofon")
+    stack.cli("mix", "add", "Aufnahme")
+    stack.cli("cell", "set", "mikrofon", "aufnahme", "-6dB")
+    # FX haengen an Kanal ODER Mix (service.h:86 und :136), NICHT an der Zelle — `Cell` hat
+    # nur Volume/Muted/Follows. Mein erster Entwurf zeigte sie unter der Zelle und behauptete
+    # damit eine Struktur, die der Daemon nicht hat.
+    # Eingabegeraet und Mix-Ausgang: OHNE die faellt der Baum auf die Haelfte seines Zwecks
+    # zurueck. Der erste Entwurf dieses Tests setzte beides nicht — die Zweige "<- Geraet"
+    # und "-> Ausgang" in cmdTree liefen damit nie, und der Test war trotzdem gruen.
+    make_fake_source(stack, "fake.mic", "Fake Microphone")
+    make_fake_sink(stack, "fake.headphones", "Fake Headphones")
+    for _ in range(30):
+        if "fake.mic" in stack.cli("devices", "in", json_out=True): break
+        time.sleep(0.1)
+    for _ in range(30):
+        if "fake.headphones" in stack.cli("devices", "out", json_out=True): break
+        time.sleep(0.1)
+    stack.cli("channel", "input", "mikrofon", "fake.mic")
+    stack.cli("mix", "output", "aufnahme", "fake.headphones")   # `outputs` LIEST, `output` schreibt
+    kette = json.dumps({"enabled": True, "chain": [{"type": "highpass", "controls": {}}]})
+    stack.cli("fx", "set", "channel", "mikrofon", kette)
+    stack.cli("scene", "save", "nacht")
+    # wait_prop vergleicht mit ==, nimmt also keinen Praedikat-Aufruf. Die Kette kommt
+    # normalisiert zurueck (params statt controls, Schluessel sortiert), darum auf den
+    # zurueckgelesenen Wortlaut warten statt auf meine Eingabe.
+    wait_prop(stack, "channel", "mikrofon", "FxChain",
+              '{"chain":[{"enabled":true,"params":{},"type":"highpass"}],"enabled":true}')
+
+    roh = stack.cli("tree").stdout
+    ohne_seq = re.sub(r"\x1b\[[0-9;]*m", "", roh)
+
+    # (1) Kette: Kanal steht weiter links als seine Zelle, die FX-Zeile noch weiter rechts.
+    zeilen = [z for z in ohne_seq.splitlines() if z.strip()]
+    def einzug(z): return len(z) - len(z.lstrip(" |`-+\u2500\u2502\u251c\u2514"))
+    kanal = next(i for i, z in enumerate(zeilen) if "Mikrofon" in z)
+    fx    = next(i for i, z in enumerate(zeilen) if "highpass" in z and i > kanal)
+    zelle = next(i for i, z in enumerate(zeilen) if "aufnahme" in z and i > kanal)
+    assert einzug(zeilen[kanal]) < einzug(zeilen[fx]), (
+        "FX des Kanals nicht eingerueckt:\n" + "\n".join(f"{einzug(z):3d} {z!r}" for z in zeilen))
+    assert einzug(zeilen[kanal]) < einzug(zeilen[zelle]), (
+        "Zelle nicht unter dem Kanal:\n" + "\n".join(f"{einzug(z):3d} {z!r}" for z in zeilen))
+
+    # Der Pegel gehoert an die Zelle, nicht irgendwohin.
+    assert "-6.0 dB" in zeilen[zelle], f"Pegel fehlt in der Zellzeile: {zeilen[zelle]!r}"
+
+    # Quelle am Kanal und Ziel am Mix: das ist der Grund, warum es den Baum gibt.
+    assert "fake.mic" in zeilen[kanal], f"Eingabegeraet fehlt am Kanal: {zeilen[kanal]!r}"
+    assert "fake.headphones" in zeilen[zelle], f"Mix-Ausgang fehlt an der Zelle: {zeilen[zelle]!r}"
+
+    # (1b) Szenen und Referenzen: CL-5 verlangt beides ausdruecklich — "scenes" in der
+    # Aufzaehlung, und "each node with the reference needed to address it in another
+    # command". Mein erster Entwurf hatte keins von beidem und war trotzdem gruen, weil
+    # ich gegen meine Implementierung getestet habe statt gegen die Anforderung.
+    assert any("nacht" in z for z in zeilen), f"Szene fehlt im Baum:\n{ohne_seq}"
+    # Der Slug ist die Referenz: der Anzeigename ist NICHT adressierbar ("Mikrofon" != "mikrofon").
+    assert "mikrofon" in zeilen[kanal], (
+        f"Kanalzeile nennt den Slug nicht, mit dem man ihn adressiert: {zeilen[kanal]!r}")
+
+    # (2) 80 Spalten, gemessen an der ANGEZEIGTEN Breite.
+    zu_breit = [(len(z), z) for z in ohne_seq.splitlines() if len(z) > 80]
+    assert not zu_breit, f"{len(zu_breit)} Zeilen breiter als 80 Spalten: {zu_breit[:3]}"
+
+    # (3) ASCII-Rueckfall in der C-Locale.
+    c_env = dict(stack.env, LC_ALL="C", LANG="C")
+    ascii_out = subprocess.run([str(BIN / "kmixdeck"), "tree"], env=c_env,
+                               capture_output=True, text=True, check=True).stdout
+    box = [c for c in "\u2500\u2502\u251c\u2514\u252c\u2534" if c in ascii_out]
+    assert not box, f"Box-Zeichen in der C-Locale: {box} in {ascii_out[:200]!r}"
+    assert "|--" in ascii_out or "`--" in ascii_out, f"kein ASCII-Baum: {ascii_out[:200]!r}"
+
+    # (4) NO_COLOR und Pipe: keine Escape-Sequenz.
+    for name, env in (("NO_COLOR=1", dict(stack.env, NO_COLOR="1")),
+                      ("NO_COLOR=0", dict(stack.env, NO_COLOR="0")),   # no-color.org: auch "0" zaehlt
+                      ("Pipe", dict(stack.env))):
+        o = subprocess.run([str(BIN / "kmixdeck"), "tree"], env=env,
+                           capture_output=True, text=True, check=True).stdout
+        assert "\x1b[" not in o, f"{name}: Escape-Sequenz in der Ausgabe: {o[:120]!r}"
+
+    # JSON: dieselbe Verschachtelung, damit Skripte den Baum nicht zurueckparsen muessen.
+    j = stack.cli("--json", "tree", json_out=True)
+    kanal_j = next(k for k in j["channels"] if k["slug"] == "mikrofon")
+    zelle_j = next(z for z in kanal_j["cells"] if z["mix"] == "aufnahme")
+    assert "highpass" in kanal_j["fx"], f"FX fehlt am Kanal im JSON: {kanal_j}"
+    assert abs(zelle_j["volume"] - 0.5012) < 0.01, f"-6dB != {zelle_j['volume']}"
+    assert kanal_j["inputDevice"].endswith("fake.mic"), f"inputDevice fehlt: {kanal_j}"
+    mix_j = next(m for m in j["mixes"] if m["slug"] == "aufnahme")
+    assert mix_j["outputs"] == ["fake.headphones"], f"outputs fehlen: {mix_j}"
+    assert [s["name"] for s in j["scenes"]] == ["nacht"], f"Szenen fehlen im JSON: {j.get('scenes')}"
+
+    # Die Referenzen muessen BENUTZBAR sein, nicht nur vorhanden: jede wird in dem
+    # Kommando eingesetzt, fuer das sie gedacht ist. Eine Referenz, die man nicht
+    # einsetzen kann, ist Dekoration — und mein erster Entwurf lieferte halbe Aufrufe
+    # ("channel mikrofon"), die selbst kein Kommando sind.
+    einsaetze = [
+        ("channel", "trim", kanal_j["ref"], "-3dB"),   # Kanaele haben trim, Mixe volume
+        ("cell", "set") + tuple(zelle_j["ref"].split()) + ("-9dB",),
+        ("mix", "volume", mix_j["ref"], "-3dB"),
+        ("scene", "recall", j["scenes"][0]["ref"]),
+    ]
+    for args in einsaetze:
+        r = stack.cli(*args, check=False)
+        assert r.returncode == 0, (
+            f"Referenz nicht einsetzbar: `kmixdeck {' '.join(args)}` -> rc={r.returncode} {r.stderr!r}")
+
+def test_cl8_read_commands_refuse_extra_arguments(stack):
+    """CL-8: ein Lesekommando darf ueberzaehlige Argumente nicht schlucken.
+
+    🔴 Gefunden 2026-09-21 beim Schreiben des CL-5-Tests: ich tippte
+    `kmixdeck mix outputs stream fake.headphones` — Exit 0, keine Ausgabe, keine
+    Wirkung. `outputs` liest, geschrieben wird mit `output`. Das vierte Argument fiel
+    unter den Tisch.
+
+    Warum das der schlimmste Fehler ist, den ein CLI machen kann: Exit 0 heisst "hat
+    getan was du wolltest". Ein Skript prueft den Code, sieht 0, macht weiter — und die
+    Aenderung ist nie passiert. Ein Fehler, der sich als Erfolg tarnt, ist schlimmer als
+    ein Absturz.
+
+    Gemessen war es nicht ein Einzelfall, sondern 5 von 6 geprueften Lesekommandos.
+    Darum prueft dieser Test die GANZE Liste, nicht nur `mix outputs` — und die
+    Fehlermeldung muss sagen, welches Kommando stattdessen schreibt, sonst raet der
+    Benutzer weiter.
+    """
+    faelle = [
+        (("mix", "outputs", "stream", "fake.headphones"), "output"),
+        (("channel", "inputs", "voice", "fake.mic"), "input"),
+        (("devices", "hidden", "quatsch"), "hide"),
+        (("channel", "groups", "quatsch"), "group"),
+        (("streamdeck", "path", "quatsch"), None),
+    ]
+    for args, schreibt in faelle:
+        r = stack.cli(*args, check=False)
+        assert r.returncode == 1, (
+            f"{' '.join(args)}: rc={r.returncode}, erwartet 1 (Usage). "
+            f"rc=0 hiesse 'erledigt' fuer etwas, das nicht passiert ist. out={r.stdout!r}")
+        assert r.stdout == "", f"{' '.join(args)}: Lesekommando gab trotz Fehler Nutzdaten aus: {r.stdout!r}"
+        assert "only reads" in r.stderr, f"{' '.join(args)}: Grund fehlt: {r.stderr!r}"
+        assert args[-1] in r.stderr, f"{' '.join(args)}: nennt das verschluckte Argument nicht: {r.stderr!r}"
+        if schreibt:
+            assert schreibt in r.stderr, (
+                f"{' '.join(args)}: sagt nicht, womit man stattdessen schreibt ({schreibt}): {r.stderr!r}")
+
+    # Gegenprobe: das Lesekommando OHNE Zusatz muss weiter funktionieren.
+    assert stack.cli("mix", "outputs", "stream", json_out=True) == []
+    assert stack.cli("channel", "groups", json_out=True) is not None

@@ -103,6 +103,19 @@ the Stream Deck plugin read.
 > kmixdeck status                   # the matrix as a table
 > kmixdeck --json status | jq '.mixes[] | {Slug, Volume}'
 
+`tree`
+: The signal path as a tree: device → channel → cell → mix → output, with the
+applications on each channel and the FX in each cell. `status` answers "how loud
+is channel X in mix Y"; `tree` answers "where does this sound come from and where
+does it go", which is the question when something is silent. Fits 80 columns —
+names are shortened, never wrapped. Box-drawing characters only in a UTF-8
+locale, otherwise plain ASCII; colour is dropped when `NO_COLOR` is set or stdout
+is not a terminal. `--json` gives the same nesting as an object, so scripts never
+have to parse the ASCII back.
+> kmixdeck tree                     # the signal path, top to bottom
+> NO_COLOR=1 kmixdeck tree          # no escape sequences, for logs and pipes
+> kmixdeck --json tree | jq '.channels[] | select(.cells[].muted)'
+
 `levels [--once]`
 : Live peak meters at 25 Hz (`#` peak, `=` RMS, `!` clip). `--json` prints one
 object per tick. Ctrl-C stops and unsubscribes. `--once` prints a single reading
