@@ -91,7 +91,7 @@ const char *codeName(Exit code) {
 /// dann an der falschen Stelle. Beide Listen haelt der Test cl9-hilfe-gegen-code
 /// zusammen, der die Dispatch-Tabelle aus dieser Datei liest.
 constexpr const char *KOMMANDO_NAMEN[] = {
-    "status", "tree", "loudness", "streamdeck", "setup", "export", "import", "undo", "scene",
+    "status", "tree", "patch", "loudness", "streamdeck", "setup", "export", "import", "undo", "scene",
     "devices", "channel", "mix", "fx", "cell", "app", "listen", "audition", "levels", "watch",
 };
 
@@ -232,6 +232,166 @@ QStringList fxNamen(const QString &json) {
         if (!typ.isEmpty()) namen << typ;
     }
     return namen;
+}
+
+/// CL-6: ist diese Property schreibbar? Aus der Introspection des Daemons, nicht geraten.
+///
+/// 🔴 Zwei gemessene Fehler, die ohne diese Pruefung bleiben (2026-09-21):
+///   1. `--dry-run` behauptete "voice.Slug: voice -> anders", obwohl `Slug` CONSTANT ist.
+///      Ein Trockenlauf, der etwas verspricht, was der echte Lauf ablehnt, ist schlimmer
+///      als kein Trockenlauf — man plant damit.
+///   2. Der gemischte Patch {Trim, Slug} liess Trim unveraendert, aber nur WEIL "Slug"
+///      alphabetisch vor "Trim" steht (QJsonObject sortiert). Bei {Muted, Slug} waere
+///      Muted schon geschrieben gewesen. Alles-oder-nichts darf nicht von der
+///      Schluesselreihenfolge abhaengen.
+///
+/// Introspection wird pro Interface EINMAL geholt und gemerkt — ein Patch mit 50
+/// Zuweisungen soll nicht 50 D-Bus-Runden fuer dieselbe Antwort drehen.
+bool istSchreibbar(const QString &pfad, const QString &iface, const QString &prop) {
+    static QMap<QString, QSet<QString>> merker;   // iface -> schreibbare Properties
+    if (!merker.contains(iface)) {
+        QSet<QString> schreibbar;
+        QDBusInterface in(BUS, pfad, QStringLiteral("org.freedesktop.DBus.Introspectable"),
+                          QDBusConnection::sessionBus());
+        const QDBusReply<QString> xml = in.call(QStringLiteral("Introspect"));
+        if (!xml.isValid()) return true;   // keine Auskunft: nicht vorschnell ablehnen,
+                                           // der Daemon lehnt beim Schreiben selbst ab.
+        // Nur den Block dieses Interfaces lesen, sonst erbt man fremde Property-Namen.
+        const QString doc = xml.value();
+        const int von = doc.indexOf(QStringLiteral("<interface name=\"%1\"").arg(iface));
+        if (von < 0) return true;
+        const int bis = doc.indexOf(QStringLiteral("</interface>"), von);
+        const QString block = doc.mid(von, bis < 0 ? -1 : bis - von);
+        static const QRegularExpression re(
+            QStringLiteral("<property[^>]*name=\"([^\"]+)\"[^>]*access=\"([^\"]+)\""));
+        for (auto m = re.globalMatch(block); m.hasNext();) {
+            const auto t2 = m.next();
+            if (t2.captured(2).contains(QStringLiteral("write"))) schreibbar.insert(t2.captured(1));
+        }
+        merker.insert(iface, schreibbar);
+    }
+    return merker.value(iface).contains(prop);
+}
+
+/// CL-6: `kmixdeck patch <datei|->` — die ganze Konfiguration nicht-interaktiv aendern.
+///
+/// Form: RFC 7386 Merge Patch gegen dieselbe Sicht, die die Web-Bridge schon spricht
+/// (AR-8, ADR 0011):
+///
+///     {"objects": {"/org/kmixdeck1/channel/voice": {"Trim": 0.7, "Muted": false}},
+///      "root":    {"ListeningDevice": "fake.headphones"}}
+///
+/// 🔴 Warum NICHT die `export`-Form: die traegt Arrays (`channels: [...]`, `levels: [...]`).
+/// RFC 7386 ersetzt ein Array immer VOLLSTAENDIG — ein Patch, der einen Kanal aendern will,
+/// muesste alle mitschicken und wuerde beim geringsten Versehen den Rest loeschen. Genau
+/// dafuer gibt es `import`. Patchen braucht eine Sicht, in der jedes Ziel einen eigenen
+/// Schluessel hat; die Bridge hat sie, also nehmen wir sie.
+///
+/// Alles-oder-nichts: die Anforderung verlangt, dass ein abgelehnter Patch NICHTS anfasst.
+/// D-Bus kennt keine Transaktion, darum zwei Phasen — erst jede Zuweisung gegen die
+/// Introspection pruefen (existiert die Property? ist sie schreibbar? passt der Typ?), und
+/// nur wenn ALLE durchkommen, wird geschrieben. Ein Patch mit einem Tippfehler im letzten
+/// Feld darf die ersten neun nicht schon gesetzt haben.
+int cmdPatch(const Objects &o, const QString &quelle, bool trocken) {
+    QByteArray roh;
+    if (quelle == QLatin1String("-")) {
+        QFile in; if (!in.open(stdin, QIODevice::ReadOnly)) return fail(Usage, "cannot read stdin");
+        roh = in.readAll();
+    } else {
+        QFile f(quelle);
+        if (!f.open(QIODevice::ReadOnly)) return fail(NotFound, "cannot read " + quelle);
+        roh = f.readAll();
+    }
+
+    QJsonParseError pe{};
+    const QJsonDocument doc = QJsonDocument::fromJson(roh, &pe);
+    if (pe.error != QJsonParseError::NoError)
+        return fail(Usage, QStringLiteral("%1: not JSON at offset %2: %3")
+                               .arg(quelle).arg(pe.offset).arg(pe.errorString()));
+    if (!doc.isObject()) return fail(Usage, quelle + ": top level must be an object");
+    const QJsonObject wurzel = doc.object();
+
+    for (const QString &k : wurzel.keys())
+        if (k != QLatin1String("objects") && k != QLatin1String("root"))
+            return fail(Usage, QStringLiteral("unknown key '%1' (expected 'objects' or 'root')").arg(k));
+
+    // --- Phase 1: pruefen. Sammelt Zuweisungen, schreibt nichts.
+    struct Zuweisung { QString pfad, iface, prop; QVariant wert; QString zeigt; };
+    QList<Zuweisung> plan;
+
+    auto pruefeObjekt = [&](const QString &pfad, const QString &iface,
+                            const QVariantMap &ist, const QJsonObject &will) -> QString {
+        for (auto it = will.begin(); it != will.end(); ++it) {
+            const QString prop = it.key();
+            if (!ist.contains(prop))
+                return QStringLiteral("%1: no property '%2' (has: %3)")
+                           .arg(pfad, prop, QStringList(ist.keys()).join(", "));
+            if (!istSchreibbar(pfad, iface, prop))
+                return QStringLiteral("%1.%2 is read-only").arg(pfad, prop);
+            const QVariant alt = unwrap(ist.value(prop));
+            QVariant neu = it.value().toVariant();
+            // Typ an den vorhandenen Wert anpassen: JSON kennt nur double, D-Bus nicht.
+            if (!neu.convert(alt.metaType()))
+                return QStringLiteral("%1.%2: cannot use %3 as %4")
+                           .arg(pfad, prop, QString::fromUtf8(QJsonDocument(QJsonObject{{prop, it.value()}}).toJson(QJsonDocument::Compact)), QString::fromLatin1(alt.metaType().name()));
+            plan.append({pfad, iface, prop, neu,
+                         QStringLiteral("%1.%2: %3 -> %4").arg(pfad, prop, alt.toString(), neu.toString())});
+        }
+        return {};
+    };
+
+    const QJsonObject objekte = wurzel.value("objects").toObject();
+    for (auto it = objekte.begin(); it != objekte.end(); ++it) {
+        const QString pfad = it.key();
+        if (!it.value().isObject())
+            return fail(Usage, QStringLiteral("%1: value must be an object (RFC 7386 null-deletion is not supported here — use `channel remove`)").arg(pfad));
+        const QVariantMap ist = o.channels.contains(pfad) ? o.channels.value(pfad)
+                             : o.mixes.contains(pfad)     ? o.mixes.value(pfad)
+                             : o.cells.contains(pfad)     ? o.cells.value(pfad)
+                                                          : QVariantMap();
+        if (ist.isEmpty())
+            return fail(NotFound, QStringLiteral("no object '%1' (see `kmixdeck tree --json`)").arg(pfad));
+        const QString iface = o.channels.contains(pfad) ? QStringLiteral("org.kmixdeck1.Channel")
+                            : o.mixes.contains(pfad)    ? QStringLiteral("org.kmixdeck1.Mix")
+                                                        : QStringLiteral("org.kmixdeck1.Cell");
+        const QString fehler = pruefeObjekt(pfad, iface, ist, it.value().toObject());
+        if (!fehler.isEmpty()) return fail(Rejected, fehler);
+    }
+    const QJsonObject rootWill = wurzel.value("root").toObject();
+    if (!rootWill.isEmpty()) {
+        const QString fehler = pruefeObjekt(QString::fromLatin1(ROOT), QStringLiteral("org.kmixdeck1.Mixer"),
+                                            o.mixer, rootWill);
+        if (!fehler.isEmpty()) return fail(Rejected, fehler);
+    }
+
+    if (plan.isEmpty()) { out << "nothing to change\n"; return Ok; }
+
+    // --- Phase 2: anwenden (oder bei --dry-run nur zeigen).
+    if (trocken) {
+        if (g_json) {
+            QJsonArray j;
+            for (const auto &z : plan)
+                j.append(QJsonObject{{"path", z.pfad}, {"property", z.prop},
+                                     {"value", QJsonValue::fromVariant(z.wert)}});
+            out << QJsonDocument(j).toJson();
+        } else {
+            for (const auto &z : plan) out << z.zeigt << "\n";
+            out << plan.size() << " change(s), nothing written (--dry-run)\n";
+        }
+        return Ok;
+    }
+
+    QString e;
+    for (const auto &z : plan)
+        if (!setProp(z.pfad, z.iface, z.prop, z.wert, &e))
+            // Hierhin kommt man nur, wenn der Daemon eine geprueft-gueltige Zuweisung
+            // ablehnt (Wertebereich, Geraet weg). Dann ist der Patch halb angewendet —
+            // darum nennt die Meldung die Stelle, ab der nichts mehr passiert ist.
+            return fail(Rejected, QStringLiteral("%1.%2 rejected: %3 (earlier changes in this patch are applied)")
+                                      .arg(z.pfad, z.prop, e));
+    if (g_json) out << QJsonDocument(QJsonObject{{"changed", plan.size()}}).toJson(QJsonDocument::Compact) << "\n";
+    else out << "applied " << plan.size() << " change(s)\n";
+    return Ok;
 }
 
 /// CL-5: der Signalweg als Baum — was haengt an was, in einem Blick.
@@ -581,6 +741,19 @@ struct Cli {
 
     int cmdStatus() { return ::cmdStatus(o); }
     int cmdTree() { return ::cmdTree(o); }
+    int cmdPatch() {
+        if (!need(2)) return Usage;
+        // --dry-run steht als Positionsargument in `a`, weil der Parser Optionen nach dem
+        // ersten Positionsargument als Positionen behandelt (damit "-12dB" ein Wert bleibt).
+        const bool trocken = a.contains(QStringLiteral("--dry-run")) || a.contains(QStringLiteral("-n"));
+        QStringList rest;
+        for (int i = 1; i < a.size(); ++i)
+            if (a[i] != QStringLiteral("--dry-run") && a[i] != QStringLiteral("-n")) rest << a[i];
+        if (rest.isEmpty()) return fail(Usage, "patch <file>|- [--dry-run]");
+        if (rest.size() > 1)
+            return fail(Usage, QStringLiteral("patch takes one file, got %1: %2").arg(rest.size()).arg(rest.join(' ')));
+        return ::cmdPatch(o, rest.first(), trocken);
+    }
     int cmdStreamdeck() {   // CT-3: kmixdeck streamdeck install|uninstall|path — hook the OpenAction plugin into OpenDeck
         const QString sub = a.size() > 1 ? a[1] : QStringLiteral("path");
         // where the plugin lives: next to this binary in a build tree, else the installed data dir
@@ -1095,6 +1268,7 @@ struct Cli {
         static const QMap<QString, Fn> table = {
             {QStringLiteral("status"), &Cli::cmdStatus},
             {QStringLiteral("tree"), &Cli::cmdTree},
+            {QStringLiteral("patch"), &Cli::cmdPatch},
             {QStringLiteral("loudness"), &Cli::cmdLoudness},
             {QStringLiteral("streamdeck"), &Cli::cmdStreamdeck},
             {QStringLiteral("setup"), &Cli::cmdSetup},

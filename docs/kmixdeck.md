@@ -139,6 +139,23 @@ action actually did.
 (CH-9). One step.
 > kmixdeck mix remove talkback && kmixdeck undo   # brings it back with cells and FX
 
+`patch <file>|- [--dry-run]`
+: Changes the configuration non-interactively with an RFC 7386 merge patch —
+the same view the web bridge speaks (AR-8), so a patch that works there works
+here: `{"objects": {"<path>": {"<Property>": value}}, "root": {…}}`. Paths and
+property names come from `kmixdeck tree --json`. `-` reads from stdin.
+`--dry-run` prints what would change and touches nothing.
+All or nothing: every assignment is checked against the daemon's own properties
+first (does it exist, is it writable, does the type fit), and only if *all* of
+them pass is anything written — a typo in the last field must not leave the first
+nine applied. A rejected patch names the path and property that failed.
+This is not `import`: that one replaces the whole layout from an `export`
+document, whose arrays RFC 7386 would overwrite wholesale. `patch` changes
+individual properties and leaves everything it does not mention alone.
+> kmixdeck patch quiet-night.json                 # apply it
+> kmixdeck patch quiet-night.json --dry-run       # show what it would do
+> echo '{"objects":{"/org/kmixdeck1/channel/voice":{"Muted":true}}}' | kmixdeck patch -
+
 ## First run, backup, restore
 
 `setup`

@@ -6,7 +6,7 @@ kmixdeckd is started on that bus; the CLI is the test client — so every assert
 The acoustic checks reuse the same measurement helpers as test_audio_graph.py.
 """
 import json
-import math, math, subprocess, time, pytest
+import math, os, subprocess, tempfile, time, pytest
 from pathlib import Path
 from pw_sandbox import start_private_pipewire, REPO
 from waiting import wait_for
@@ -1081,3 +1081,93 @@ def test_cl8_read_commands_refuse_extra_arguments(stack):
     # Gegenprobe: das Lesekommando OHNE Zusatz muss weiter funktionieren.
     assert stack.cli("mix", "outputs", "stream", json_out=True) == []
     assert stack.cli("channel", "groups", json_out=True) is not None
+
+def test_cl6_patch_applies_all_or_nothing(stack):
+    """CL-6: `kmixdeck patch` aendert die Konfiguration nicht-interaktiv — ganz oder gar nicht.
+
+    Form ist RFC 7386 gegen die Sicht, die die Web-Bridge schon spricht (AR-8):
+    `{"objects": {"<pfad>": {"<Property>": wert}}}`. NICHT die `export`-Form — die traegt
+    Arrays, und RFC 7386 ersetzt Arrays vollstaendig. Ein Patch, der einen Kanal aendern
+    will, muesste dort alle mitschicken.
+
+    Der harte Teil ist "all or nothing, never half applied". D-Bus kennt keine Transaktion,
+    also wird in zwei Phasen gearbeitet: erst jede Zuweisung pruefen, dann schreiben.
+
+    🔴 Was dieser Test fand (2026-09-21), und warum die Reihenfolge der Schluessel drinsteht:
+    ohne Schreibbarkeitspruefung in Phase 1 bestand der gemischte Fall {Trim, Slug}
+    trotzdem — aber nur, weil QJsonObject alphabetisch sortiert und "Slug" vor "Trim" kommt.
+    Bei {Muted, Slug} war Muted danach GESETZT, obwohl der Patch mit Code 4 scheiterte.
+    Gemessen mit zwei verschieden gehashten Binaries. Darum prueft dieser Test genau das
+    Paar, bei dem die schreibbare Property VORNE steht — sonst prueft er den Zufall.
+
+    Ausserdem: --dry-run behauptete "voice.Slug: voice -> anders" fuer eine CONSTANT-
+    Property. Ein Trockenlauf, der etwas verspricht, was der echte Lauf ablehnt, ist
+    schlimmer als keiner, weil man damit plant.
+    """
+    vp = "/org/kmixdeck1/channel/voice"
+
+    def patch(doc, *extra):
+        return subprocess.run([str(BIN / "kmixdeck"), "patch", "-", *extra], env=stack.env,
+                              input=json.dumps(doc), capture_output=True, text=True)
+
+    def voice():
+        return next(c for c in stack.cli("channel", "list", json_out=True) if c["Slug"] == "voice")
+
+    # --dry-run zeigt und aendert nichts.
+    r = patch({"objects": {vp: {"Trim": 0.5, "Muted": True}}}, "--dry-run")
+    assert r.returncode == 0, r.stderr
+    assert "nothing written" in r.stdout, r.stdout
+    assert "Trim" in r.stdout and "0.5" in r.stdout, f"zeigt die Aenderung nicht: {r.stdout!r}"
+    assert voice()["Trim"] == 1.0, "--dry-run hat geschrieben"
+
+    # Echt anwenden.
+    r = patch({"objects": {vp: {"Trim": 0.5, "Muted": True}}})
+    assert r.returncode == 0, r.stderr
+    assert wait_prop(stack, "channel", "voice", "Trim", 0.5) == 0.5
+    assert voice()["Muted"] is True
+
+    # Alles-oder-nichts mit der SCHREIBBAREN Property zuerst (alphabetisch: Muted < Slug).
+    # Genau hier war es vorher kaputt.
+    r = patch({"objects": {vp: {"Muted": False, "Slug": "anders"}}})
+    assert r.returncode == 4, f"read-only muss ablehnen: rc={r.returncode} {r.stderr!r}"
+    assert "read-only" in r.stderr, r.stderr
+    assert voice()["Muted"] is True, (
+        "Muted wurde geschrieben, obwohl der Patch scheiterte — 'never half applied' verletzt")
+
+    # Dasselbe im Trockenlauf: darf nicht versprechen, was nicht geht.
+    r = patch({"objects": {vp: {"Slug": "anders"}}}, "--dry-run")
+    assert r.returncode == 4, f"--dry-run verspricht eine read-only-Aenderung: {r.stdout!r}"
+    assert r.stdout == "", f"--dry-run gab trotz Fehler Nutzdaten aus: {r.stdout!r}"
+
+    # Unbekanntes Feld: Code 4, und die Meldung nennt die vorhandenen (sonst raet man).
+    r = patch({"objects": {vp: {"Trim": 0.9, "Quatsch": 1}}})
+    assert r.returncode == 4 and "no property 'Quatsch'" in r.stderr, r.stderr
+    assert "Muted" in r.stderr, f"nennt die vorhandenen Properties nicht: {r.stderr!r}"
+    assert voice()["Trim"] == 0.5, "Trim=0.9 wurde trotz Fehler geschrieben"
+
+    # Unbekannter Pfad -> 3 (not found), falscher Typ -> 4, unbekannter Schluessel -> 1 (usage).
+    assert patch({"objects": {"/org/kmixdeck1/channel/nix": {"Trim": 1}}}).returncode == 3
+    r = patch({"objects": {vp: {"Trim": "laut"}}})
+    assert r.returncode == 4 and "cannot use" in r.stderr, r.stderr
+    r = patch({"quatsch": {}})
+    assert r.returncode == 1 and "unknown key" in r.stderr, r.stderr
+
+    # Kein JSON: Code 1 mit Position — "not JSON" allein hilft bei 200 Zeilen nicht weiter.
+    r = subprocess.run([str(BIN / "kmixdeck"), "patch", "-"], env=stack.env,
+                       input='{"objects": {', capture_output=True, text=True)
+    assert r.returncode == 1 and "offset" in r.stderr, r.stderr
+
+    # Datei statt stdin, und die Mixer-Wurzel ("root").
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump({"objects": {vp: {"Trim": 0.25}}}, f)
+        name = f.name
+    r = subprocess.run([str(BIN / "kmixdeck"), "patch", name], env=stack.env,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert wait_prop(stack, "channel", "voice", "Trim", 0.25) == 0.25
+    os.unlink(name)
+
+    # Zwei Dateien sind ein Tippfehler, nicht "wende beide an" — CL-8: nie stillschweigend.
+    r = subprocess.run([str(BIN / "kmixdeck"), "patch", "a.json", "b.json"], env=stack.env,
+                       capture_output=True, text=True)
+    assert r.returncode == 1 and "one file" in r.stderr, r.stderr
