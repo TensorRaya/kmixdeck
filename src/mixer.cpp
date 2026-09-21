@@ -32,7 +32,7 @@ QString Names::slugify(const QString &display) {
 Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     // FX-9: remember the latest peaks so duckReduction() can compare the ducker's input and output.
     // No extra stream: these are the same peaks the levels API already publishes 25x/s.
-    connect(&m_meters, &pw::Meters::peaks, this, [this](const QHash<QString, float> &p) { m_lastPeaks = p; });
+    connect(&m_meters, &pw::Meters::peaks, this, [this](const QHash<QString, float> &p) { m_lastPeaks = p; tickDucking(); });
 
     QObject::connect(&m_graph, &pw::Graph::nodeAdded,   this, &Mixer::onNode);
     QObject::connect(&m_graph, &pw::Graph::nodeChanged, this, &Mixer::onNode);
@@ -356,9 +356,11 @@ bool Mixer::setDucking(const QString &slug, const QJsonObject &json, QString *wh
     const double depth = zahl("depth", c->duckDepth), attack = zahl("attack", c->duckAttack);
     const double release = zahl("release", c->duckRelease), threshold = zahl("threshold", c->duckThreshold);
     if (depth > 0.0 || depth < -60.0) return abweisen(QStringLiteral("depth must be 0..-60 dB, got %1").arg(depth));
-    if (attack < 2.0 || attack > 400.0) return abweisen(QStringLiteral("attack must be 2..400 ms (SC3's range), got %1").arg(attack));
-    if (release < 2.0 || release > 800.0) return abweisen(QStringLiteral("release must be 2..800 ms (SC3's range), got %1").arg(release));
-    if (threshold > 0.0 || threshold < -30.0) return abweisen(QStringLiteral("threshold must be 0..-30 dB (SC3's range), got %1").arg(threshold));
+    if (attack < 2.0 || attack > 400.0) return abweisen(QStringLiteral("attack must be 2..400 ms, got %1").arg(attack));
+    if (release < 2.0 || release > 800.0) return abweisen(QStringLiteral("release must be 2..800 ms, got %1").arg(release));
+    // The threshold is the trigger channel's own peak level in dBFS, compared against the meters — not a
+    // compressor threshold. Anything from -60 (very sensitive) to 0 (never triggers) is meaningful.
+    if (threshold > 0.0 || threshold < -60.0) return abweisen(QStringLiteral("threshold must be 0..-60 dBFS, got %1").arg(threshold));
 
     const bool gleich = c->duckedBy == trigger && qFuzzyCompare(c->duckDepth, depth) && qFuzzyCompare(c->duckAttack, attack)
                         && qFuzzyCompare(c->duckRelease, release) && qFuzzyCompare(c->duckThreshold, threshold);
@@ -385,41 +387,48 @@ void Mixer::applyDucking(const QString &slug) {
     if (args.isEmpty()) return;
     qCInfo(lcMixer) << "ducking:" << slug << "ducked by" << c->duckedBy << "-" << args.length() << "chars";
     m_graph.loadLoopback(args, "libpipewire-module-filter-chain");
-    // The trigger cannot come in through node.target: the capture side already targets the ducked channel's
-    // sink, and one stream has exactly one target. So AUX0 is linked by hand — verified with pw-link first
-    // (2026-09-21) before building it with module-link-factory.
-    linkDuckTriggerWhenPresent(slug, Names::channelNode(c->duckedBy), 60);
+    // No trigger link: the daemon already meters every channel's peak (m_lastPeaks), so the trigger level is
+    // known here and the gains are steered over Props. That replaces the sidechain port, which provably
+    // carries no signal in a filter-chain (specs/fx9-ducking.md).
+    m_duckActive.remove(slug);
 }
 
-void Mixer::linkDuckTriggerWhenPresent(const QString &slug, const QString &triggerNode, int triesLeft) {
-    if (triesLeft <= 0) { qCWarning(lcMixer) << "ducking:" << slug << "trigger never showed up:" << triggerNode; return; }
-    const QString ducker = fx::duckerNode(slug);
-    // The channel we duck must still want this trigger — a second write while we were waiting wins.
-    const auto *c = m_layout.channel(slug);
-    if (!c || c->duckedBy.isEmpty() || Names::channelNode(c->duckedBy) != triggerNode) return;
-    // monitor_FL is the trigger channel's monitor port: the same tap a cell loopback reads, so the ducker
-    // hears exactly what the mic sends to the mixes. Mono is enough — SC3's sidechain is one port.
-    if (m_graph.node(ducker) && m_graph.node(triggerNode)
-        && m_graph.linkPorts(triggerNode, QStringLiteral("monitor_FL"), ducker, QStringLiteral("input_AUX0"))) {
-        qCInfo(lcMixer) << "ducking:" << slug << "trigger linked from" << triggerNode;
-        return;
+/// FX-9: steer every ducker's gain from the metered trigger level. Called once per meter tick, so this is
+/// the ramp: attack/release are honoured by how fast the multiplier is allowed to move per tick.
+void Mixer::tickDucking() {
+    if (!m_connected) return;
+    for (const auto &c : m_layout.channels) {
+        if (c.duckedBy.isEmpty()) continue;
+        const QString ducker = fx::duckerNode(c.slug);
+        const auto node = m_graph.node(ducker);
+        if (!node) continue;
+        // The trigger's own peak, straight from the meters — no sidechain port needed. Meters::peaks is keyed
+        // by PipeWire node.name; the "channel/<slug>" form only exists on D-Bus (LevelsAdaptor::publicKey).
+        const float spitze = m_lastPeaks.value(Names::channelNode(c.duckedBy), 0.0f);
+        const double pegelDb = 20.0 * std::log10(std::max(spitze, 1e-6f));
+        const bool laut = pegelDb > c.duckThreshold;
+        // Ramp towards the wanted multiplier instead of jumping: attack when going down, release coming back.
+        const double ziel = fx::duckerMultFor(c.duckDepth, laut);
+        const double jetzt = m_duckActive.value(c.slug, 1.0);
+        const double ms = std::max(laut ? c.duckAttack : c.duckRelease, 1.0);
+        const double schritt = (1.0 / (ms / kMeterTickMs));          // full travel over the configured time
+        double neu = jetzt + std::clamp(ziel - jetzt, -schritt, schritt);
+        if (std::abs(ziel - neu) < 0.001) neu = ziel;
+        if (std::abs(neu - jetzt) < 0.0005) continue;                 // nothing moved: no Props write
+        m_duckActive[c.slug] = neu;
+        m_graph.setControl(node->id, fx::duckerGainControl(c.slug, false), neu);
+        m_graph.setControl(node->id, fx::duckerGainControl(c.slug, true), neu);
     }
-    QTimer::singleShot(50, this, [this, slug, triggerNode, triesLeft] { linkDuckTriggerWhenPresent(slug, triggerNode, triesLeft - 1); });
 }
 
 double Mixer::duckReduction(const QString &slug) const {
     const auto *c = m_layout.channel(slug);
     if (!c || c->duckedBy.isEmpty()) return 0.0;
-    // NOT read from the plugin: measured 2026-09-21 that filter-chain publishes only INPUT controls through
-    // Props, so SC3's "Gain reduction (dB)" output port is not visible there — see specs/fx9-ducking.md.
-    // Instead the reduction is the difference between what goes into the ducker and what comes out, taken from
-    // the peak meters both sides already feed. That is the reduction the user actually hears.
-    const float rein = m_lastPeaks.value(Names::channelNode(slug), 0.0f);
-    const float raus = m_lastPeaks.value(fx::duckerNode(slug) + QStringLiteral(".out"), 0.0f);
-    // Below −60 dBFS the comparison is noise, not signal: silence in means nothing to reduce.
-    if (rein < 0.001f) return 0.0;
-    const double db = 20.0 * std::log10(std::max(raus, 1e-6f) / rein);
-    return std::clamp(db, -60.0, 0.0);
+    // The multiplier we are currently driving the gains at IS the reduction — no need to infer it from two
+    // peak readings (that comparison also picked up the channel's own volume changes). 1.0 = not ducking.
+    const double mult = m_duckActive.value(slug, 1.0);
+    if (mult >= 0.9999) return 0.0;
+    return std::clamp(20.0 * std::log10(std::max(mult, 1e-6)), -60.0, 0.0);
 }
 
 /// Rebuild one chain live: replace the filter-chain module, keep everything else. Streams that were

@@ -75,7 +75,7 @@ struct LayoutChannel {
     double duckDepth = -12.0;     // dB the channel drops while the trigger carries signal
     double duckAttack = 10.0;     // ms
     double duckRelease = 300.0;   // ms
-    double duckThreshold = -30.0; // dB on the trigger above which ducking starts
+    double duckThreshold = -40.0; // dBFS the trigger channel must exceed before ducking starts
     static LayoutChannel make(const QString &slug, const QString &name, const QString &icon = {}) { LayoutChannel c; c.slug = slug; c.name = name; c.icon = icon; return c; }
 };
 /// A physical input feeding a channel (mic, capture card, BT headset mic) — ADR 0007 D2.

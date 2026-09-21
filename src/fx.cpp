@@ -360,40 +360,44 @@ QString renderFilterChainArgs(const Chain &c, const QString &description, const 
 
 QString duckerNode(const QString &slug) { return slug.isEmpty() ? QString() : QStringLiteral("kmixdeck.duck.%1").arg(slug); }
 
+QString duckerGainControl(const QString &slug, bool right) {
+    return QStringLiteral("duck_%1_%2:Mult").arg(slug, right ? QStringLiteral("r") : QStringLiteral("l"));
+}
+
+double duckerMultFor(double depthDb, bool active) {
+    // The multiplier the gain nodes run at: unity when idle, 10^(depth/20) while the trigger speaks.
+    return active ? std::pow(10.0, std::clamp(depthDb, -60.0, 0.0) / 20.0) : 1.0;
+}
+
 QString renderDuckerArgs(const QString &slug, const QString &description, const QString &channelNode,
                          const QString &triggerNode, double depthDb, double attackMs, double releaseMs,
                          double thresholdDb) {
     if (slug.isEmpty() || channelNode.isEmpty() || triggerNode.isEmpty()) return {};
-    // SC3 gives us threshold + ratio, not a "duck by N dB" knob. The depth the user asks for is reached by
-    // the ratio: with the trigger driving the sidechain above `threshold`, a ratio of r reduces by
-    // (threshold - inputLevel) * (1 - 1/r). Rather than pretend a formula is exact for unknown material,
-    // map depth onto the ratio monotonically over SC3's real range (1..10, read from analyseplugin) and let
-    // the reported gain reduction be the truth the UI shows. -12 dB (our default) lands at ratio 4.
-    const double tiefe = std::clamp(-depthDb, 0.0, 60.0);      // 0 … 60 dB of wanted reduction
-    const double ratio = std::clamp(1.0 + tiefe / 4.0, 1.0, 10.0);
-    const QString name = QStringLiteral("duck_") + slug;
-    // audio.channels = 3: FL/FR carry the ducked audio, AUX0 the trigger. filter-chain maps the graph's
-    // inputs positionally onto the capture ports, so the third input IS the sidechain — SC3's port order
-    // ("Sidechain", "Left input", "Right input") is NOT the port order we want, hence the explicit list.
+    Q_UNUSED(depthDb); Q_UNUSED(attackMs); Q_UNUSED(releaseMs); Q_UNUSED(thresholdDb);
+    // Two builtin `linear` gains (one per channel) that the daemon drives at runtime over Props. This
+    // deliberately does NOT use a sidechain compressor: measured against a hand-built reference chain
+    // (no kmixdeck code involved, the config straight from the filter-chain docs), a LADSPA sidechain port
+    // fed from an extra capture channel never sees the signal — with the trigger at full scale (sidechain
+    // monitor reading 1.0, ~30 dB over threshold) an SC3 at 10:1 reduced by exactly 0.0 dB. See
+    // specs/fx9-ducking.md for the measurements. Ducking is a fixed attenuation anyway, which is what a
+    // streamer means by the word, so a gain the daemon steers off its own peak meter is both simpler and
+    // the thing that actually works. Attack/release/threshold are honoured by the daemon's ramp, not here.
+    const QString links = QStringLiteral("duck_%1_l").arg(slug), rechts = QStringLiteral("duck_%1_r").arg(slug);
     return QStringLiteral(
-               "{ node.description = %1 audio.channels = 3 audio.position = [ FL FR AUX0 ] "
-               "filter.graph = { nodes = [ { name = %2 type = ladspa plugin = sc3_1427 label = sc3 "
-               "control = { \"Threshold level (dB)\" = %3 \"Ratio (1:n)\" = %4 \"Attack time (ms)\" = %5 "
-               "\"Release time (ms)\" = %6 \"Chain balance\" = 1 } } ] links = [ ] "
-               "inputs = [ \"%2:Left input\" \"%2:Right input\" \"%2:Sidechain\" ] "
-               "outputs = [ \"%2:Left output\" \"%2:Right output\" null ] } "
+               "{ node.description = %1 "
+               "filter.graph = { nodes = [ "
+               "{ name = %2 type = builtin label = linear control = { \"Mult\" = 1.0 \"Add\" = 0.0 } } "
+               "{ name = %3 type = builtin label = linear control = { \"Mult\" = 1.0 \"Add\" = 0.0 } } ] "
+               "links = [ ] inputs = [ \"%2:In\" \"%3:In\" ] outputs = [ \"%2:Out\" \"%3:Out\" ] } "
                // The ducked audio is read from the channel sink's monitor (stream.capture.sink), exactly like a
-               // cell loopback does. The trigger side is linked by the daemon, not by node.target: one capture
-               // stream cannot target two different nodes.
-               "capture.props = { node.name = %7 media.name = %8 node.target = %9 audio.position = [ FL FR AUX0 ] "
-               "stream.capture.sink = true node.passive = true node.dont-fallback = true node.linger = true "
-               "node.dont-reconnect = true node.description = %1 } "
-               "playback.props = { node.name = %10 media.name = %8 audio.position = [ FL FR AUX0 ] "
+               // cell loopback does.
+               "capture.props = { node.name = %4 media.name = %5 node.target = %6 audio.channels = 2 "
+               "audio.position = [ FL FR ] stream.capture.sink = true node.passive = true "
+               "node.dont-fallback = true node.linger = true node.dont-reconnect = true node.description = %1 } "
+               "playback.props = { node.name = %7 media.name = %5 audio.channels = 2 audio.position = [ FL FR ] "
                "node.linger = true node.dont-fallback = true } }")
-        .arg(QLatin1Char('"') + description + QLatin1Char('"'), name)
-        .arg(std::clamp(thresholdDb, -30.0, 0.0)).arg(ratio)
-        .arg(std::clamp(attackMs, 2.0, 400.0)).arg(std::clamp(releaseMs, 2.0, 800.0))
-        .arg(QLatin1Char('"') + duckerNode(slug) + QLatin1Char('"'),
+        .arg(QLatin1Char('"') + description + QLatin1Char('"'), links, rechts,
+             QLatin1Char('"') + duckerNode(slug) + QLatin1Char('"'),
              QLatin1Char('"') + description + QLatin1Char('"'),
              QLatin1Char('"') + channelNode + QLatin1Char('"'),
              QLatin1Char('"') + duckerNode(slug) + QStringLiteral(".out\""));

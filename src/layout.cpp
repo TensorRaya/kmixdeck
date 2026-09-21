@@ -130,7 +130,7 @@ Layout Layout::fromJson(const QJsonObject &o) {
                                         std::clamp(c.value(QStringLiteral("duckDepth")).toDouble(-12.0), -60.0, 0.0),
                                         std::clamp(c.value(QStringLiteral("duckAttack")).toDouble(10.0), 2.0, 400.0),
                                         std::clamp(c.value(QStringLiteral("duckRelease")).toDouble(300.0), 2.0, 800.0),
-                                        std::clamp(c.value(QStringLiteral("duckThreshold")).toDouble(-30.0), -30.0, 0.0)}); }
+                                        std::clamp(c.value(QStringLiteral("duckThreshold")).toDouble(-40.0), -60.0, 0.0)}); }
     for (const auto &v : o.value(QStringLiteral("mixes")).toArray()) {
         const auto m = v.toObject(); LayoutMix lm;
         lm.slug = m.value(QStringLiteral("slug")).toString(); lm.name = m.value(QStringLiteral("name")).toString(); lm.icon = m.value(QStringLiteral("icon")).toString();

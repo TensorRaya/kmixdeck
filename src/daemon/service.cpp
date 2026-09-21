@@ -283,8 +283,16 @@ LevelsAdaptor::LevelsAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdapt
         // creating capture streams in that window took the daemon's bus name down with it — A/B verified
         // 2026-09-19: with the call inline test_ch4_routing_survives_pipewire_restart fails, queued it passes.
         else QTimer::singleShot(0, this, [this] {
-            if (m_subscribers.isEmpty()) m_mixer->meters()->setLoudnessTargets(m_mixer->loudnessMixNodes());
+            if (!m_subscribers.isEmpty()) return;
+            m_mixer->meters()->setLoudnessTargets(m_mixer->loudnessMixNodes());
+            // FX-9: ducking needs its trigger metered with nobody subscribed too. Queued for the same reason
+            // as the loudness call above (CH-4: creating streams inline during a reconnect killed the bus name).
+            syncTargets();
         });
+    });
+    // FX-9: a changed ducking assignment changes which channels must be metered, subscribers or not.
+    connect(m_mixer, &Mixer::channelChanged, this, [this](const QString &) {
+        QTimer::singleShot(0, this, [this] { syncTargets(); });
     });
     connect(m_mixer, &Mixer::appAdded,   this, [this](uint32_t) { if (!m_subscribers.isEmpty()) syncTargets(); });
     connect(m_mixer, &Mixer::appRemoved, this, [this](uint32_t) { if (!m_subscribers.isEmpty()) syncTargets(); });
@@ -331,6 +339,13 @@ QString LevelsAdaptor::meterKey(const QString &n) const {
 }
 void LevelsAdaptor::syncTargets() {
     QStringList t; m_appNodes.clear();
+    // FX-9: a trigger channel is metered whether or not a UI is watching. Ducking is steered off these peaks
+    // in the daemon (Mixer::tickDucking), so tying them to Levels subscribers would mean ducking only works
+    // while some meter happens to be open — measured that way round first (2026-09-21).
+    for (const auto &c : m_mixer->channelSlugs()) {
+        const QString trigger = m_mixer->ducking(c).value(QStringLiteral("duckedBy")).toString();
+        if (!trigger.isEmpty()) t << Names::channelNode(trigger);
+    }
     if (!m_subscribers.isEmpty()) {
         for (const auto &c : m_mixer->channelSlugs()) t << Names::channelNode(c);
         // FX-9: a ducked channel gets its ducker's tail metered too. The gain reduction cannot be read from
@@ -345,6 +360,7 @@ void LevelsAdaptor::syncTargets() {
         for (const auto &i : m_mixer->inputSlugs()) t << EdgeNames::inputNode(i);
         for (uint32_t id : m_mixer->appIds()) if (const auto a = m_mixer->app(id); a && !a->nodeName.isEmpty()) { t << a->nodeName; m_appNodes.insert(a->nodeName, id); }
     }
+    t.removeDuplicates();
     m_mixer->meters()->setTargets(t);
     // UX-18: the R128 analysers follow the per-mix flag ALONE, not the subscriber count. A 3 s short-term window
     // and a gated integration need seconds of continuous audio, so an analyser that is torn down between readings

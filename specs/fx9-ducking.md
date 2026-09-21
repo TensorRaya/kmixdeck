@@ -133,3 +133,147 @@ möglicherweise nicht mit dem `Sidechain`-Port — in diesem Aufbau ist der
 Sidechain der DRITTE Eintrag in `inputs`, das Plugin selbst listet ihn aber als
 ERSTEN Port. Zu prüfen ist, ob die Zuordnung namentlich oder positionell erfolgt;
 die Doku belegt das für diesen Fall nicht.
+
+## Zweiter Befund: Kanal-Index 2 des Capture-Streams erreicht den Graphen nicht
+
+A/B, identischer Aufbau, eine Variable (welcher Kanal-Index auf den einzigen
+Graph-Eingang gelegt wird, `inputs = [ null null "n:Left input" ]` gegen
+`[ "n:Left input" null null ]`):
+
+| verbundener Kanal-Index | Pegel am Ducker-Ausgang |
+|---|---|
+| 0 (FL) | 0.0442 |
+| 2 (AUX0) | **0.0000** |
+
+Gegenprobe gegen "der letzte Kanal ist tot": mit `audio.channels = 4`
+(`[FL FR AUX0 AUX1]`) liegt der Sidechain auf Index 2, ist aber nicht mehr der
+letzte — Reduktion bleibt 0.0 dB. Also **Index 2 generell**, nicht die Position
+am Ende.
+
+Ebenfalls gemessen: `duck.game.out:output_FL` = 0.0884, `output_AUX0` = 0.0.
+
+Widerlegt (jeweils gemessen, nicht vermutet):
+- `Chain balance` falsch — nein, 1 ist korrekt (swh-Quelle: `lev_in =
+  (1-bal)*(L+R)*0.5 + bal*sidechain`, bei bal=1 hoert der Detektor nur den Sidechain).
+- Positionelles statt namentliches Port-Mapping — filter-graph.c 1895 fuellt
+  `graph->input[]` in der Reihenfolge der `inputs`-Liste, Ports namentlich gesucht.
+- `null` in der `outputs`-Liste — entfernt, keine Aenderung.
+- `node.target` + `stream.capture.sink` erzwingen ein 2-kanaliges Format —
+  beide entfernt, keine Aenderung.
+- Sidechain-Port des Plugins defekt — nein: Musik auf den Sidechain gelegt
+  ergibt 0.0263 (deutliche Kompression).
+- Mein `linkPorts`-Trigger liefert nichts — nein: am `monitor_AUX0` des
+  Ducker-Eingangs liegen 0.0884 Peak / 0.0621 RMS.
+- Ducker-Graph rechnet nicht — nein: mit `Chain balance = 0` komprimiert er
+  0.0884 auf 0.0527 (Prediction ~0.0519).
+
+Offen: warum Index 2 im Prozesspfad leer bleibt, obwohl Format (3 Kanaele,
+`[FL FR AUX0]`) und Links (`active`) korrekt sind. Kandidat aus der Quelle:
+`module-filter-chain.c:1317` fuellt `cin[]` mit NULL auf, wenn der
+Capture-Buffer weniger Datas fuehrt als der Graph Inputs hat; `filter-graph.c:331`
+(`if (port->desc && in[i])`) ueberspringt dann den `connect_port`, und der Port
+bleibt auf dem `silence_data` aus dem Setup (`filter-graph.c:1650`). Zu messen an
+`in->buffer->n_datas` — dafuer fehlt noch ein Trace-Log des filter-chain-Moduls
+im kmixdeck-Prozess (`PIPEWIRE_DEBUG=spa.filter-graph:4` griff nicht).
+
+## Rule Zero: der Referenzaufbau zeigt denselben Fehler (2026-09-21)
+
+Eigenes Werkzeug verdaechtigt, also das Muster OHNE kmixdeck-Code nachgebaut —
+filter-chain per `pw-cli load-module` in der Sandbox, SC3, Sidechain auf dem
+dritten Capture-Kanal:
+
+| Aufbau | ohne Trigger | mit Trigger |
+|---|---|---|
+| eigener Ducker (kmixdeck) | 0.0884 | 0.0884 |
+| Referenz, capture 3ch / playback 3ch + `null` | 0.0884 | 0.0884 |
+| Referenz nach Doku-Muster, capture 3ch / playback 2ch, kein `null` | 0.0884 | 0.0884 |
+| Referenz, Doku-Muster, **Trigger mit Vollpegel** | 0.0884 | **0.0884** |
+
+Der letzte Lauf ist der Beweis: `r3.in:monitor_AUX0` liegt bei **1.0** (Vollausschlag,
+~30 dB ueber der Schwelle von -30 dB). Bei Ratio 10:1 muesste SC3 die Musik um
+rund 27 dB druecken. Gemessen: 0.0 dB. Das Signal ist nachweislich im Node, im
+richtigen Kanal, und erreicht den Detektor des Plugins nicht.
+
+Damit ist **mein Code entlastet**: das Muster "Sidechain als zusaetzlicher
+Capture-Kanal einer filter-chain" traegt in PipeWire 1.6.2 kein Signal zum
+LADSPA-Sidechain-Port. Das Doku-Muster (Dolby-Surround-Beispiel: asymmetrische
+Kanalzahlen, `audio.channels` pro Stream, kein `null` im `outputs`) aendert daran
+nichts.
+
+Belegt aus den Quellen, warum das konsistent ist:
+- `sc3_1427.so` per `dlopen` ausgelesen: `Sidechain` ist Audio-Port **7**,
+  `Left input` 8, `Right input` 9 — der Sidechain steht VOR den Audio-Eingaengen.
+- `filter-graph.c:1885` fuellt `graph->input[]` als `desc->input[j]`, also in
+  Plugin-Port-Reihenfolge; mit `inputs`-Liste dagegen namentlich (`:1895`).
+- `module-filter-chain.c:1317` fuellt `cin[]` mit NULL auf; `filter-graph.c:331`
+  (`if (port->desc && in[i])`) ueberspringt dann `connect_port`, der Port behaelt
+  das `silence_data` aus `filter-graph.c:1650`.
+
+Nebenbefund, unabhaengig davon behoben: der Ducker setzte `Knee radius (dB)` und
+`Makeup gain (dB)` nie, beide standen damit auf 0. `Knee = 0` ist in SC3s Formel
+(`-(threshold - knee - lin2db(env)) / knee`) eine Division durch Null. Jetzt
+Knee = 3, Makeup = 0. Die Prediction "damit wird die Reduktion sichtbar" wurde
+gemessen WIDERLEGT — die Aenderung bleibt trotzdem, weil ungesetzte Controls
+sonst auf 0 stehen.
+
+## Konsequenz fuer FX-9
+
+Der Sidechain-Weg ueber einen zusaetzlichen Capture-Kanal ist eine Sackgasse,
+belegt am Referenzaufbau. Naechster Kandidat, ohne Sidechain-Port: die Reduktion
+per Control-Port fahren — der Trigger-Pegel wird ohnehin schon im Daemon gemessen
+(`m_lastPeaks`), und `filter.graph`-Controls sind zur Laufzeit ueber
+`Props`/`params` setzbar. Damit braucht das Ducking kein SC3 mit externem
+Sidechain, sondern einen simplen Gain, den der Daemon nach dem gemessenen
+Trigger-Pegel faehrt. Das ist auch fachlich naeher an dem, was ein Streamer
+"Ducking" nennt (feste Absenkung um N dB, nicht Kompressor-Kennlinie).
+
+## FX-9 funktioniert (2026-09-21)
+
+Umbau auf zwei builtin-`linear`-Gains, die der Daemon auf jedem Meter-Tick
+(25/s) ueber Props fuehrt. Vorab am Referenzaufbau geprueft: `set-param Props
+{ params = [ "g:Mult" 0.25 ] }` aenderte den Pegel von 0.0884 auf 0.0221 —
+vorhergesagt 0.0221 (ein Viertel = -12 dB), also exakt getroffen. Erst danach
+gebaut.
+
+End-to-End im eigenen Code, Ducker-Ausgang gemessen, `DuckReduction` ueber D-Bus:
+
+| depth | ohne Trigger | mit Trigger | gemessen | DuckReduction | Prediction |
+|---|---|---|---|---|---|
+| -12 dB | 0.0884 | 0.0222 | **-12.0 dB** | -12 | -12 dB ✓ |
+| -24 dB | 0.0884 | 0.0056 | **-24.0 dB** | -24 | -24 dB ✓ |
+
+Die Gegenprobe ist die zweite Zeile: eine andere Tiefe ergibt einen anderen,
+vorher berechneten Pegel — der Wert folgt der Einstellung, nicht dem Zufall.
+
+### Drei Fehler auf dem Weg, alle gemessen statt geraten
+
+1. **Eigene Validierung blockte.** `threshold` war auf SC3s Kompressorbereich
+   (0..-30) begrenzt. Die Schwelle ist jetzt der Trigger-Pegel in dBFS, Bereich
+   0..-60; Default -40. Fehlermeldung entsprechend ohne "SC3's range".
+2. **Falscher Meter-Schluessel.** `Meters::peaks` ist nach `node.name` gekeyt
+   (`kmixdeck.channel.voice`); die Form `channel/voice` entsteht erst in
+   `LevelsAdaptor::publicKey` fuer D-Bus. Erst auf `channel/<slug>` gesetzt,
+   im Log als `trigger-peak -1` gesehen, dann auf `Names::channelNode` korrigiert.
+3. **Meter liefen nur mit UI-Abonnent.** `syncTargets()` baute die Ziel-Liste
+   komplett innerhalb von `if (!m_subscribers.isEmpty())`. Ducking haette damit
+   nur funktioniert, solange irgendein Fenster ein Meter offen hat. Die
+   Trigger-Kanaele stehen jetzt ausserhalb dieser Bedingung, und
+   `Mixer::channelChanged` loest `syncTargets` aus (queued — inline nimmt das
+   waehrend eines PipeWire-Reconnects den Bus-Namen mit, CH-4).
+
+### Was dabei wegfiel
+
+`linkDuckTriggerWhenPresent` und der AUX0-Link sind geloescht: der Trigger-Pegel
+steht im Daemon schon zur Verfuegung. `duckReduction` liest jetzt den gefahrenen
+Multiplikator statt zwei Peaks zu vergleichen — die alte Rechnung hat auch
+Volumenaenderungen des Kanals als "Reduktion" gesehen.
+
+Attack/Release sind die Rampe: pro Tick darf der Multiplikator um
+`1 / (ms / 40)` wandern, also erreicht er das Ziel genau nach der eingestellten
+Zeit.
+
+### Offen
+
+Das CLI hat noch kein `duck`-Kommando (getestet: `kmixdeck duck ...` existiert
+nicht, D-Bus `Ducking` funktioniert). Dreifach-Paritaet ist damit fuer FX-9 noch
+nicht erfuellt — CLI und beide UIs fehlen.

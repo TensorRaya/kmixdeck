@@ -67,12 +67,21 @@ QString renderFilterChainArgs(const Chain &c, const QString &description, const 
                               const QString &exitNode, const QString &mediaName, const QString &targetSink,
                               const QString &idPrefix, bool behindSink = false);
 
-/// FX-9: the `args` of the side-chain ducker that sits behind one channel's sink. Its own filter-chain,
-/// not an entry in the channel's FX chain, because it needs a SECOND capture side: the ducked audio comes
-/// from the channel, the trigger from another channel's post-FX node. Built on swh's SC3 (`sc3_1427`),
-/// the free LADSPA side-chain compressor — SC4 has no sidechain port, SC2 is mono (checked with
-/// `analyseplugin`, 2026-09-21). depth is applied as the compressor's ratio/threshold pair; the gain
-/// reduction SC3 reports is readable live through Props, which is what the meter badge shows.
+/// FX-9: the `args` of the ducker that sits behind one channel's sink. Its own filter-chain, not an entry
+/// in the channel's FX chain, because it is steered independently of the user's effects.
+///
+/// Two builtin `linear` gain nodes, one per channel, driven at runtime by the daemon over Props. NOT a
+/// LADSPA side-chain compressor: a sidechain port fed from an extra capture channel provably never sees
+/// the signal. Measured against a reference chain built by hand from the filter-chain docs, with no
+/// kmixdeck code in the path — trigger at full scale (sidechain monitor 1.0, ~30 dB over threshold), SC3
+/// at 10:1, gain reduction exactly 0.0 dB. specs/fx9-ducking.md has the full table. A fixed attenuation
+/// is also what "ducking" means to a streamer, so this is the simpler AND the working answer.
+/// The graph control that carries one ducker channel's gain, as Props addresses it: `duck_<slug>_l:Mult`.
+QString duckerGainControl(const QString &slug, bool right);
+
+/// The multiplier the ducker gains run at: 1.0 when idle, 10^(depth/20) while the trigger speaks.
+double duckerMultFor(double depthDb, bool active);
+
 QString renderDuckerArgs(const QString &slug, const QString &description, const QString &channelNode,
                          const QString &triggerNode, double depthDb, double attackMs, double releaseMs,
                          double thresholdDb);

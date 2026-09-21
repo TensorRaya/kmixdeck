@@ -117,9 +117,8 @@ public:
     /// The gain reduction the ducker applies right now, in dB (0 = not ducking, negative = ducking).
     Q_INVOKABLE double duckReduction(const QString &slug) const;
     void applyDucking(const QString &slug);
-    /// FX-9: wire the ducker's AUX0 input to the trigger channel once both nodes exist. The module's node
-    /// appears asynchronously, same as an FX chain's — hence the retry, modelled on retargetWhenPresent.
-    void linkDuckTriggerWhenPresent(const QString &slug, const QString &triggerNode, int triesLeft);
+    /// FX-9: drive every ducker's gain from the metered trigger level. Runs on each meter tick (the ramp).
+    void tickDucking();
     /// Live control update for one object's chain. `control` is the short key ("threshold") or the full
     /// Props key ("gate:Threshold (dB)"); resolved against the object's own chain, first match wins.
     Q_INVOKABLE bool setFxControl(const QString &slug, const QString &control, double value);
@@ -221,9 +220,13 @@ public:
     /// false only when an output is configured and its device is currently not in the graph (DV-9).
     bool    mixOutputPresent(const QString &slug) const;
 
-    // FX-9: the most recent peak per node, kept so duckReduction() can compare the ducker's two sides.
+    // FX-9: the most recent peak per node, the trigger level tickDucking() steers the gains from.
     // Filled from Meters::peaks, which ticks 25x/s — one hash assignment per tick, no extra streams.
     QHash<QString, float> m_lastPeaks;
+    // FX-9: the gain multiplier each ducker currently runs at (1.0 = idle). Also what duckReduction reports.
+    QHash<QString, double> m_duckActive;
+    /// Meter tick period in ms — the ramp granularity for attack/release (pw::Meters ticks 25x/s).
+    static constexpr double kMeterTickMs = 40.0;
 
     /// Peak meters (ADR 0006); owned here so they share the graph's loop.
     pw::Meters *meters() { return &m_meters; }
