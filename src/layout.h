@@ -67,6 +67,15 @@ struct LayoutChannel {
     double pan = 0.0;             // DV-22: −1 = left … 0 = centre … +1 = right
     QString color;                // MX-5: "#rrggbb" or empty (theme)
     QString group;                // CH-8: free-text group name, "" = none
+    // FX-9: side-chain ducking. `duckedBy` is the slug of the trigger channel (the mic), "" = off,
+    // which is the default — nothing ducks until the user says so. depth/attack/release are the
+    // user's settings; the reduction the compressor actually applies is read back live from the
+    // graph, not stored here.
+    QString duckedBy;
+    double duckDepth = -12.0;     // dB the channel drops while the trigger carries signal
+    double duckAttack = 10.0;     // ms
+    double duckRelease = 300.0;   // ms
+    double duckThreshold = -30.0; // dB on the trigger above which ducking starts
     static LayoutChannel make(const QString &slug, const QString &name, const QString &icon = {}) { LayoutChannel c; c.slug = slug; c.name = name; c.icon = icon; return c; }
 };
 /// A physical input feeding a channel (mic, capture card, BT headset mic) — ADR 0007 D2.

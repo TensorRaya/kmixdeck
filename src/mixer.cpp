@@ -30,6 +30,10 @@ QString Names::slugify(const QString &display) {
 }
 
 Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
+    // FX-9: remember the latest peaks so duckReduction() can compare the ducker's input and output.
+    // No extra stream: these are the same peaks the levels API already publishes 25x/s.
+    connect(&m_meters, &pw::Meters::peaks, this, [this](const QHash<QString, float> &p) { m_lastPeaks = p; });
+
     QObject::connect(&m_graph, &pw::Graph::nodeAdded,   this, &Mixer::onNode);
     QObject::connect(&m_graph, &pw::Graph::nodeChanged, this, &Mixer::onNode);
     QObject::connect(&m_graph, &pw::Graph::nodeRemoved, this, &Mixer::onNodeRemoved);
@@ -320,6 +324,102 @@ QJsonArray Mixer::fxTypes() const {
         out.append(obj);
     }
     return out;
+}
+
+QJsonObject Mixer::ducking(const QString &slug) const {
+    const auto *c = m_layout.channel(slug);
+    if (!c) return {};
+    return QJsonObject{{QStringLiteral("duckedBy"), c->duckedBy}, {QStringLiteral("depth"), c->duckDepth},
+                       {QStringLiteral("attack"), c->duckAttack}, {QStringLiteral("release"), c->duckRelease},
+                       {QStringLiteral("threshold"), c->duckThreshold}};
+}
+
+bool Mixer::setDucking(const QString &slug, const QJsonObject &json, QString *why_out) {
+    auto abweisen = [&](const QString &grund) { if (why_out) *why_out = grund; qCWarning(lcMixer) << "ducking:" << grund; return false; };
+    auto *c = m_layout.channel(slug);
+    if (!c) return abweisen(QStringLiteral("no channel '%1'").arg(slug));
+    const QString trigger = json.value(QStringLiteral("duckedBy")).toString();
+    if (!trigger.isEmpty()) {
+        if (trigger == slug) return abweisen(QStringLiteral("a channel cannot duck itself"));
+        if (!m_layout.channel(trigger)) return abweisen(QStringLiteral("no trigger channel '%1'").arg(trigger));
+        // A ducks B while B ducks A would feed each compressor its partner's reduced signal — a loop whose
+        // level depends on which module PipeWire happens to run first. Refuse it instead of shipping a race.
+        if (const auto *t = m_layout.channel(trigger); t && t->duckedBy == slug)
+            return abweisen(QStringLiteral("'%1' is already ducked by '%2' — ducking in a circle is not a thing").arg(trigger, slug));
+    }
+    // Ranges from the SC3 plugin itself (analyseplugin sc3_1427), not invented: attack 2..400 ms,
+    // release 2..800 ms, threshold -30..0 dB. Depth is ours: 0 .. -60 dB.
+    const auto zahl = [&](const char *schluessel, double vorgabe) {
+        const QJsonValue v = json.value(QLatin1String(schluessel));
+        return v.isDouble() ? v.toDouble() : vorgabe;
+    };
+    const double depth = zahl("depth", c->duckDepth), attack = zahl("attack", c->duckAttack);
+    const double release = zahl("release", c->duckRelease), threshold = zahl("threshold", c->duckThreshold);
+    if (depth > 0.0 || depth < -60.0) return abweisen(QStringLiteral("depth must be 0..-60 dB, got %1").arg(depth));
+    if (attack < 2.0 || attack > 400.0) return abweisen(QStringLiteral("attack must be 2..400 ms (SC3's range), got %1").arg(attack));
+    if (release < 2.0 || release > 800.0) return abweisen(QStringLiteral("release must be 2..800 ms (SC3's range), got %1").arg(release));
+    if (threshold > 0.0 || threshold < -30.0) return abweisen(QStringLiteral("threshold must be 0..-30 dB (SC3's range), got %1").arg(threshold));
+
+    const bool gleich = c->duckedBy == trigger && qFuzzyCompare(c->duckDepth, depth) && qFuzzyCompare(c->duckAttack, attack)
+                        && qFuzzyCompare(c->duckRelease, release) && qFuzzyCompare(c->duckThreshold, threshold);
+    if (gleich) return true;
+    c->duckedBy = trigger; c->duckDepth = depth; c->duckAttack = attack; c->duckRelease = release; c->duckThreshold = threshold;
+    saveLayout();
+    applyDucking(slug);
+    Q_EMIT channelChanged(slug);
+    return true;
+}
+
+/// Build or drop one channel's ducker live, the same way applyFx does it for an FX chain.
+void Mixer::applyDucking(const QString &slug) {
+    if (!m_connected) return;
+    const auto *c = m_layout.channel(slug);
+    if (!c) return;
+    const QString node = fx::duckerNode(slug);
+    // Drop the old ducker first — its controls are baked into the module args, so a changed depth means a
+    // new module. destroyOurNodes matches the capture node and its ".out" tail.
+    destroyOurNodes([&](const QString &n) { return n == node || n.startsWith(node + QLatin1Char('.')); });
+    if (c->duckedBy.isEmpty()) return;
+    const QString args = fx::renderDuckerArgs(slug, c->name, Names::channelNode(slug), Names::channelNode(c->duckedBy),
+                                              c->duckDepth, c->duckAttack, c->duckRelease, c->duckThreshold);
+    if (args.isEmpty()) return;
+    qCInfo(lcMixer) << "ducking:" << slug << "ducked by" << c->duckedBy << "-" << args.length() << "chars";
+    m_graph.loadLoopback(args, "libpipewire-module-filter-chain");
+    // The trigger cannot come in through node.target: the capture side already targets the ducked channel's
+    // sink, and one stream has exactly one target. So AUX0 is linked by hand — verified with pw-link first
+    // (2026-09-21) before building it with module-link-factory.
+    linkDuckTriggerWhenPresent(slug, Names::channelNode(c->duckedBy), 60);
+}
+
+void Mixer::linkDuckTriggerWhenPresent(const QString &slug, const QString &triggerNode, int triesLeft) {
+    if (triesLeft <= 0) { qCWarning(lcMixer) << "ducking:" << slug << "trigger never showed up:" << triggerNode; return; }
+    const QString ducker = fx::duckerNode(slug);
+    // The channel we duck must still want this trigger — a second write while we were waiting wins.
+    const auto *c = m_layout.channel(slug);
+    if (!c || c->duckedBy.isEmpty() || Names::channelNode(c->duckedBy) != triggerNode) return;
+    // monitor_FL is the trigger channel's monitor port: the same tap a cell loopback reads, so the ducker
+    // hears exactly what the mic sends to the mixes. Mono is enough — SC3's sidechain is one port.
+    if (m_graph.node(ducker) && m_graph.node(triggerNode)
+        && m_graph.linkPorts(triggerNode, QStringLiteral("monitor_FL"), ducker, QStringLiteral("input_AUX0"))) {
+        qCInfo(lcMixer) << "ducking:" << slug << "trigger linked from" << triggerNode;
+        return;
+    }
+    QTimer::singleShot(50, this, [this, slug, triggerNode, triesLeft] { linkDuckTriggerWhenPresent(slug, triggerNode, triesLeft - 1); });
+}
+
+double Mixer::duckReduction(const QString &slug) const {
+    const auto *c = m_layout.channel(slug);
+    if (!c || c->duckedBy.isEmpty()) return 0.0;
+    // NOT read from the plugin: measured 2026-09-21 that filter-chain publishes only INPUT controls through
+    // Props, so SC3's "Gain reduction (dB)" output port is not visible there — see specs/fx9-ducking.md.
+    // Instead the reduction is the difference between what goes into the ducker and what comes out, taken from
+    // the peak meters both sides already feed. That is the reduction the user actually hears.
+    const float rein = m_lastPeaks.value(Names::channelNode(slug), 0.0f);
+    const float raus = m_lastPeaks.value(fx::duckerNode(slug) + QStringLiteral(".out"), 0.0f);
+    // Below −60 dBFS the comparison is noise, not signal: silence in means nothing to reduce.
+    if (rein < 0.001f) return 0.0;
+    const double db = 20.0 * std::log10(std::max(raus, 1e-6f) / rein);
+    return std::clamp(db, -60.0, 0.0);
 }
 
 /// Rebuild one chain live: replace the filter-chain module, keep everything else. Streams that were

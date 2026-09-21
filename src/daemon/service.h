@@ -84,6 +84,12 @@ class ChannelObject : public ExportedObject {
     Q_PROPERTY(bool InputPresent READ inputPresent)
     Q_PROPERTY(QStringList Inputs READ inputs)     // ADR 0009 B1: all wires, InputDevice == Inputs[0]
     Q_PROPERTY(QString FxChain READ fxChainJson)   // FX-1…FX-7: JSON {enabled, chain:[…]}, "" = none
+    // FX-9: side-chain ducking. Ducking is the JSON {duckedBy, depth, attack, release, threshold} so one
+    // write changes a consistent set — five separate properties would let a client leave the channel ducked
+    // by a trigger it never meant to pick. DuckReduction is the dB the compressor reports RIGHT NOW (0 = not
+    // ducking), read from the graph, not from the layout.
+    Q_PROPERTY(QString Ducking READ duckingJson WRITE setDuckingJson)
+    Q_PROPERTY(double DuckReduction READ duckReduction)
 public:
     ChannelObject(Mixer *mixer, const QString &slug, QObject *parent);
     QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.Channel"); }
@@ -97,6 +103,8 @@ public:
     double pan() const; void setPan(double);
     bool muted() const; void setMuted(bool);
     QString nodeName() const { return Names::channelNode(m_slug); }
+    QString duckingJson() const; void setDuckingJson(const QString &json);
+    double duckReduction() const;
     QString inputDevice() const; void setInputDevice(const QString &);
     QStringList inputs() const;
     bool inputPresent() const;

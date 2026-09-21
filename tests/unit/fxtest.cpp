@@ -79,6 +79,30 @@ private Q_SLOTS:
         // exactly one node per enabled effect, wired in order: the graph links go highpass → eq
         QVERIFY(args.indexOf(QStringLiteral("highpass")) < args.indexOf(QStringLiteral("eq")) || args.indexOf(QStringLiteral("hp")) >= 0);
     }
+    // FX-9 regression: the LADSPA branch used to hard-code "In"/"Out" as the graph's ports. For anything that
+    // is not mono-in/mono-out, filter-chain then cannot resolve the graph, discards it WITHOUT A WORD and
+    // passes audio through — measured 2026-09-21 with sc3_1427: every control read back as 0.0 and a 10:1
+    // compressor at −30 dB reduced 0.0 dB. Port names must come from the plugin (specs/fx9-ducking.md).
+    void ladspaPortsComeFromThePluginNotFromAGuess() {
+        if (!fx::ladspaAvailable(QStringLiteral("sc3_1427")))
+            QSKIP("swh-plugins not installed — nothing to introspect");
+        const auto ports = fx::ladspaPorts(QStringLiteral("sc3_1427"), QStringLiteral("sc3"));
+        QVERIFY2(ports.inputs.contains(QStringLiteral("Left input")), "the plugin's real input port name");
+        QVERIFY2(ports.outputs.contains(QStringLiteral("Left output")), "the plugin's real output port name");
+
+        fx::Effect e; e.type = QStringLiteral("ladspa"); e.enabled = true;
+        e.plugin = QStringLiteral("sc3_1427"); e.label = QStringLiteral("sc3");
+        e.params.insert(QStringLiteral("Threshold level (dB)"), -30.0);
+        const QString args = fx::renderFilterChainArgs(chainOf({e}), QStringLiteral("d"), QStringLiteral("in"),
+                                                       QStringLiteral("out"), QStringLiteral("m"), QStringLiteral("t"), QStringLiteral("g"));
+        QVERIFY2(args.contains(QStringLiteral("Left input")), "inputs must name the plugin's ports");
+        QVERIFY2(args.contains(QStringLiteral("Right input")), "a stereo plugin needs BOTH inputs or the graph is dropped");
+        QVERIFY2(args.contains(QStringLiteral("Right output")), "a stereo plugin needs both outputs");
+        QVERIFY2(!args.contains(QStringLiteral(":In\"")), "\"In\" is a guess that only exists on mono plugins");
+        // The side-chain port is fed separately (FX-9), so it must NOT occupy a channel of this chain —
+        // sc3 lists it FIRST, so leaving it in would route FL into the side-chain and lose the right channel.
+        QVERIFY2(!args.contains(QStringLiteral("Sidechain")), "a side-chain input is not a channel of the chain");
+    }
     void renderSkipsDisabledEffect() {
         fx::Chain c = chainOf({eff("highpass", {{QStringLiteral("freq"), 333.0}}), eff("eq")}); c.effects[0].enabled = false;
         const QString args = fx::renderFilterChainArgs(c, QStringLiteral("d"), QStringLiteral("in"), QStringLiteral("out"), QStringLiteral("m"), QStringLiteral("t"), QStringLiteral("p"));

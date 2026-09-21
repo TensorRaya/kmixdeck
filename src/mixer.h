@@ -110,6 +110,16 @@ public:
     /// librnnoise_ladspa — noise-suppression-for-voice (Arch/AUR) or …". Logging it and
     /// returning a bare false leaves the D-Bus caller with nothing to show the user.
     Q_INVOKABLE bool setFxChain(const QString &slug, const QJsonObject &chainJson, QString *why_out = nullptr);
+    // FX-9: side-chain ducking for one channel. `json` is {duckedBy, depth, attack, release, threshold};
+    // an empty duckedBy switches ducking off. Returns false with the reason in why_out.
+    Q_INVOKABLE bool setDucking(const QString &slug, const QJsonObject &json, QString *why_out = nullptr);
+    Q_INVOKABLE QJsonObject ducking(const QString &slug) const;
+    /// The gain reduction the ducker applies right now, in dB (0 = not ducking, negative = ducking).
+    Q_INVOKABLE double duckReduction(const QString &slug) const;
+    void applyDucking(const QString &slug);
+    /// FX-9: wire the ducker's AUX0 input to the trigger channel once both nodes exist. The module's node
+    /// appears asynchronously, same as an FX chain's — hence the retry, modelled on retargetWhenPresent.
+    void linkDuckTriggerWhenPresent(const QString &slug, const QString &triggerNode, int triesLeft);
     /// Live control update for one object's chain. `control` is the short key ("threshold") or the full
     /// Props key ("gate:Threshold (dB)"); resolved against the object's own chain, first match wins.
     Q_INVOKABLE bool setFxControl(const QString &slug, const QString &control, double value);
@@ -210,6 +220,10 @@ public:
     QString validateDeviceRef(const DeviceRef &ref, bool wantSource) const;
     /// false only when an output is configured and its device is currently not in the graph (DV-9).
     bool    mixOutputPresent(const QString &slug) const;
+
+    // FX-9: the most recent peak per node, kept so duckReduction() can compare the ducker's two sides.
+    // Filled from Meters::peaks, which ticks 25x/s — one hash assignment per tick, no extra streams.
+    QHash<QString, float> m_lastPeaks;
 
     /// Peak meters (ADR 0006); owned here so they share the graph's loop.
     pw::Meters *meters() { return &m_meters; }

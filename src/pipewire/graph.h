@@ -101,6 +101,12 @@ public:
     void setStreamTarget(uint32_t streamId, uint32_t sinkSerial);
     /// Remove target.object from a stream; with node.dont-fallback the stream is then unlinked.
     void clearStreamTarget(uint32_t streamId);
+    /// FX-9: link ONE port to ONE port, by node name + port name. Needed for a side-chain: the ducker's
+    /// third input (AUX0) has to read the trigger channel while its FL/FR read the ducked channel, and a
+    /// capture stream can only ever target one node. Verified against pw-link before being built this way
+    /// (2026-09-21). Returns false when either port is not in the registry (yet).
+    bool linkPorts(const QString &outNode, const QString &outPort, const QString &inNode, const QString &inPort);
+
     /// Link a stream to a sink by name (looks up serial). Returns false if either is unknown.
     bool moveStream(uint32_t streamId, const QString &sinkNodeName);
     /// Session defaults as WirePlumber publishes them (default.audio.sink / default.audio.source), empty when unknown.

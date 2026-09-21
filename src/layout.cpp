@@ -81,6 +81,13 @@ QJsonObject Layout::toJson() const {
         if (!c.color.isEmpty()) o.insert(QStringLiteral("color"), c.color);
         if (!c.group.isEmpty()) o.insert(QStringLiteral("group"), c.group);
         if (c.pan != 0.0) o.insert(QStringLiteral("pan"), c.pan);   // DV-22
+        if (!c.duckedBy.isEmpty()) {   // FX-9: off by default, so an unducked channel writes nothing
+            o.insert(QStringLiteral("duckedBy"), c.duckedBy);
+            o.insert(QStringLiteral("duckDepth"), c.duckDepth);
+            o.insert(QStringLiteral("duckAttack"), c.duckAttack);
+            o.insert(QStringLiteral("duckRelease"), c.duckRelease);
+            o.insert(QStringLiteral("duckThreshold"), c.duckThreshold);
+        }
         if (!c.fx.effects.isEmpty() || !c.fx.enabled) o.insert(QStringLiteral("fx"), QJsonObject{{QStringLiteral("enabled"), c.fx.enabled}, {QStringLiteral("chain"), fxChainArray(c.fx)}});
         ch.append(o);
     }
@@ -114,7 +121,16 @@ Layout Layout::fromJson(const QJsonObject &o) {
     for (const auto &v : o.value(QStringLiteral("knownApps")).toArray()) l.knownApps << v.toString();
     for (const auto &v : o.value(QStringLiteral("hiddenDevices")).toArray()) l.hiddenDevices << v.toString();
     for (const auto &v : o.value(QStringLiteral("links")).toArray()) { const auto j = v.toObject(); l.links.push_back({j.value(QStringLiteral("channel")).toString(), j.value(QStringLiteral("mix")).toString(), j.value(QStringLiteral("follows")).toString()}); }
-    for (const auto &v : o.value(QStringLiteral("channels")).toArray()) { const auto c = v.toObject(); l.channels.push_back({c.value(QStringLiteral("slug")).toString(), c.value(QStringLiteral("name")).toString(), c.value(QStringLiteral("icon")).toString(), readFx(c), std::clamp(c.value(QStringLiteral("pan")).toDouble(0.0), -1.0, 1.0), c.value(QStringLiteral("color")).toString(), c.value(QStringLiteral("group")).toString()}); }
+    for (const auto &v : o.value(QStringLiteral("channels")).toArray()) { const auto c = v.toObject(); l.channels.push_back({c.value(QStringLiteral("slug")).toString(), c.value(QStringLiteral("name")).toString(), c.value(QStringLiteral("icon")).toString(), readFx(c), std::clamp(c.value(QStringLiteral("pan")).toDouble(0.0), -1.0, 1.0), c.value(QStringLiteral("color")).toString(), c.value(QStringLiteral("group")).toString(),
+                                        // FX-9: ducking. Grenzen aus dem SC3-Plugin selbst (analyseplugin sc3_1427:
+                                        // Attack 2..400 ms, Release 2..800 ms, Threshold -30..0 dB) — nicht geraten,
+                                        // sonst klemmt PipeWire still auf den Plugin-Bereich und die UI zeigt etwas
+                                        // anderes als der Graph tut.
+                                        c.value(QStringLiteral("duckedBy")).toString(),
+                                        std::clamp(c.value(QStringLiteral("duckDepth")).toDouble(-12.0), -60.0, 0.0),
+                                        std::clamp(c.value(QStringLiteral("duckAttack")).toDouble(10.0), 2.0, 400.0),
+                                        std::clamp(c.value(QStringLiteral("duckRelease")).toDouble(300.0), 2.0, 800.0),
+                                        std::clamp(c.value(QStringLiteral("duckThreshold")).toDouble(-30.0), -30.0, 0.0)}); }
     for (const auto &v : o.value(QStringLiteral("mixes")).toArray()) {
         const auto m = v.toObject(); LayoutMix lm;
         lm.slug = m.value(QStringLiteral("slug")).toString(); lm.name = m.value(QStringLiteral("name")).toString(); lm.icon = m.value(QStringLiteral("icon")).toString();
@@ -259,6 +275,22 @@ QString Layout::toPipewireConf() const {
                    .arg(q(Names::channelNode(c.slug)), q(c.name));
         fxModule(c.fx, c.name, QStringLiteral("kmixdeck.fx.%1").arg(c.slug), QStringLiteral("kmixdeck.fx.%1.out").arg(c.slug),
                  Names::channelNode(c.slug), Names::channelNode(c.slug), c.slug);
+        // FX-9: the ducker is its own filter-chain BEHIND the sink (it reads the sink's monitor), so it does not
+        // disturb the FX chain in front of it. Only rendered when the user picked a trigger — off by default.
+        if (!c.duckedBy.isEmpty() && c.duckedBy != c.slug) {
+            const bool triggerDa = std::any_of(channels.cbegin(), channels.cend(),
+                                               [&](const LayoutChannel &t) { return t.slug == c.duckedBy; });
+            if (triggerDa) {
+                // The trigger is read post-FX. For a CHANNEL that is the plain sink itself: its chain sits IN
+                // FRONT of the sink (ADR 0008 D3), so everything that reaches the sink has already been through
+                // gate and compressor. Reading `kmixdeck.fx.<slug>.out` instead would be the same signal by a
+                // less stable name — that node only exists while a chain is active.
+                const QString trigger = Names::channelNode(c.duckedBy);
+                const QString args = fx::renderDuckerArgs(c.slug, c.name, Names::channelNode(c.slug), trigger,
+                                                          c.duckDepth, c.duckAttack, c.duckRelease, c.duckThreshold);
+                if (!args.isEmpty()) out += QStringLiteral("  { name = libpipewire-module-filter-chain args = %1 }\n").arg(args);
+            }
+        }
     }
     for (const auto &m : mixes) {
         out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = %1 media.name = %1 node.description = %2 media.class = Audio/Sink object.linger = true audio.position = [ FL FR ] monitor.channel-volumes = true } }\n")

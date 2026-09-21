@@ -45,6 +45,15 @@ QJsonObject presetChains();
 
 /// Is the LADSPA library present (LADSPA_PATH, /usr/lib/ladspa, /usr/lib64/ladspa, multiarch)? "" for builtin = true.
 bool ladspaAvailable(const QString &file);
+
+/// Full path of a LADSPA .so, or "" when it is not installed.
+QString ladspaPath(const QString &file);
+
+/// The audio port NAMES a LADSPA plugin exposes, in plugin order. Empty when the library is missing.
+struct LadspaPorts { QStringList inputs, outputs; };
+/// `label` "" = first plugin in the library. Read from the plugin itself: assuming "In"/"Out" makes
+/// filter-chain drop the graph without a word for anything that is not mono-in/mono-out.
+LadspaPorts ladspaPorts(const QString &file, const QString &label);
 /// Distro-agnostic hint for the CLI/UI: which package brings this file.
 QString packageHint(const QString &file);
 
@@ -57,6 +66,18 @@ QString validate(const Chain &c, bool onMix = false);
 QString renderFilterChainArgs(const Chain &c, const QString &description, const QString &entryNode,
                               const QString &exitNode, const QString &mediaName, const QString &targetSink,
                               const QString &idPrefix, bool behindSink = false);
+
+/// FX-9: the `args` of the side-chain ducker that sits behind one channel's sink. Its own filter-chain,
+/// not an entry in the channel's FX chain, because it needs a SECOND capture side: the ducked audio comes
+/// from the channel, the trigger from another channel's post-FX node. Built on swh's SC3 (`sc3_1427`),
+/// the free LADSPA side-chain compressor — SC4 has no sidechain port, SC2 is mono (checked with
+/// `analyseplugin`, 2026-09-21). depth is applied as the compressor's ratio/threshold pair; the gain
+/// reduction SC3 reports is readable live through Props, which is what the meter badge shows.
+QString renderDuckerArgs(const QString &slug, const QString &description, const QString &channelNode,
+                         const QString &triggerNode, double depthDb, double attackMs, double releaseMs,
+                         double thresholdDb);
+/// Name of the ducker's capture node for a channel (empty slug → empty).
+QString duckerNode(const QString &slug);
 /// The Props param name filter-chain uses for a control at runtime, e.g. "gate:Threshold (dB)".
 /// Returns {name → value} for every enabled effect of the chain (for live updates without a reload).
 QVector<QPair<QString, double>> controlValues(const Chain &c, const QString &idPrefix);

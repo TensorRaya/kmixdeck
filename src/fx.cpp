@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fx.h"
 
+#include <dlfcn.h>
+#include <ladspa.h>
+
 #include <QDebug>
 #include <QDir>
 #include <QLatin1Char>
@@ -83,17 +86,47 @@ const TypeSpec *typeSpec(const QString &type) {
     return nullptr;
 }
 
-bool ladspaAvailable(const QString &file) {
-    if (file.isEmpty()) return true;
+QString ladspaPath(const QString &file) {
+    if (file.isEmpty()) return {};
     QStringList dirs;
     for (const QByteArray &p : qgetenv("LADSPA_PATH").split(':')) if (!p.isEmpty()) dirs << QString::fromUtf8(p);
     dirs << QStringLiteral("/usr/lib/ladspa") << QStringLiteral("/usr/lib64/ladspa") << QStringLiteral("/usr/local/lib/ladspa");
 #ifdef KMIXDECK_MULTIARCH   // Debian-style /usr/lib/<triplet>/ladspa — the triplet comes from the compiler, not from a guess
     dirs << QStringLiteral("/usr/lib/" KMIXDECK_MULTIARCH "/ladspa");
 #endif
-    for (const QString &d : dirs)
-        if (QDir(d).entryList({file + QStringLiteral(".so")}, QDir::Files).size() > 0) return true;
-    return false;
+    for (const QString &d : dirs) {
+        const auto hits = QDir(d).entryList({file + QStringLiteral(".so")}, QDir::Files);
+        if (!hits.isEmpty()) return d + QLatin1Char('/') + hits.first();
+    }
+    return {};
+}
+
+bool ladspaAvailable(const QString &file) { return file.isEmpty() || !ladspaPath(file).isEmpty(); }
+
+LadspaPorts ladspaPorts(const QString &file, const QString &label) {
+    LadspaPorts out;
+    const QString so = ladspaPath(file);
+    if (so.isEmpty()) return out;
+    // Ask the plugin for its port names instead of assuming "In"/"Out". Measured 2026-09-21: assuming them
+    // made filter-chain silently discard the whole graph for every multi-channel plugin — the node came up,
+    // every control read back as 0.0 and the audio was passed through untouched (specs/fx9-ducking.md).
+    void *lib = dlopen(so.toUtf8().constData(), RTLD_NOW | RTLD_LOCAL);
+    if (!lib) return out;
+    auto descriptor = reinterpret_cast<LADSPA_Descriptor_Function>(dlsym(lib, "ladspa_descriptor"));
+    if (descriptor) {
+        for (unsigned long i = 0; const LADSPA_Descriptor *d = descriptor(i); ++i) {
+            // An empty label means "first plugin in the library", which is what a bare `plugin = x` asks for.
+            if (!label.isEmpty() && label != QString::fromUtf8(d->Label)) continue;
+            for (unsigned long p = 0; p < d->PortCount; ++p) {
+                if (!LADSPA_IS_PORT_AUDIO(d->PortDescriptors[p])) continue;
+                const QString n = QString::fromUtf8(d->PortNames[p]);
+                (LADSPA_IS_PORT_INPUT(d->PortDescriptors[p]) ? out.inputs : out.outputs) << n;
+            }
+            break;
+        }
+    }
+    dlclose(lib);
+    return out;
 }
 
 QString packageHint(const QString &file) {
@@ -191,13 +224,17 @@ double param(const Effect &e, const QString &key, double def) {
 QString renderFilterChainArgs(const Chain &c, const QString &description, const QString &entryNode,
                               const QString &exitNode, const QString &mediaName, const QString &targetSink,
                               const QString &idPrefix, bool behindSink) {
-    struct Rendered { QString node, inPort, outPort; QStringList extras; };   // one graph node per entry
+    // allIn/allOut: EVERY audio port of the plugin, not just the first. A stereo plugin whose second port is
+    // missing from `inputs` makes filter-chain drop the graph silently (measured 2026-09-21, sc3_1427).
+    struct Rendered { QString node, inPort, outPort; QStringList extras, allIn, allOut; };
     QVector<Rendered> nodes;
     QHash<QString, QString> uniq;                            // prefix → unique name with count
-    auto push = [&](const QString &name, QStringList extras, QString in, QString out) {
+    auto push = [&](const QString &name, QStringList extras, QString in, QString out,
+                    const QStringList &allIn = {}, const QStringList &allOut = {}) {
         if (in.isEmpty()) in = QStringLiteral("In");          // builtin + mono ladspa use In/Out
         if (out.isEmpty()) out = QStringLiteral("Out");
-        nodes.push_back({name, in, out, extras});
+        nodes.push_back({name, in, out, extras, allIn.isEmpty() ? QStringList{in} : allIn,
+                         allOut.isEmpty() ? QStringList{out} : allOut});
     };
     for (const auto &e : c.effects) {
         if (!e.enabled) continue;
@@ -247,9 +284,22 @@ QString renderFilterChainArgs(const Chain &c, const QString &description, const 
             QStringList ctrl;
             for (auto it = e.params.constBegin(); it != e.params.constEnd(); ++it)
                 ctrl << QStringLiteral("\"%1\" = %2").arg(it.key()).arg(it.value());
+            // The port names come from the plugin, NOT from a guess. "In"/"Out" only exist on mono-in/mono-out
+            // plugins; for anything else filter-chain cannot resolve the graph, drops it without a word and
+            // passes the audio through with every control reading 0.0 (measured 2026-09-21 with sc3_1427 —
+            // specs/fx9-ducking.md). Empty when the library is missing: then push()'s own defaults apply and
+            // the chain is rejected upstream by validate() anyway.
+            LadspaPorts ports = ladspaPorts(e.plugin, e.label);
+            // Plugin order is not channel order: sc3_1427 lists "Sidechain" FIRST, so feeding the ports as they
+            // come would route FL into the side-chain and lose the right channel. A side-chain input is not a
+            // channel of this chain — it is fed separately (FX-9) — so it is dropped here. What remains keeps
+            // the plugin's own left/right order.
+            const auto istSidechain = [](const QString &n) { return n.compare(QLatin1String("sidechain"), Qt::CaseInsensitive) == 0; };
+            ports.inputs.removeIf(istSidechain);
             push(name, {QStringLiteral("type = ladspa"), QStringLiteral("plugin = %1").arg(e.plugin),
                         e.label.isEmpty() ? QString() : QStringLiteral("label = %1").arg(e.label),
-                        ctrl.isEmpty() ? QString() : QStringLiteral("control = { %1 }").arg(ctrl.join(QLatin1Char(' ')))}, {}, {});
+                        ctrl.isEmpty() ? QString() : QStringLiteral("control = { %1 }").arg(ctrl.join(QLatin1Char(' ')))},
+                 ports.inputs.value(0), ports.outputs.value(0), ports.inputs, ports.outputs);
         }
     }
     if (nodes.isEmpty()) return {};     // nothing to build — caller keeps the plain sink
@@ -293,10 +343,60 @@ QString renderFilterChainArgs(const Chain &c, const QString &description, const 
                          "node.passive = true node.linger = true node.dont-fallback = true }")
               .arg(QLatin1Char('"') + exitNode + QLatin1Char('"'), QLatin1Char('"') + mediaName + QLatin1Char('"'),
                    QLatin1Char('"') + targetSink + QLatin1Char('"'));
+    // inputs/outputs list EVERY audio port of the first/last node, qualified with the node name. A single
+    // "node:In" only works for mono-in/mono-out plugins; with a stereo plugin filter-chain cannot resolve the
+    // graph, discards it silently and passes audio through with all controls at 0.0 — which is exactly why
+    // sc3_1427 compressed nothing at ratio 20:1 (measured 2026-09-21, specs/fx9-ducking.md).
+    auto qualify = [](const QString &node, const QStringList &ports) {
+        QStringList out;
+        for (const QString &p : ports) out << QLatin1Char('"') + node + QLatin1Char(':') + p + QLatin1Char('"');
+        return out.join(QLatin1Char(' '));
+    };
     return QStringLiteral("{ node.description = %1 audio.channels = 2 audio.position = [ FL FR ] "
-                          "filter.graph = { nodes = [ %2 ] links = [ %3 ] inputs = [ \"%4:%5\" ] outputs = [ \"%6:%7\" ] } %8 %9 }")
+                          "filter.graph = { nodes = [ %2 ] links = [ %3 ] inputs = [ %4 ] outputs = [ %5 ] } %6 %7 }")
         .arg(QLatin1Char('"') + description + QLatin1Char('"'), nodeBlocks.join(QLatin1Char(' ')), linkBlocks.join(QLatin1Char(' ')),
-             nodes.first().node, nodes.first().inPort, nodes.last().node, nodes.last().outPort, cap, play);
+             qualify(nodes.first().node, nodes.first().allIn), qualify(nodes.last().node, nodes.last().allOut), cap, play);
+}
+
+QString duckerNode(const QString &slug) { return slug.isEmpty() ? QString() : QStringLiteral("kmixdeck.duck.%1").arg(slug); }
+
+QString renderDuckerArgs(const QString &slug, const QString &description, const QString &channelNode,
+                         const QString &triggerNode, double depthDb, double attackMs, double releaseMs,
+                         double thresholdDb) {
+    if (slug.isEmpty() || channelNode.isEmpty() || triggerNode.isEmpty()) return {};
+    // SC3 gives us threshold + ratio, not a "duck by N dB" knob. The depth the user asks for is reached by
+    // the ratio: with the trigger driving the sidechain above `threshold`, a ratio of r reduces by
+    // (threshold - inputLevel) * (1 - 1/r). Rather than pretend a formula is exact for unknown material,
+    // map depth onto the ratio monotonically over SC3's real range (1..10, read from analyseplugin) and let
+    // the reported gain reduction be the truth the UI shows. -12 dB (our default) lands at ratio 4.
+    const double tiefe = std::clamp(-depthDb, 0.0, 60.0);      // 0 … 60 dB of wanted reduction
+    const double ratio = std::clamp(1.0 + tiefe / 4.0, 1.0, 10.0);
+    const QString name = QStringLiteral("duck_") + slug;
+    // audio.channels = 3: FL/FR carry the ducked audio, AUX0 the trigger. filter-chain maps the graph's
+    // inputs positionally onto the capture ports, so the third input IS the sidechain — SC3's port order
+    // ("Sidechain", "Left input", "Right input") is NOT the port order we want, hence the explicit list.
+    return QStringLiteral(
+               "{ node.description = %1 audio.channels = 3 audio.position = [ FL FR AUX0 ] "
+               "filter.graph = { nodes = [ { name = %2 type = ladspa plugin = sc3_1427 label = sc3 "
+               "control = { \"Threshold level (dB)\" = %3 \"Ratio (1:n)\" = %4 \"Attack time (ms)\" = %5 "
+               "\"Release time (ms)\" = %6 \"Chain balance\" = 1 } } ] links = [ ] "
+               "inputs = [ \"%2:Left input\" \"%2:Right input\" \"%2:Sidechain\" ] "
+               "outputs = [ \"%2:Left output\" \"%2:Right output\" null ] } "
+               // The ducked audio is read from the channel sink's monitor (stream.capture.sink), exactly like a
+               // cell loopback does. The trigger side is linked by the daemon, not by node.target: one capture
+               // stream cannot target two different nodes.
+               "capture.props = { node.name = %7 media.name = %8 node.target = %9 audio.position = [ FL FR AUX0 ] "
+               "stream.capture.sink = true node.passive = true node.dont-fallback = true node.linger = true "
+               "node.dont-reconnect = true node.description = %1 } "
+               "playback.props = { node.name = %10 media.name = %8 audio.position = [ FL FR AUX0 ] "
+               "node.linger = true node.dont-fallback = true } }")
+        .arg(QLatin1Char('"') + description + QLatin1Char('"'), name)
+        .arg(std::clamp(thresholdDb, -30.0, 0.0)).arg(ratio)
+        .arg(std::clamp(attackMs, 2.0, 400.0)).arg(std::clamp(releaseMs, 2.0, 800.0))
+        .arg(QLatin1Char('"') + duckerNode(slug) + QLatin1Char('"'),
+             QLatin1Char('"') + description + QLatin1Char('"'),
+             QLatin1Char('"') + channelNode + QLatin1Char('"'),
+             QLatin1Char('"') + duckerNode(slug) + QStringLiteral(".out\""));
 }
 
 QVector<QPair<QString, double>> controlValues(const Chain &c, const QString &idPrefix) {

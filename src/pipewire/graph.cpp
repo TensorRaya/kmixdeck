@@ -434,6 +434,35 @@ void Graph::createNullNode(const QString &name, const QString &description, cons
     pw_thread_loop_unlock(d->loop);
 }
 
+bool Graph::linkPorts(const QString &outNode, const QString &outPort, const QString &inNode, const QString &inPort) {
+    const auto a = node(outNode); const auto b = node(inNode);
+    if (!a || !b) return false;
+    uint32_t aus = 0, ein = 0;
+    {
+        std::lock_guard<std::mutex> g(d->snapshotMutex);
+        for (const auto &p : d->ports) {
+            if (p.nodeId == a->id && !p.input && p.name == outPort) aus = p.id;
+            if (p.nodeId == b->id && p.input && p.name == inPort) ein = p.id;
+        }
+    }
+    if (!aus || !ein) return false;
+    // The "link-factory" FACTORY creates the link — not pw_context_load_module. Measured 2026-09-21:
+    // loading the module returned a valid handle and produced no link at all, while pw_core_create_object
+    // (what pw-link itself calls) linked the ports immediately. object.linger keeps the link after the
+    // proxy goes away. link.passive is deliberately unset: a passive link between two passive nodes
+    // never starts — the same trap the FX chain's playback.props documents.
+    pw_thread_loop_lock(d->loop);
+    pw_properties *props = pw_properties_new(PW_KEY_LINK_OUTPUT_PORT, QByteArray::number(aus).constData(),
+                                             PW_KEY_LINK_INPUT_PORT, QByteArray::number(ein).constData(),
+                                             PW_KEY_OBJECT_LINGER, "true", nullptr);
+    pw_proxy *p = static_cast<pw_proxy *>(pw_core_create_object(d->core, "link-factory", PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &props->dict, 0));
+    pw_properties_free(props);
+    if (p) pw_proxy_destroy(p);
+    pw_thread_loop_unlock(d->loop);
+    if (!p) { qCWarning(lcPipewire) << "linkPorts failed:" << outNode << outPort << "->" << inNode << inPort; return false; }
+    return true;
+}
+
 void Graph::loadLoopback(const QString &args, const char *module) {
     pw_thread_loop_lock(d->loop);
     pw_impl_module *m = pw_context_load_module(d->context, module, args.toUtf8().constData(), nullptr);

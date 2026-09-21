@@ -84,6 +84,16 @@ void ChannelObject::setInputDevice(const QString &d) {
     if (!m_mixer->setChannelInputDevice(m_slug, d)) rejectProperty(QStringLiteral("InputDevice"), d.isEmpty() ? QStringLiteral("no such channel") : m_mixer->validateDeviceRef(m_mixer->deviceRef(d), true));
 }
 bool ChannelObject::inputPresent() const { return m_mixer->channelInputPresent(m_slug); }
+QString ChannelObject::duckingJson() const { return QJsonDocument(m_mixer->ducking(m_slug)).toJson(QJsonDocument::Compact); }
+void ChannelObject::setDuckingJson(const QString &json) {
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+    if (!doc.isObject()) { rejectProperty(QStringLiteral("Ducking"), QStringLiteral("expected a JSON object {duckedBy, depth, attack, release, threshold}")); return; }
+    QString warum;
+    // FX-9: pass the reason on, like SetFx does. "rejected" without a reason makes a client guess which of
+    // five values was out of range.
+    if (!m_mixer->setDucking(m_slug, doc.object(), &warum)) rejectProperty(QStringLiteral("Ducking"), warum);
+}
+double ChannelObject::duckReduction() const { return m_mixer->duckReduction(m_slug); }
 QString ChannelObject::fxChainJson() const { return QJsonDocument(m_mixer->fxChain(m_slug)).toJson(QJsonDocument::Compact); }
 bool ChannelObject::SetFx(const QString &chainJson) {
     const QJsonDocument doc = QJsonDocument::fromJson(chainJson.toUtf8());
@@ -323,6 +333,13 @@ void LevelsAdaptor::syncTargets() {
     QStringList t; m_appNodes.clear();
     if (!m_subscribers.isEmpty()) {
         for (const auto &c : m_mixer->channelSlugs()) t << Names::channelNode(c);
+        // FX-9: a ducked channel gets its ducker's tail metered too. The gain reduction cannot be read from
+        // the plugin — measured 2026-09-21: filter-chain publishes only INPUT controls through Props, so SC3's
+        // "Gain reduction (dB)" output port is invisible there. Comparing the two peaks IS the reduction, and
+        // it is what the user hears rather than what the plugin claims.
+        for (const auto &c : m_mixer->channelSlugs())
+            if (!m_mixer->ducking(c).value(QStringLiteral("duckedBy")).toString().isEmpty())
+                t << fx::duckerNode(c) + QStringLiteral(".out");
         for (const auto &m : m_mixer->mixSlugs()) { t << Names::mixNode(m); t << EdgeNames::outputNode(m, 0); }
         for (const auto &c : m_mixer->channelSlugs()) for (const auto &m : m_mixer->mixSlugs()) t << Names::cellNode(c, m);
         for (const auto &i : m_mixer->inputSlugs()) t << EdgeNames::inputNode(i);
