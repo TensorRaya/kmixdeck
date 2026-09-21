@@ -370,9 +370,12 @@ die monatelang unsichtbar war, in 5 Sekunden abgedeckt.
 - **`test_cl5_tree` war schon vor diesem Branch rot.** Sieben Szenen statt einer, weil Szenen Dateien sind
   und die `stack`-Fixture modulweit laebt. Am Commit-Stand nachgemessen (`git stash` → build → run): derselbe
   Fehler. Behoben, indem der Test seine eigene Szene **sucht** statt die Liste gleichzusetzen.
-- **22 von 44 Fehlschlaegen waren Speichermangel**, keine Code-Fehler: `kmixdeck: no session bus`,
-  `pw-dump exit 255`. Bei ~2 GB frei von 7 GB kommen dbus und pipewire pro Modul nicht mehr hoch. Derselbe
-  Baum bei Last 2.6: 44/44 gruen.
+- **22 von 44 Fehlschlaegen waren selbst verursacht**, keine Code-Fehler: `kmixdeck: no session bus`,
+  `pw-dump exit 255`. Meine erste Erklaerung war Speichermangel — falsch. Die Zeitstempel zeigen, dass der
+  Einzeldatei-Lauf **8 Sekunden** nach einem vollen `ctest` im selben Baum endete: ich hatte beide parallel
+  laufen lassen. Beide Logs tragen dieselben `no session bus`-Fehler (20 bzw. 25), weil sie sich die Busse
+  gegenseitig wegnahmen. Dieselbe Datei allein: 44/44 gruen. Ein Last-Check am *Anfang* einer Warteschleife
+  beweist nichts darueber, was waehrend der Schleife startet — `ps -ef | grep ctest` dazu.
 - **`msgattrib --untranslated` zeigt `fuzzy` nicht an.** Drei Texte standen als uebersetzt im Katalog und
   waren geraten: "Ducking on %1" → "Ich hoere auf %1%2", "Right now:" → "Nur rechts". Im Fenster waere
   glatter Unsinn erschienen. Immer **beides** pruefen: `--untranslated` UND `--only-fuzzy`.

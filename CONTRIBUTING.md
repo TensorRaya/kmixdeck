@@ -69,21 +69,31 @@ Rules for such tests:
   `tests/integration/conftest.py` sets `PR_SET_PDEATHSIG` on every Popen of the suite — an `atexit` handler
   cannot cover the SIGKILL case, the kernel can. Each run prints `host load X on N cores` in its header; if that
   line carries a warning, every audio measurement in the run is worthless.
+- **That protection only exists under pytest.** `conftest.py` installs it by replacing `subprocess.Popen`
+  globally, so it is active for the suite and for nothing else. Importing `Stack` from a throwaway script
+  (`python3 /tmp/probe.py`) gets the *original* Popen, and the daemon it starts outlives the script: on
+  2026-09-21 three `kmixdeckd` survived that way, up to 4.8 h, each on its own `/tmp/kmixdeck-pw-*` bus.
+  They break nothing functionally, they just burn cores that the next audio measurement needs. So for a
+  quick probe either write it as a test and run it through pytest, or `from conftest import *` first — and
+  check `pgrep -a kmixdeckd` when you are done.
 - **Run the whole suite before you push:** `cd build && ctest --output-on-failure` must be 10/10. Isolated green
   is not green — three of today's daemon bugs only showed under full-suite load.
 - **Do not build or run daemons in the tree while ctest runs.** Half of today's red runs were self-inflicted.
   This includes "isolated" A/B comparisons: on 2026-09-21 I ran three suites "alone" while a full gate was
   running next to them (load 8.3–11.0). Both sides were oversubscribed, so the green proved nothing. Before any
   A/B: check `cat /proc/loadavg` against `nproc` and record both in the log.
-- **A red run under memory pressure says nothing about your code.** On 2026-09-21 `test_service_cli.py` went
-  **22 failed / 22 passed** — and every message was `kmixdeck: no session bus` or `pw-dump … exit status 255`,
-  not one of them about the feature under test. The suite starts its own dbus **and** pipewire per module; with
-  ~2 GB free of 7 GB they stop coming up, and that looks exactly like a broken patch. The same file, same
-  working tree, at load 2.6: **44/44 green**. So before you read a single assertion: `free -g` and
-  `/proc/loadavg`. And confirm suspicion against the committed state (`git stash` → build → run) instead of
-  reading the diff — that is what proved `test_cl5_tree` was already red before this branch (seven leftover
-  scenes from earlier tests in the same module, fixed here by looking for the test's own scene instead of
-  comparing the whole list).
+- **A red run says nothing about your code until you know what ran next to it.** On 2026-09-21
+  `test_service_cli.py` went **22 failed / 22 passed**, and every message was `kmixdeck: no session bus` or
+  `pw-dump … exit status 255` — not one about the feature under test. My first explanation was memory
+  pressure, and it was wrong: the timestamps show that run ending **8 seconds** after a full `ctest` in the
+  same tree, i.e. I had started the single file next to a full gate and broken the rule three lines above
+  this one. Both logs carry the same `no session bus` errors (20 and 25 of them) because they took each
+  other's buses away. The same file, same working tree, alone: **44/44 green**.
+  So before you read a single assertion: `cat /proc/loadavg`, `free -g`, and `ps -ef | grep ctest` — a load
+  check at the *start* of a wait loop proves nothing about what starts during it. Then confirm suspicion
+  against the committed state (`git stash` → build → run) instead of reading the diff: that is what proved
+  `test_cl5_tree` was already red before this branch (seven leftover scenes from earlier tests in the same
+  module, fixed here by looking for the test's own scene instead of comparing the whole list).
 
 ## Where things live
 
