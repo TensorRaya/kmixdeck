@@ -89,6 +89,9 @@ One row of the mixer: an input group at `/org/kmixdeck1/channel/<slug>`. Channel
 | `ToggleMute` | () | Atomic mute flip — what a hotkey or a Stream Deck key calls, no read-modify-write race. |
 | `SetFx` | (chainJson: string) → accepted: bool | Replace the whole chain. Validates first; errors come back as a D-Bus error instead of a silent half-state. `{}` clears. |
 | `SetFxControl` | (control: string, value: double) → accepted: bool | Live-tweak one control without rebuilding the chain. Key is the full control name from the chain JSON, e.g. `gate:Threshold (dB)`. |
+| `Ducking` | string | read | FX-9 config as JSON: `{duckedBy, depth, threshold, attack, release}`. `""` or `{}` = off (the default). |
+| `DuckReduction` | double | read | How much is coming off **right now**, in dB. `0` while the trigger is quiet. |
+| `SetDucking` | (duckingJson: string) → accepted: bool | Set the whole config; validates first (self-ducking, ranges, unknown trigger) and a refusal comes back as a D-Bus error. `{}` or `{"duckedBy":""}` switches it off. A **method**, not a property write — see the note below. |
 
 ## `org.kmixdeck1.Mix`
 One column of the mixer: an output group at `/org/kmixdeck1/mix/<slug>`. A mix sums its cells and plays to one or more hardware outputs.
@@ -185,3 +188,15 @@ Meter data for `/org/kmixdeck1/levels`. One shared set of meter streams feeds ev
 |---|---|---|
 | `Peaks` | (peaks: dict<string,double>) | One tick: bus key → peak level linear 0…1. Keys: `channel/<s>`, `mix/<s>`, `cell/<c>/<m>` (post-fader), `in/<s>`, `out/<m>` (post master), `app/<id>`; `rms/` and `clip/` prefixes carry the CH-7 companions. |
 | `Loudness` | (loudness: `a{sad}`) | UX-18: EBU R128 for every mix whose `Loudness` property is on — mix slug → `[M, S, I, TP]`: momentary (400 ms), short-term (3 s) and gated integrated loudness in LUFS, plus true peak in dBTP. Same tick rate as `Peaks`. The analyser runs continuously while the flag is set (its windows need seconds of audio), not only while somebody listens. |
+
+
+## Why a write is a method, never a property write
+
+`Volume` and friends are `access="read"` plus a `Set…` method, and that is not decoration. A Qt property
+setter reached over D-Bus has `calledFromDBus() == false`, so `sendErrorReply()` inside it does nothing —
+worse, calling it there crashed the daemon (measured with `busctl set-property … Trim d 5.0`). A refusal
+written into the log only is invisible to the caller: the client sees **success** and shows the value it just
+asked for. That is what `rejectProperty()` does, and why every writable thing on this bus is a method whose
+return value and D-Bus error the caller can actually see. Measured again 2026-09-21 while adding `SetDucking`:
+as a property write, `duck set game --by game` (self-ducking) came back `rc=0` from both our CLI and `busctl`,
+while the daemon log said "refused". As a method it is `rc=1` with the reason on stderr.

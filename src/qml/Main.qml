@@ -461,6 +461,46 @@ Kirigami.ApplicationWindow {
         id: fxPanelComp
         FxPanel {}
     }
+    // FX-9: ducking is per channel (a mix has no trigger), so this takes a slug and no kind.
+    function duckPanelOpen(slug) {
+        const page = duckPanelComp.createObject(this, {slug: slug, title: Mixer.channelName(slug)})
+        if (!page) {
+            console.warn("duckPanelOpen: DuckPanel konnte nicht erzeugt werden:", duckPanelComp.errorString())
+            return "<DuckPanel: " + duckPanelComp.errorString() + ">"
+        }
+        // pushDialogLayer schluckt eine nicht-Page lautlos: verifyPages() lehnt ab und im Fenster passiert
+        // sichtbar nichts. Genau so war FxPanel monatelang unoeffenbar, ohne dass ein Test es merkte — das per
+        // createObject erzeugte Objekt haengt trotzdem am Fenster und ist damit probebar.
+        // layers.depth ist dafuer NICHT der Massstab: auf dem Desktop oeffnet pushDialogLayer ein eigenes
+        // QQuickWindow, und dann bleibt depth bei 1, obwohl der Push geklappt hat (gemessen 2026-09-21).
+        // Was sich in BEIDEN Faellen aendert, ist der Elternteil: angenommen wird das Panel umgehaengt, und
+        // abgelehnt bleibt es dort, wo createObject es hinterlassen hat.
+        const elternVorher = page.parent
+        root.pageStack.pushDialogLayer(page)
+        if (page.parent === elternVorher) {
+            console.warn("duckPanelOpen: pushDialogLayer hat nichts gepusht — ist die Wurzel von DuckPanel.qml eine Page?")
+            duckPushedAnker.text = "no"
+            return "<DuckPanel: pushDialogLayer refused the page>"
+        }
+        duckPushedAnker.text = "yes"
+        return ""
+    }
+    // Probe-Anker fuer den Test: `visible` ist nur true, wenn das Panel wirklich auf dem Layer-Stack
+    // liegt. probe() sucht nach objectName in der Item-Hierarchie, eine Window-Property waere von dort
+    // nicht erreichbar — deshalb ein (unsichtbares, nullgrosses) Item statt einer blossen Property.
+    Item {
+        id: duckPushedAnker
+        objectName: "duckPanelPushed"
+        // `text` statt `visible`: ein nullgrosses Item in einem Layout ist nicht zuverlaessig sichtbar,
+        // und ein Probe auf visible las darum false, obwohl der Push geklappt hatte. Eine eigene
+        // String-Property hat keine solche Nebenbedeutung.
+        property string text: "no"
+        width: 0; height: 0
+    }
+    Component {
+        id: duckPanelComp
+        DuckPanel {}
+    }
     function addDialogOpen(kind) { addDialog.open(kind) }
     // review hook (--open channel-ports): open the dialog with the first multi-port device expanded and two ports picked
     function addDialogOpenPorts() { addDialog.open("channel"); addDialog.demoPorts = true }

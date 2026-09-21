@@ -18,6 +18,9 @@ Item {
     property bool inputPresent: Mixer.channelInputPresent(channel)
     property bool muted: Mixer.channelMuted(channel)
     property bool hasFx: Mixer.fxEnabled("channel", channel)
+    property string duckedBy: Mixer.ducking(channel).duckedBy || ""            // FX-9
+    readonly property bool isDucked: duckedBy.length > 0
+    property real duckReduction: 0
     property string iconName: Mixer.channelIcon(channel)
     property string colorCode: Mixer.channelColor(channel)   // MX-5
     property string group: Mixer.channelGroup(channel)       // CH-8
@@ -33,6 +36,7 @@ Item {
             header.inputPresent = Mixer.channelInputPresent(slug)
             header.muted = Mixer.channelMuted(slug)
             header.hasFx = Mixer.fxEnabled("channel", slug)
+            header.duckedBy = Mixer.ducking(slug).duckedBy || ""
             header.iconName = Mixer.channelIcon(slug)
             header.colorCode = Mixer.channelColor(slug)
             header.group = Mixer.channelGroup(slug)
@@ -128,6 +132,35 @@ Item {
                     HoverHandler { id: badgeHover }
                     Accessible.role: Accessible.StaticText
                     Accessible.name: i18n("in group %1", header.group)
+                }
+                Rectangle {   // FX-9 badge: WER duckt und WIE VIEL gerade — die Spec verlangt beides am Kanal
+                    objectName: "channelDuckBadge/" + header.channel
+                    visible: header.isDucked
+                    radius: height / 2
+                    color: Kirigami.Theme.neutralBackgroundColor
+                    implicitWidth: duckBadgeLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
+                    implicitHeight: duckBadgeLabel.implicitHeight + 2
+                    QQC2.Label {
+                        id: duckBadgeLabel; anchors.centerIn: parent
+                        // Waehrend es wirklich absenkt, steht die Zahl dabei; sonst nur wer der Trigger ist.
+                        text: header.duckReduction < -0.1
+                            ? i18nc("@info ducked by channel, with the reduction happening now",
+                                    "↓ %1 %2 dB", Mixer.channelName(header.duckedBy), header.duckReduction.toFixed(1))
+                            : i18nc("@info ducked by this channel", "↓ %1", Mixer.channelName(header.duckedBy))
+                        font: Kirigami.Theme.smallFont
+                        color: Kirigami.Theme.neutralTextColor
+                    }
+                    QQC2.ToolTip.text: i18n("Ducked by %1 — turns down while that channel carries signal",
+                                            Mixer.channelName(header.duckedBy))
+                    QQC2.ToolTip.visible: duckBadgeHover.hovered
+                    HoverHandler { id: duckBadgeHover }
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: i18n("ducked by %1", Mixer.channelName(header.duckedBy))
+                    // Die laufende Absenkung mitschreiben — nur solange ein Trigger gesetzt ist.
+                    Timer {
+                        interval: 200; running: header.isDucked && header.visible; repeat: true
+                        onTriggered: header.duckReduction = Mixer.duckReduction(header.channel)
+                    }
                 }
             }
             QQC2.Label {
@@ -261,6 +294,18 @@ Item {
             QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
             Accessible.name: Mixer.channelName(header.channel) + " — " + text
         }
+        // FX-9 ducking — highlighted while a trigger is configured
+        QQC2.ToolButton {
+            objectName: "channelDuck/" + header.channel
+            visible: !header.compact || header.isDucked
+            icon.name: "audio-volume-low"
+            icon.color: header.isDucked ? Kirigami.Theme.positiveTextColor : undefined
+            display: QQC2.AbstractButton.IconOnly
+            text: header.isDucked ? i18n("Ducking (active)…") : i18n("Ducking…")
+            onClicked: applicationWindow().duckPanelOpen(header.channel)
+            QQC2.ToolTip.text: text; QQC2.ToolTip.visible: hovered
+            Accessible.name: Mixer.channelName(header.channel) + " — " + text
+        }
         QQC2.ToolButton {
             objectName: "channelMenuButton/" + header.channel
             icon.name: "overflow-menu"
@@ -307,6 +352,7 @@ Item {
         }
         QQC2.MenuItem { text: i18n("Hardware input…"); icon.name: "audio-input-microphone"; onTriggered: inMenu.popup() }
         QQC2.MenuItem { text: i18n("Effects…"); icon.name: "view-media-equalizer"; onTriggered: applicationWindow().fxPanelOpen("channel", header.channel) }
+        QQC2.MenuItem { text: i18n("Ducking…"); icon.name: "audio-volume-low"; onTriggered: applicationWindow().duckPanelOpen(header.channel) }
         QQC2.MenuItem {
             text: i18n("New applications start here")
             icon.name: "go-jump"

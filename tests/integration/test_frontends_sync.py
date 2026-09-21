@@ -647,3 +647,101 @@ def test_fx8_the_kde_window_can_open_the_fx_panel_and_greys_out_missing_plugins(
     # kaputtes Dropdown die Pruefung oben gruen faerben.
     for typ in vorhandene[:2]:
         assert g[f"fxAddType/{typ}.enabled"] == "true", f"{typ} ist gesperrt, obwohl das Plugin da ist"
+
+
+def Mixer_name(stack, slug):
+    """Der Anzeigename eines Kanals, wie ihn das Fenster zeigt (die ComboBox listet Namen, nicht Slugs)."""
+    return next(c["Name"] for c in stack.cli("channel", "list", json_out=True) if c["Slug"] == slug)
+
+
+def test_fx9_ducking_panel_opens_in_the_window_and_configures_the_strength(stack):
+    """FX-9 im Fenster (Regel 2): das Ducking-Panel oeffnet sich per pushDialogLayer, die vier Regler
+    tragen die Grenzen des Daemons, und was dort steht ist dasselbe, was die CLI sieht.
+
+    Der Test geht wie ein Nutzer durch die Shell — Panel oeffnen, Werte lesen. Faellt die Wurzel von
+    ScrollablePage auf FormLayout zurueck (der FxPanel-Fehler vom 2026-09-21), findet der Probe die
+    Regler nicht mehr und jeder Wert ist "<not found>". qmllint merkt das NICHT: die Datei ist
+    syntaktisch einwandfrei, sie laesst sich nur nicht pushen.
+    """
+    stack.cli("duck", "set", "game", "--by", "voice", "--depth", "-18", "--threshold", "-25",
+              "--attack", "30", "--release", "400")
+    cli = stack.cli("--json", "duck", "show", "game", json_out=True)
+
+    # duckPanelPushed.visible ist der einzige Probe, der beweist, dass das Panel WIRKLICH auf dem
+    # Layer-Stack liegt: ein per createObject erzeugtes Panel haengt am Fenster und ist damit probebar,
+    # auch wenn pushDialogLayer es abgelehnt hat (genau die Luecke, die FxPanel monatelang verdeckte).
+    specs = ["duckPanelPushed.text", "duckBy.count", "duckReduction.text", "duckClear.enabled"]
+    for key in ("depth", "threshold", "attack", "release"):
+        specs += [f"duckParam/{key}.value", f"duckParam/{key}.from", f"duckParam/{key}.to",
+                  f"duckParam/{key}.enabled"]
+    g = kde(stack, "--open", "duck/game", *sum((["--probe", s] for s in specs), []))
+
+    assert g["duckPanelPushed.text"] == "yes", (
+        "pushDialogLayer hat das Panel NICHT gepusht — ist die Wurzel von DuckPanel.qml eine Page? " + str(g))
+
+    # (1) Das Panel ist offen: die Trigger-Liste ist gefuellt — "Not ducked" plus die anderen Kanaele,
+    #     der eigene Kanal fehlt (der Daemon lehnt Selbst-Ducking ab).
+    kanaele = stack.cli("channel", "list", json_out=True)
+    erwartet = 1 + len([c for c in kanaele if c["Slug"] != "game"])
+    assert g["duckBy.count"] == str(erwartet), f"Trigger-Liste zeigt {g['duckBy.count']}, erwartet {erwartet}: {g}"
+
+    # (2) Die eingestellte Staerke steht in den Reglern — dieselben Zahlen, die die CLI liefert.
+    for key in ("depth", "threshold", "attack", "release"):
+        assert float(g[f"duckParam/{key}.value"]) == cli[key], (
+            f"{key}: Fenster {g[f'duckParam/{key}.value']}, CLI {cli[key]}")
+        assert g[f"duckParam/{key}.enabled"] == "true", f"{key} ist gesperrt, obwohl ein Trigger gesetzt ist"
+
+    # (3) Die Grenzen sind die des Daemons — ein Regler, der einen abgelehnten Wert erzeugen kann, ist kaputt.
+    #     Gegenprobe zu den Zahlen: die CLI muss jeden Randwert annehmen und alles dahinter ablehnen.
+    for key, (von, bis) in (("depth", (-60, 0)), ("threshold", (-60, 0)), ("attack", (2, 400)), ("release", (2, 800))):
+        assert float(g[f"duckParam/{key}.from"]) == von and float(g[f"duckParam/{key}.to"]) == bis, (
+            f"{key}: Regler {g[f'duckParam/{key}.from']}..{g[f'duckParam/{key}.to']}, Daemon {von}..{bis}")
+        for rand in (von, bis):
+            r = stack.cli("duck", "set", "game", f"--{key}", str(rand), check=False)
+            assert r.returncode == 0, f"{key}={rand} ist Regler-Rand, aber die CLI lehnt ab: {r.stdout}{r.stderr}"
+        r = stack.cli("duck", "set", "game", f"--{key}", str(von - 1 if von < bis else bis + 1), check=False)
+        assert r.returncode == 4, f"{key} ausserhalb des Regler-Bereichs wurde angenommen: {r.stdout}{r.stderr}"
+
+    # Der eigene Kanal darf NICHT in der Trigger-Liste stehen: der Daemon lehnt Selbst-Ducking ab, also
+    # soll die Oberflaeche es nicht anbieten. duckBy.count oben zaehlt nur — dieser Probe liest die Namen.
+    namen = kde(stack, "--open", "duck/game", "--probe", "duckBy.model")["duckBy.model"]
+    assert Mixer_name(stack, "game") not in namen, f"eigener Kanal steht in der Trigger-Liste: {namen}"
+    assert Mixer_name(stack, "voice") in namen, f"Trigger-Kanal fehlt in der Liste: {namen}"
+
+    assert g["duckClear.enabled"] == "true"
+    assert "dB" in g["duckReduction.text"], g["duckReduction.text"]
+    stack.cli("duck", "clear", "game")
+
+
+def test_fx9_badge_says_who_ducks_and_how_much_in_all_three_frontends(stack):
+    """FX-9, Spec-Wortlaut: der abgesenkte Kanal MUSS ein "ducked by <channel>"-Abzeichen und die aktuelle
+    Reduktion zeigen. Dreifach-Paritaet heisst hier: CLI-Baum, Web-Kanalzeile und KDE-Kanalkopf nennen
+    denselben Trigger — sonst zeigt ein Frontend etwas anderes an als die anderen zwei.
+    """
+    stack.cli("duck", "set", "game", "--by", "voice", "--depth", "-18")
+    try:
+
+        # CLI: Baum (Text) und --json
+        # Das Abzeichen haengt an der KANALZEILE (…"Game (game)  v voice"), nicht in einer eigenen Zeile.
+        baum = stack.cli("tree").stdout
+        gamezeile = next(z for z in baum.splitlines() if "(game)" in z)
+        assert "v voice" in gamezeile, f"CLI-Baum nennt den Trigger nicht an der Kanalzeile: {gamezeile!r}"
+        assert "v " not in next(z for z in baum.splitlines() if "(voice)" in z), (
+            "der Trigger-Kanal selbst traegt ein Abzeichen")
+        j = stack.cli("--json", "tree", json_out=True)
+        kj = next(k for k in j["channels"] if k["slug"] == "game")
+        assert kj["duckedBy"] == "voice" and kj["duckDepth"] == -18, f"JSON-Baum: {kj}"
+        assert "duckReduction" in kj, f"laufende Reduktion fehlt im JSON: {kj}"
+
+        # KDE-UI: Abzeichen am Kanalkopf
+        g = kde(stack, "--probe", "channelDuckBadge/game.visible")
+        assert g["channelDuckBadge/game.visible"] == "true", f"KDE-Abzeichen unsichtbar: {g}"
+
+        # (Die Web-Kanalzeile prueft test_web.py::test_fx9_badge_in_the_channel_row — dort steht der Browser.)
+
+        # Gegengewicht: ein NICHT abgesenkter Kanal zeigt kein Abzeichen — sonst waere oben jede Zeile gruen.
+        g2 = kde(stack, "--probe", "channelDuckBadge/voice.visible")
+        assert g2["channelDuckBadge/voice.visible"] in ("false", "<not found>"), (
+            f"nicht abgesenkter Kanal traegt ein Abzeichen: {g2}")
+    finally:
+        stack.cli("duck", "clear", "game")

@@ -75,6 +75,15 @@ Rules for such tests:
   This includes "isolated" A/B comparisons: on 2026-09-21 I ran three suites "alone" while a full gate was
   running next to them (load 8.3–11.0). Both sides were oversubscribed, so the green proved nothing. Before any
   A/B: check `cat /proc/loadavg` against `nproc` and record both in the log.
+- **A red run under memory pressure says nothing about your code.** On 2026-09-21 `test_service_cli.py` went
+  **22 failed / 22 passed** — and every message was `kmixdeck: no session bus` or `pw-dump … exit status 255`,
+  not one of them about the feature under test. The suite starts its own dbus **and** pipewire per module; with
+  ~2 GB free of 7 GB they stop coming up, and that looks exactly like a broken patch. The same file, same
+  working tree, at load 2.6: **44/44 green**. So before you read a single assertion: `free -g` and
+  `/proc/loadavg`. And confirm suspicion against the committed state (`git stash` → build → run) instead of
+  reading the diff — that is what proved `test_cl5_tree` was already red before this branch (seven leftover
+  scenes from earlier tests in the same module, fixed here by looking for the test's own scene instead of
+  comparing the whole list).
 
 ## Where things live
 

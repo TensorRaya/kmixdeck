@@ -4,6 +4,7 @@
 import * as C from "./client.js";
 import { fader, meter, button, el, toast, knob, iconButton } from "./widgets.js";
 import { openFx, fxActive } from "./fx.js";
+import { openDuck, ducked, duckBadge, duckTooltip } from "./duck.js";
 
 const ICONS = { microphone: "🎤", "audio-headphones": "🎧", "applications-games": "🎮", "audio-speakers": "🔊", "preferences-system": "⚙️",
                 "media-playback-start": "▶", "audio-volume-high": "🔊", "camera-web": "📷", "internet-chat": "💬", "multimedia-player": "🎵", "": "" };
@@ -43,7 +44,12 @@ function channelHeader(ch) {
   body.append(el("div", { class: "head-row" },
     el("div", { class: "name-line" },
       el("button", { class: "name", probe: `channelName/${slug}`, title: "Rename", onclick: async () => { const n = prompt2("Channel name", ch.Name); if (n) await C.set(ch.path, "Name", n).catch(err); } }, el("span", { class: "icon" }, icon(ch.Icon)), " ", ch.Name),
-      ch.Group ? el("span", { class: "badge", probe: "channelGroupBadge" }, ch.Group) : null),
+      ch.Group ? el("span", { class: "badge", probe: "channelGroupBadge" }, ch.Group) : null,
+      // FX-9: wer duckt und wie viel gerade — dieselben zwei Angaben wie im KDE-Badge.
+      ducked(ch)
+        ? el("span", { class: "badge badge-duck", probe: `channelDuckBadge/${ch.Slug}`, title: duckTooltip(ch) },
+             duckBadge(ch))
+        : null),
     el("button", { class: "source", probe: `channelSource/${slug}`, title: "Hardware input feeding this channel — click to change. Applications can be routed here regardless.", onclick: () => inputPicker(ch) }, ch.Inputs?.length ? ch.Inputs.map((r) => C.state.root.InputDevices?.[r.split(":")[0]] || r).join(", ") : "Apps", ch.InputPresent === false ? el("span", { class: "gone", title: "input device is not connected" }, " ⚠") : null)));
   const row = el("div", { class: "hrow" });
   row.append(iconButton(ch.Muted ? "muted" : "speaker", { probe: `channelMute/${slug}`, cls: "mute", pressed: ch.Muted, title: ch.Muted ? "Unmute channel" : "Mute channel", onClick: () => C.set(ch.path, "Muted", !ch.Muted).catch(err) }));
@@ -51,9 +57,12 @@ function channelHeader(ch) {
   if (ch.Inputs?.length) row.append(knob({ value: ch.Pan ?? 0, label: `${ch.Name} pan`, probe: `channelPan/${slug}`,
     onInput: (v) => C.set(ch.path, "Pan", v).catch(() => {}), onCommit: (v) => C.set(ch.path, "Pan", v).catch(err) }));
   row.append(iconButton("eq", { probe: `channelFx/${slug}`, cls: "fx" + (fxActive(ch) ? " on" : ""), pressed: fxActive(ch), title: fxActive(ch) ? "Effects (active)…" : "Effects…", onClick: () => openFx(ch, ch.Name) }));
+  // FX-9: ducking is per channel (a mix has no trigger), so the button lives on the channel strip only.
+  row.append(iconButton("duck", { probe: `channelDuck/${slug}`, cls: "fx" + (ducked(ch) ? " on" : ""), pressed: ducked(ch), title: ducked(ch) ? "Ducking (active)…" : "Ducking…", onClick: () => openDuck(ch, ch.Name) }));
   row.append(iconButton("more", { probe: `channelMenuButton/${slug}`, cls: "menu", title: "More", onClick: (ev) => menu(ev.currentTarget, [
     ["Rename…", async () => { const n = prompt2("Channel name", ch.Name); if (n) await C.set(ch.path, "Name", n).catch(err); }],
     ["Effects…", () => openFx(ch, ch.Name)],
+    ["Ducking…", () => openDuck(ch, ch.Name)],
     ["Icon…", async () => { const i = prompt2("Icon (freedesktop name like 'audio-input-microphone', or empty for the default)", ch.Icon || ""); if (i !== null) await C.set(ch.path, "Icon", i).catch(err); }],
     ["Trim…", async () => { const t = prompt2("Trim in dB (−60 … +6)", (20 * Math.log10(ch.Trim || 1)).toFixed(1)); if (t !== null && !isNaN(+t)) await C.set(ch.path, "Trim", Math.pow(10, Math.max(-60, Math.min(6, +t)) / 20)).catch(err); }, "", `channelTrim/${slug}`],
     ["Colour…", async () => { const c = prompt2("Colour (#rrggbb or empty)", ch.Color); if (c !== null) await C.set(ch.path, "Color", c).catch(err); }],

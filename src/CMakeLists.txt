@@ -84,6 +84,7 @@ ecm_add_qml_module(kmixdeck-kde
         qml/SaveSceneDialog.qml
         qml/IconDialog.qml
         qml/FxPanel.qml
+        qml/DuckPanel.qml
         qml/Fader.qml
         qml/LevelMeter.qml
         qml/TrayOverview.qml

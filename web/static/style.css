@@ -59,6 +59,8 @@ main { padding: 12px; overflow: auto; }
 .source.link:hover { color: var(--accent); }
 .gone { color: var(--amber); }
 .badge { display: inline-block; font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; }
+/* FX-9: das Ducking-Badge soll sich vom Gruppen-Badge unterscheiden — es meldet einen laufenden Eingriff. */
+.badge-duck { background: var(--warn-bg, #4a3a1a); border-color: var(--warn, #b8863b); color: var(--warn-fg, #f0d6a0); }
 .spacer { flex: 1; }
 .hrow { display: flex; align-items: center; gap: 4px; min-height: 36px; }
 .hrow .fader { flex: 1; }

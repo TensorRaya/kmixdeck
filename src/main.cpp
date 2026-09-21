@@ -89,7 +89,15 @@ int main(int argc, char *argv[])
     // `band is not defined` in Fader.qml loaded fine and only broke at runtime — exit 0 would have hidden it.
     int qmlWarnings = 0;
     // Only OUR files count (org/kmixdeck/); Kirigami's own binding-loop notices are not ours to fix.
-    QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [&qmlWarnings](const QList<QQmlError> &w) { for (const auto &e : w) { qCWarning(lcFrontend).noquote() << "QML:" << e.toString(); if (e.url().toString().contains(QLatin1String("/org/kmixdeck/"))) ++qmlWarnings; } });
+    QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [&qmlWarnings](const QList<QQmlError> &w) { for (const auto &e : w) { qCWarning(lcFrontend).noquote() << "QML:" << e.toString(); if (e.url().toString().contains(QLatin1String("/org/kmixdeck/"))) ++qmlWarnings;
+        // Fehler AUS Kirigami zaehlen NUR, wenn wir sie ausgeloest haben: eine nicht-Page an
+        // pushDialogLayer stirbt in PageRow.qml mit "Value is null", also unter fremder URL — der Filter
+        // auf /org/kmixdeck/ hat genau diesen Fall uebersehen, weshalb sich FxPanel monatelang nicht
+        // oeffnen liess, waehrend --self-test gruen blieb (gemessen 2026-09-21). Pauschal alles aus
+        // Kirigami zu zaehlen geht NICHT: die Bibliothek hat eigene Binding-Loops, die nichts mit uns zu
+        // tun haben und den Test sofort dauerhaft rot faerben (auch gemessen). Also praezise diese Signatur.
+        else if (e.url().toString().contains(QLatin1String("/kirigami/controls/PageRow.qml"))
+                 && e.description().contains(QLatin1String("Value is null"))) ++qmlWarnings; } });
     auto *l10n = new KLocalizedContext(&engine);
     l10n->setTranslationDomain(QStringLiteral("kmixdeck"));   // UX-5: without this the QML i18n() calls look in the empty default domain
     engine.rootContext()->setContextObject(l10n);
@@ -111,6 +119,11 @@ int main(int argc, char *argv[])
         // 150-second frontend suite.
         QTimer::singleShot(2400, &app, [win] { QMetaObject::invokeMethod(win, "openDrawerForSelfTest"); });
         QTimer::singleShot(2700, &app, [win] { QMetaObject::invokeMethod(win, "showTrayOverview", Q_ARG(QVariant, 100), Q_ARG(QVariant, 100)); });
+        // Die beiden Dialog-Layer AUCH hier pushen (FX-8/FX-9): pushDialogLayer mit einer nicht-Page stirbt
+        // in Kirigamis PageRow.qml, und das sah man vorher nur, wenn man das Panel im Fenster von Hand
+        // aufmachte — kein Test tat das. Jetzt faellt es in diesen 5 Sekunden auf.
+        QTimer::singleShot(2900, &app, [win] { QMetaObject::invokeMethod(win, "fxPanelOpen", Q_ARG(QVariant, QStringLiteral("channel")), Q_ARG(QVariant, QStringLiteral("voice"))); });
+        QTimer::singleShot(3100, &app, [win] { QMetaObject::invokeMethod(win, "duckPanelOpen", Q_ARG(QVariant, QStringLiteral("game"))); });
         QTimer::singleShot(3400, &app, [&qmlWarnings] { QCoreApplication::exit(qmlWarnings > 0 ? 2 : 0); });
     }
     // --gesture "connect:<fromCard>|<fromPos>|<toCard>|<toPos>" / "remove:<kind>|<channel|mix>|<ref>" — the patchbay's
@@ -139,8 +152,17 @@ int main(int argc, char *argv[])
             }
             else fprintf(stderr, "kmixdeck: --open fx needs fx/channel|mix/<slug>, got '%s'\n", qPrintable(open));
         }
+        // FX-9: Ducking-Panel, Form "duck/<slug>" — kanalgebunden, ein Mix hat keinen Trigger.
+        else if (open.startsWith(QLatin1String("duck/"))) {
+            const QStringList t = open.split(QLatin1Char('/'));
+            if (t.size() == 2 && !t[1].isEmpty()) {
+                if (!QMetaObject::invokeMethod(win, "duckPanelOpen", Q_ARG(QVariant, t[1])))
+                    fprintf(stderr, "kmixdeck: --open %s: duckPanelOpen() not invokable on the root window\n", qPrintable(open));
+            }
+            else fprintf(stderr, "kmixdeck: --open duck needs duck/<slug>, got '%s'\n", qPrintable(open));
+        }
         // Ein unbekanntes Ziel MUSS auffallen, statt lautlos zu verschwinden.
-        else fprintf(stderr, "kmixdeck: --open: unknown target '%s' (apps|routing|patchbay|channel-ports|fx/channel|mix/<slug>)\n",
+        else fprintf(stderr, "kmixdeck: --open: unknown target '%s' (apps|routing|patchbay|channel-ports|fx/channel|mix/<slug>|duck/<slug>)\n",
                      qPrintable(open));
     };
 

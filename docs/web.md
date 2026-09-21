@@ -70,7 +70,7 @@ properties change, plus `{"op":"meters","peaks":{…}}` at the daemon's 25 Hz wh
 so faders feel direct. No audio crosses the wire — only control and meters.
 
 The UI is plain ES modules in `web/static/` — no build step, no framework. `app.js` (tabs, undo, export/import),
-`client.js` (socket, state, patches), `mixer.js`, `apps.js`, `patchbay.js`, `fx.js`, `widgets.js`. Every interactive element
+`client.js` (socket, state, patches), `mixer.js`, `apps.js`, `patchbay.js`, `fx.js`, `duck.js`, `widgets.js`. Every interactive element
 carries a `data-probe` attribute; that is what the integration tests drive.
 
 ## Proven by

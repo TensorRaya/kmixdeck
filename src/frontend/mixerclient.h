@@ -208,6 +208,12 @@ public:
     /// True when a non-empty, enabled effect chain sits on that channel/mix (ADR 0008) — for the highlighted FX button.
     Q_INVOKABLE bool    fxEnabled(const QString &kind, const QString &slug) const;
     Q_INVOKABLE QString fxChain(const QString &kind, const QString &slug) const;
+    // FX-9 ducking (channels only — a mix has no trigger). ducking() reads the cached property, so it needs
+    // Ducking to be in ChannelObject::properties(); setDucking() calls the METHOD and waits, because the reason
+    // for a refusal has to reach the user (a property write cannot answer an error — see rejectProperty).
+    Q_INVOKABLE QVariantMap ducking(const QString &slug) const;
+    Q_INVOKABLE bool        setDucking(const QString &slug, const QVariantMap &cfg);
+    Q_INVOKABLE double      duckReduction(const QString &slug) const;
     Q_INVOKABLE void    setFxChain(const QString &kind, const QString &slug, const QString &chainJson);
     Q_INVOKABLE void    setFxControl(const QString &kind, const QString &slug, const QString &control, double value);
     Q_INVOKABLE QVariantList fxTypes() const { return m_fxTypes; }

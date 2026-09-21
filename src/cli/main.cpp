@@ -92,7 +92,7 @@ const char *codeName(Exit code) {
 /// zusammen, der die Dispatch-Tabelle aus dieser Datei liest.
 constexpr const char *KOMMANDO_NAMEN[] = {
     "status", "tree", "patch", "loudness", "streamdeck", "setup", "export", "import", "undo", "scene",
-    "devices", "channel", "mix", "fx", "cell", "app", "listen", "audition", "levels", "watch",
+    "devices", "channel", "mix", "fx", "duck", "cell", "app", "listen", "audition", "levels", "watch",
     "complete",   // CL-7: kein Alltagskommando, aber `help complete` und die Doku-Pruefung brauchen den Namen
 };
 
@@ -139,6 +139,14 @@ bool setProp(const QString &path, const QString &iface, const QString &name, con
     QDBusMessage r = props.call("Set", iface, name, QVariant::fromValue(QDBusVariant(v)));
     if (r.type() == QDBusMessage::ErrorMessage) { *error = r.errorMessage(); return false; }
     return true;
+}
+/// Read one property straight off the bus. `o` is the snapshot fetch() took BEFORE the command ran, so
+/// anything that reads back what the same invocation just wrote has to ask again (FX-9: `duck show`).
+QVariant getProp(const QString &path, const QString &iface, const QString &name) {
+    QDBusInterface props(BUS, path, "org.freedesktop.DBus.Properties", QDBusConnection::sessionBus());
+    const QDBusMessage r = props.call("Get", iface, name);
+    if (r.type() == QDBusMessage::ErrorMessage || r.arguments().isEmpty()) return {};
+    return r.arguments().first().value<QDBusVariant>().variant();
 }
 // "0.25" (linear) | "-12dB" | "50%" (cubic, like the UI) → linear
 // One rule for every syntax: nothing above unity is silently clamped — the bus refuses it, so do we.
@@ -535,6 +543,13 @@ int cmdTree(const Objects &o) {
             if (!gerVal.isEmpty()) k["inputDevice"] = gerVal;
             const QStringList kfx = fxNamen(c.value().value("FxChain").toString());
             if (!kfx.isEmpty()) k["fx"] = QJsonArray::fromStringList(kfx);
+            // FX-9: wer duckt und wie viel gerade — dieselben zwei Angaben wie die Badges in den UIs.
+            const QJsonObject kduck = QJsonDocument::fromJson(c.value().value("Ducking").toString().toUtf8()).object();
+            if (!kduck.value("duckedBy").toString().isEmpty()) {
+                k["duckedBy"] = kduck.value("duckedBy").toString();
+                k["duckDepth"] = kduck.value("depth").toDouble(-12);
+                k["duckReduction"] = c.value().value("DuckReduction").toDouble();
+            }
 
             QJsonArray zellen;
             for (auto m = o.mixes.cbegin(); m != o.mixes.cend(); ++m) {
@@ -608,6 +623,18 @@ int cmdTree(const Objects &o) {
             << dim << " (" << slug.left(16) << ")" << aus;
         if (!gerName.isEmpty())
             out << dim << "  <- " << gerName.section('/', -1).left(30) << aus;
+        // FX-9: WER duckt und WIE VIEL gerade — dieselben zwei Angaben wie die Badges in KDE-UI und Web-UI.
+        // Die laufende Zahl steht nur dabei, wenn wirklich abgesenkt wird, sonst ist die Zeile im Ruhezustand
+        // jedes Mal anders und der Baum flackert beim Hinsehen.
+        {
+            const QJsonObject dk = QJsonDocument::fromJson(c.value().value("Ducking").toString().toUtf8()).object();
+            const QString wer = dk.value("duckedBy").toString();
+            if (!wer.isEmpty()) {
+                const double jetzt = c.value().value("DuckReduction").toDouble();
+                out << stumm << "  v " << wer.left(16) << aus;
+                if (jetzt < -0.1) out << stumm << " " << QString::number(jetzt, 'f', 1) << " dB" << aus;
+            }
+        }
         out << "\n";
 
         const QString tiefer = letzterKanal ? bz.leer : bz.strich;
@@ -1206,6 +1233,77 @@ struct Cli {
         }
         return fail(Usage, "unknown subcommand '" + sub + "'");
     }
+    int cmdDuck() {   // FX-9: side-chain ducking per channel
+        // duck show <slug> | duck set <slug> --by <trigger> [--depth dB] [--threshold dBFS] [--attack ms] [--release ms]
+        // duck clear <slug>
+        if (!need(3)) return Usage;
+        const QString path = QStringLiteral("%1/channel/%2").arg(ROOT, a[2]);
+        if (!o.channels.contains(path)) return fail(NotFound, QStringLiteral("no channel '%1'").arg(a[2]));
+        if (sub == "show") {
+            const QString d = getProp(path, QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Ducking")).toString();
+            const double jetzt = getProp(path, QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("DuckReduction")).toDouble();
+            if (g_json) {
+                // The live reduction only exists at runtime, so it is merged in rather than stored in the layout.
+                QJsonObject j = QJsonDocument::fromJson(d.toUtf8()).object();
+                j.insert(QStringLiteral("reduction"), jetzt);
+                out << QString::fromUtf8(QJsonDocument(j).toJson(QJsonDocument::Compact)) << "\n";
+                return Ok;
+            }
+            const QJsonObject j = QJsonDocument::fromJson(d.toUtf8()).object();
+            const QString by = j.value(QStringLiteral("duckedBy")).toString();
+            if (by.isEmpty()) { out << "not ducked\n"; return Ok; }
+            out << QStringLiteral("ducked by %1: depth %2 dB, threshold %3 dBFS, attack %4 ms, release %5 ms (now %6 dB)\n")
+                       .arg(by).arg(j.value(QStringLiteral("depth")).toDouble())
+                       .arg(j.value(QStringLiteral("threshold")).toDouble())
+                       .arg(j.value(QStringLiteral("attack")).toDouble())
+                       .arg(j.value(QStringLiteral("release")).toDouble())
+                       .arg(jetzt);
+            return Ok;
+        }
+        QDBusInterface obj(BUS, path, QStringLiteral("org.kmixdeck1.Channel"), QDBusConnection::sessionBus());
+        if (sub == "clear") {
+            const QDBusMessage r = obj.call(QStringLiteral("SetDucking"), QStringLiteral("{}"));
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        if (sub == "set") {
+            // Start from what is configured so a single flag can be changed without restating the rest.
+            QJsonObject j = QJsonDocument::fromJson(
+                getProp(path, QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Ducking")).toString().toUtf8()).object();
+            auto flagWert = [&](const QString &flag, double *ziel) -> int {
+                const int i = a.indexOf(flag);
+                if (i < 0) return Ok;
+                if (i + 1 >= a.size()) return fail(Usage, flag + " needs a value");
+                bool okNum = false; const double v = a[i + 1].toDouble(&okNum);
+                if (!okNum) return fail(Usage, flag + " must be a number, got '" + a[i + 1] + "'");
+                *ziel = v; return Ok;
+            };
+            const int iBy = a.indexOf(QStringLiteral("--by"));
+            if (iBy >= 0) {
+                if (iBy + 1 >= a.size()) return fail(Usage, "--by needs a channel");
+                j.insert(QStringLiteral("duckedBy"), a[iBy + 1]);
+            }
+            if (j.value(QStringLiteral("duckedBy")).toString().isEmpty())
+                return fail(Usage, "which channel should trigger the ducking? use --by <channel>");
+            double tiefe = j.value(QStringLiteral("depth")).toDouble(-12.0);
+            double schwelle = j.value(QStringLiteral("threshold")).toDouble(-40.0);
+            double anstieg = j.value(QStringLiteral("attack")).toDouble(10.0);
+            double abfall = j.value(QStringLiteral("release")).toDouble(200.0);
+            for (const auto &p : {std::pair<QString, double *>{QStringLiteral("--depth"), &tiefe},
+                                  {QStringLiteral("--threshold"), &schwelle},
+                                  {QStringLiteral("--attack"), &anstieg},
+                                  {QStringLiteral("--release"), &abfall}})
+                if (const int rc = flagWert(p.first, p.second); rc != Ok) return rc;
+            j.insert(QStringLiteral("depth"), tiefe);
+            j.insert(QStringLiteral("threshold"), schwelle);
+            j.insert(QStringLiteral("attack"), anstieg);
+            j.insert(QStringLiteral("release"), abfall);
+            const QDBusMessage r = obj.call(QStringLiteral("SetDucking"),
+                                            QString::fromUtf8(QJsonDocument(j).toJson(QJsonDocument::Compact)));
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        return fail(Usage, "expected 'show', 'set' or 'clear'");
+    }
+
     int cmdFx() {   // effects per channel/mix (ADR 0008)
         // fx types | fx get <channel|mix> <slug> | fx set <channel|mix> <slug> '<json>' | fx control <channel|mix> <slug> <key> <value>
         if (sub == "types") {
@@ -1395,6 +1493,7 @@ struct Cli {
             {QStringLiteral("channel"), &Cli::cmdChannelMix},
             {QStringLiteral("mix"), &Cli::cmdChannelMix},
             {QStringLiteral("fx"), &Cli::cmdFx},
+            {QStringLiteral("duck"), &Cli::cmdDuck},
             {QStringLiteral("cell"), &Cli::cmdCell},
             {QStringLiteral("app"), &Cli::cmdApp},
             {QStringLiteral("listen"), &Cli::cmdListen},

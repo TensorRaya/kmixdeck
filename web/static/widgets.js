@@ -191,6 +191,8 @@ export function knob({ value = 0, label, probe, onInput, onCommit }) {
 
 /** Inline SVG icons (stroke = currentColor) — emoji render differently per font/OS, a desk needs the same glyph everywhere. */
 const ICON_PATHS = {
+  // FX-9 ducking: a level stepping down and coming back, plus the arrow that pushes it — reads at 18 px
+  duck: "M3 8h4l2 8 2-8h4l2 5h4 M12 3v5 M9.5 6l2.5 2.5L14.5 6",
   // ear (lucide "ear"): recognisable at 18 px
   ear: "M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0 M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4",
   headphones: "M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H3v-7zm18 0h-3a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h3v-7zM3 14a9 9 0 0 1 18 0",

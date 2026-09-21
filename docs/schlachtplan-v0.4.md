@@ -59,7 +59,7 @@ Das sind Features, die als ✅ gelten, aber in einer Oberfläche fehlen.
 |---|---|---|---|---|
 | 4.1 | **CT-1** Rest: volume-up/down + listen-next-mix als Global Shortcuts | ⬜ | – | – |
 | 4.2 | **FX-8** Noise Suppression (rnnoise), aus + Paketname wenn fehlend | ⬜ | ⬜ | ⬜ |
-| 4.3 | **FX-9** Ducking (Side-Chain), aus, Badge „ducked by X" | ⬜ | ⬜ | ⬜ |
+| 4.3 | **FX-9** Ducking (Side-Chain), aus, Badge „ducked by X" | ✅ | ✅ | ✅ |
 | 4.4 | **CT-8** Soundboard (`PlaySample` im Daemon per `pw_stream`) | ⬜ | ⬜ | ⬜ |
 
 Opt-in-Regel der Spec (Zeile 13) gilt für alle vier: **aus by default**, zur

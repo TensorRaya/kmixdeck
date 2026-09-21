@@ -97,3 +97,13 @@ Two traps worth knowing before you write a window test:
   `FxPanel.qml` had a `Kirigami.FormLayout` root for months: the "Effects…" button did nothing,
   and no test noticed because the FX tests went through the CLI and the browser, while
   `--self-test` only loads the file without pushing it (fixed 2026-09-21, FX-8).
+
+  **This is now caught in 5 seconds.** `--self-test` pushes every dialog (Ducking, Effects, Devices,
+  Settings) instead of only loading the QML, and the QML warning counter accepts the *one* Kirigami
+  message that means a failed push — `PageRow.qml … Value is null`, which is `verifyPages()` refusing
+  a non-Page. Nothing else from Kirigami is counted: its own binding loops are not our bug, and a
+  blanket filter made `frontend-qml-loads` permanently red. Verified by sabotage on 2026-09-21: a
+  `FormLayout` root in `DuckPanel.qml` **or** in `FxPanel.qml` turns the test red, the correct
+  `ScrollablePage` keeps it green. Neither a probe for the object nor `page.parent` works as the
+  indicator, by the way: `createObject()` already parents the panel to the window, so both say
+  "opened" even when the push failed.

@@ -363,6 +363,30 @@ plugin → refused with the reason.
 `fx control channel|mix <slug> <node:Control> <value>`
 : Live tweak of one control — no reload, no click.
 
+## Ducking
+
+Turn one channel down automatically while another one is speaking — game audio under the
+microphone, music under a guest. The daemon watches the trigger channel's own meter and rides
+the ducked channel's gain; nothing has to be patched by hand (FX-9).
+
+`duck show <channel>`
+: What is configured, plus the reduction being applied right now. `--json` adds `reduction`.
+> kmixdeck duck show game
+> kmixdeck --json duck show game | jq .reduction
+
+`duck set <channel> --by <trigger> [--depth dB] [--threshold dBFS] [--attack ms] [--release ms]`
+: How hard it ducks and how fast. `--depth` is the attenuation while the trigger is active
+(-60…0 dB, default -12), `--threshold` the trigger level it starts at (0…-60 dBFS, default
+-40), `--attack` and `--release` the ramps in and out (2…400 ms and 2…800 ms, defaults 10 and
+200). Every flag is optional and keeps the value already set, so one setting can be changed on
+its own. `--by` is required the first time and refuses a channel ducking itself.
+> kmixdeck duck set game --by voice                    # the usual case, -12 dB
+> kmixdeck duck set game --by voice --depth -24        # harder
+> kmixdeck duck set game --release 500                 # only the tail, rest untouched
+
+`duck clear <channel>`
+: Stop ducking and remove the ducker from the graph.
+
 ## Scenes
 
 A scene stores the *mix state* — every cell level and mute, plus per-mix level,

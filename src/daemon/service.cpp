@@ -93,6 +93,13 @@ void ChannelObject::setDuckingJson(const QString &json) {
     // five values was out of range.
     if (!m_mixer->setDucking(m_slug, doc.object(), &warum)) rejectProperty(QStringLiteral("Ducking"), warum);
 }
+bool ChannelObject::SetDucking(const QString &json) {
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+    if (!doc.isObject()) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("expected a JSON object {duckedBy, depth, attack, release, threshold}")); return false; }
+    QString warum;
+    if (!m_mixer->setDucking(m_slug, doc.object(), &warum)) { sendErrorReply(QDBusError::InvalidArgs, warum); return false; }
+    return true;
+}
 double ChannelObject::duckReduction() const { return m_mixer->duckReduction(m_slug); }
 QString ChannelObject::fxChainJson() const { return QJsonDocument(m_mixer->fxChain(m_slug)).toJson(QJsonDocument::Compact); }
 bool ChannelObject::SetFx(const QString &chainJson) {
@@ -116,7 +123,11 @@ QVariantMap ChannelObject::properties() const {
     return {{QStringLiteral("Slug"), m_slug}, {QStringLiteral("Name"), name()}, {QStringLiteral("Icon"), icon()}, {QStringLiteral("Color"), color()}, {QStringLiteral("Group"), group()},
             {QStringLiteral("Trim"), trim()}, {QStringLiteral("Pan"), pan()}, {QStringLiteral("Muted"), muted()}, {QStringLiteral("NodeName"), nodeName()},
             {QStringLiteral("InputDevice"), inputDevice()}, {QStringLiteral("InputPresent"), inputPresent()},
-            {QStringLiteral("Inputs"), inputs()}, {QStringLiteral("FxChain"), fxChainJson()}};
+            {QStringLiteral("Inputs"), inputs()}, {QStringLiteral("FxChain"), fxChainJson()},
+            // FX-9: this map is what GetManagedObjects and InterfacesAdded carry, i.e. everything a client sees
+            // without asking property by property. Leaving Ducking out here made the web UI's state show
+            // `undefined` while the bus had the value all along (measured 2026-09-21).
+            {QStringLiteral("Ducking"), duckingJson()}, {QStringLiteral("DuckReduction"), duckReduction()}};
 }
 
 // ---- Mix

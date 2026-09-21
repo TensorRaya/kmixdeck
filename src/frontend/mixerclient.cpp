@@ -673,6 +673,26 @@ void MixerClient::setChannelDevice(const QString &slug, const QString &deviceNod
 
 } // namespace kmixdeck::frontend
 
+QVariantMap kmixdeck::frontend::MixerClient::ducking(const QString &slug) const {
+    const QJsonObject o = QJsonDocument::fromJson(m_channels.value(slug).value(QStringLiteral("Ducking")).toString().toUtf8()).object();
+    return o.toVariantMap();
+}
+double kmixdeck::frontend::MixerClient::duckReduction(const QString &slug) const {
+    return m_channels.value(slug).value(QStringLiteral("DuckReduction")).toDouble();
+}
+bool kmixdeck::frontend::MixerClient::setDucking(const QString &slug, const QVariantMap &cfg) {
+    const QString json = QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(cfg)).toJson(QJsonDocument::Compact));
+    // Blocking on purpose: the caller shows the reason on failure, and a fire-and-forget asyncCall would leave
+    // an out-of-range value looking accepted in the window while the daemon refused it.
+    const QDBusMessage r = QDBusInterface(BUS, QStringLiteral("%1/channel/%2").arg(ROOT, slug),
+                                          QStringLiteral("org.kmixdeck1.Channel"), QDBusConnection::sessionBus())
+                               .call(QStringLiteral("SetDucking"), json);
+    if (r.type() == QDBusMessage::ErrorMessage) { m_lastError = r.errorMessage(); return false; }
+    m_lastError.clear();
+    m_channels[slug][QStringLiteral("Ducking")] = json;
+    Q_EMIT channelChanged(slug);
+    return true;
+}
 bool kmixdeck::frontend::MixerClient::fxEnabled(const QString &kind, const QString &slug) const {
     const QJsonObject o = QJsonDocument::fromJson(fxChain(kind, slug).toUtf8()).object();
     return o.value(QStringLiteral("enabled")).toBool(true) && !o.value(QStringLiteral("chain")).toArray().isEmpty();

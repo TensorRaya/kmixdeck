@@ -277,3 +277,111 @@ Zeit.
 Das CLI hat noch kein `duck`-Kommando (getestet: `kmixdeck duck ...` existiert
 nicht, D-Bus `Ducking` funktioniert). Dreifach-Paritaet ist damit fuer FX-9 noch
 nicht erfuellt — CLI und beide UIs fehlen.
+
+
+## 2026-09-21 — Die Staerke ist einstellbar, in allen drei Frontends
+
+"Wie hart es duckt" ist `depth`, und dazu gehoeren drei weitere Werte. Alle vier sind jetzt in CLI,
+Web-UI und KDE-UI einstellbar, mit denselben Grenzen und denselben Zahlen:
+
+| Wert | Bereich | Was er tut |
+|---|---|---|
+| `depth` | -60..0 dB | wie weit der Kanal faellt, waehrend der Trigger spricht |
+| `threshold` | -60..0 dBFS | wie laut der Trigger sein muss, damit es anspringt |
+| `attack` | 2..400 ms | wie schnell es runtergeht |
+| `release` | 2..800 ms | wie lange es braucht, um zurueckzukommen |
+
+Gemessen (Musik bei 0.0884, Trigger auf Vollpegel): `depth -12` → 0.0222, `depth -24` → 0.0056,
+`depth -18` → -18.0 dB. Jeder Wert vorher berechnet, dann getroffen.
+
+### Vier Fehler, die dabei aufgefallen sind — alle gemessen, keiner geraten
+
+1. **`ChannelObject::properties()` kannte `Ducking` nicht.** Die Map fuettert `GetManagedObjects` und
+   `InterfacesAdded`, also jeden Client, der nicht einzeln nachfragt. Web-UI und KDE-UI sahen darum
+   Standardwerte statt der Einstellung — der Daemon war korrekt, die Auslieferung nicht.
+2. **`MixerClient` kannte Ducking gar nicht.** Die KDE-Shell ist ein eigener D-Bus-Client; `Mixer.ducking()`
+   lief ins Leere. Drei Methoden ergaenzt; `setDucking` blockiert absichtlich, weil der Grund einer
+   Ablehnung beim Benutzer ankommen muss.
+3. **Eine abgelehnte Property-Schreibung meldete Erfolg.** `rejectProperty` schrieb nur ins Log:
+   `calledFromDBus()` ist im Property-Setter false, ein `sendErrorReply` von dort segfaultet (steht seit
+   laengerem im Kommentar, heute bestaetigt). Deshalb hat Ducking jetzt eine **Methode** `SetDucking` —
+   dort traegt die Fehlerantwort. Selbst-Ducking, `threshold +5`, `depth -99` und ein unbekannter Trigger
+   geben nun Code 4 mit Begruendung statt rc 0.
+4. **`step` am Web-Regler rasterte auf 2, 7, 12 …** — ein `input[type=range]` schnappt auf `min + n*step`,
+   also lieferte "500 ms" die 502. Raster an runden Werten ausgerichtet.
+
+### Der teuerste Fund: der Test, der den FX-8-Fehler nicht sah
+
+FxPanel liess sich monatelang nicht oeffnen (FormLayout-Wurzel an `pushDialogLayer`). Warum kein Test das
+merkte, ist jetzt geklaert — und zwar nach drei falschen Annahmen meinerseits:
+
+* Ein Probe auf ein Element im Panel **findet es trotzdem**: `createObject` haengt das Objekt ans Fenster,
+  auch wenn der Push es ablehnt. Ein "Element gefunden" beweist also NICHT, dass der Dialog offen ist.
+* `layers.depth` taugt auch nicht: auf dem Desktop oeffnet `pushDialogLayer` ein eigenes QQuickWindow, dann
+  bleibt depth bei 1, obwohl alles geklappt hat.
+* Der Elternteil wechselt in BEIDEN Faellen — also auch kein Massstab.
+
+Der verlaessliche Marker ist der QML-Fehler selbst: `PageRow.qml: "Value is null"`. Der Zaehler in
+`main.cpp` filterte auf `/org/kmixdeck/` und hat ihn darum uebersehen, weil er unter Kirigamis URL auftritt.
+Pauschal alles aus Kirigami zu zaehlen geht nicht (die Bibliothek hat eigene Binding-Loops, die den Test
+sofort dauerhaft rot faerben — gemessen). Also genau diese Signatur, plus beide Panels im `--self-test`.
+
+Gegenprobe: FormLayout-Wurzel in DuckPanel.qml **und** in FxPanel.qml machen `frontend-qml-loads` rot,
+das Original ist gruen. Der 5-Sekunden-Test deckt damit eine Fehlerklasse ab, die vorher unsichtbar war.
+
+Nebenbei gelernt: meine erste Gegenprobe meldete das Original faelschlich als rot, weil mein `tail -4` bei
+diesem Test die Zeitzusammenfassung statt der Bestehensmeldung erwischte. Rule Zero gilt auch fuer das
+eigene Messskript — ein Messwerkzeug, das das Original rot faerbt, ist widerlegt, nicht der Code.
+
+### Was auf dem Weg zur Dreifach-Paritaet wirklich kaputt war
+
+Nicht das Ducking — das lief seit 531c761. Kaputt war der Weg dorthin, und zwar an vier Stellen, die alle
+dieselbe Form haben: **etwas meldet Erfolg, ohne welchen zu haben.**
+
+1. **`rejectProperty()` schreibt nur ins Log.** Neun Aufrufstellen, jede fuer eine Property, die ein Client
+   schreiben kann — `Volume`, `Pan`, `Trim`, `Group`, `Color`, `InputDevice`, `Follows`. Eine abgelehnte
+   Schreibung kam beim Aufrufer als **Erfolg** an, in `busctl` genauso wie in unserem CLI. Gemessen:
+   `duck set game --by game` (Kanal duckt sich selbst) → `rc=0`, waehrend das Daemon-Log "refused" sagte.
+   Reparabel ist das im Setter nicht: dort ist `calledFromDBus() == false`, `sendErrorReply()` tut nichts
+   (und stuerzte den Daemon ab, als das mal jemand versuchte — der Kommentar in service.h stand da schon).
+   Loesung ist die, die `SetFx` schon nutzt: **Methode statt Property-Write**. `SetDucking` ist ein
+   `public slot` und liefert die Ablehnung mit Begruendung, Exit-Code 4.
+2. **`properties()` listete `Ducking` nicht.** Diese Map fuettert `GetManagedObjects` und
+   `InterfacesAdded` — also jeden Client, der nicht jede Property einzeln abfragt. Der Daemon
+   introspektierte sie korrekt, `busctl get-property` lieferte sie korrekt, und die Web-UI sah trotzdem
+   `None`. Ein Fehler, den man nur findet, wenn man den **Client** misst und nicht den Bus.
+3. **`MixerClient` kannte kein Ducking.** Die KDE-UI spricht nicht mit `Mixer`, sondern mit `MixerClient`
+   ueber D-Bus. `Mixer.ducking(...)` aus QML ging also ins Leere: das Panel oeffnete, zeigte aber
+   Standardwerte statt dem, was die CLI gesetzt hatte. Sah aus wie ein Lesefehler, war eine fehlende Methode.
+4. **`pushDialogLayer()` scheitert lautlos** — die FX-8-Falle, eine Ebene tiefer. Weder ein Probe auf das
+   Objekt noch `page.parent` taugt als Nachweis: `createObject()` haengt das Panel schon ans Fenster, beide
+   sagen "offen", auch wenn der Push gescheitert ist. `layers.depth` taugt auch nicht, weil
+   `pushDialogLayer` auf dem Desktop ein eigenes Fenster oeffnet (`depth 1 -> 1`, gemessen). Der einzige
+   verlaessliche Marker ist die Kirigami-Meldung `PageRow.qml … Value is null` = `verifyPages()` weist ein
+   Nicht-Page ab. Die zaehlt der QML-Warnungszaehler jetzt mit, und `--self-test` **pusht** alle Dialoge
+   statt sie nur zu laden.
+
+Gegenprobe zu 4 (die wichtigste des Tages): eine `FormLayout`-Wurzel in `DuckPanel.qml` **oder** in
+`FxPanel.qml` macht `frontend-qml-loads` rot, die richtige `ScrollablePage` gruen. Damit ist die Fehlerklasse,
+die monatelang unsichtbar war, in 5 Sekunden abgedeckt.
+
+### Nebenbefunde, die nichts mit FX-9 zu tun hatten
+
+- **`test_cl5_tree` war schon vor diesem Branch rot.** Sieben Szenen statt einer, weil Szenen Dateien sind
+  und die `stack`-Fixture modulweit laebt. Am Commit-Stand nachgemessen (`git stash` → build → run): derselbe
+  Fehler. Behoben, indem der Test seine eigene Szene **sucht** statt die Liste gleichzusetzen.
+- **22 von 44 Fehlschlaegen waren Speichermangel**, keine Code-Fehler: `kmixdeck: no session bus`,
+  `pw-dump exit 255`. Bei ~2 GB frei von 7 GB kommen dbus und pipewire pro Modul nicht mehr hoch. Derselbe
+  Baum bei Last 2.6: 44/44 gruen.
+- **`msgattrib --untranslated` zeigt `fuzzy` nicht an.** Drei Texte standen als uebersetzt im Katalog und
+  waren geraten: "Ducking on %1" → "Ich hoere auf %1%2", "Right now:" → "Nur rechts". Im Fenster waere
+  glatter Unsinn erschienen. Immer **beides** pruefen: `--untranslated` UND `--only-fuzzy`.
+- **Ein `range`-Slider rastet auf `min + n*step`.** `min 2, step 5` kann 500 nicht erzeugen, nur 502 —
+  gemessen, nicht ueberlegt. Die Raster liegen jetzt auf runden Werten.
+
+### Stand
+
+Alle vier Werte in allen drei Frontends einstellbar, Abzeichen mit Trigger-Name und laufender Absenkung
+in allen drei. Aus im Ruhezustand (`not ducked`, `duckedBy: ""`, kein Abzeichen), Regler ohne Trigger
+gesperrt. Vertrag in `interfaces/org.kmixdeck1.Channel.xml`, Doku in `docs/dbus-api.md`, `docs/kmixdeck.md`,
+`docs/web.md`, `docs/window.md`. Katalog 313/313, kein fuzzy.

@@ -69,5 +69,18 @@
       <arg name="value" type="d" direction="in"/>
       <arg name="accepted" type="b" direction="out"/>
     </method>
+    <!-- FX-9: turn this channel down while another one talks, as JSON
+         {duckedBy, depth (-60..0 dB), threshold (-60..0 dBFS), attack (2..400 ms), release (2..800 ms)};
+         "" or "{}" when off. Read-only here for the same reason as FxChain: third-party UIs mirror it cheaply. -->
+    <property name="Ducking" type="s" access="read"/>
+    <!-- how much is being taken off RIGHT NOW, in dB (0 = not ducking at the moment) -->
+    <property name="DuckReduction" type="d" access="read"/>
+    <!-- set the whole config; validates first (self-ducking, ranges, unknown trigger) and a refusal comes
+         back as a D-Bus error. A METHOD, not a property write: a rejected property write cannot answer
+         (calledFromDBus() is false in the setter), so it would look accepted — see rejectProperty. -->
+    <method name="SetDucking">
+      <arg name="duckingJson" type="s" direction="in"/>
+      <arg name="accepted" type="b" direction="out"/>
+    </method>
   </interface>
 </node>

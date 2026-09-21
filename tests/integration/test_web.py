@@ -525,3 +525,80 @@ def test_bp1_websocket_refuses_a_foreign_origin_and_takes_its_own(stack):
         assert asyncio.run(attempt(None)) == "snapshot"                 # scripts, the tests themselves
     finally:
         web.close()
+
+
+@pytest.mark.skipif(not CHROME, reason=NO_CHROME)
+def test_fx9_web_ui_configures_how_hard_it_ducks(stack):
+    """FX-9 in the browser (rule 2): the drawer sets the trigger and all four values, the CLI sees the same
+    numbers, and a CLI-side change shows up in the drawer. The sliders carry the daemon's own ranges, so a
+    value the daemon would refuse cannot be produced here — that is checked against Mixer::setDucking's limits
+    rather than against numbers copied into the test."""
+    web = Web(stack, token="")
+    try:
+        with Chrome(web.url, size=(1280, 800)) as ch:
+            ch.wait("window.kmixdeck && window.kmixdeck.state.connected && " + _q("channelDuck/game"), 15)
+            assert ch.eval(_q("channelDuck/game") + ".classList.contains('on')") is False
+            _click(ch, "channelDuck/game")
+            ch.wait(_q("duckPanel") + " && !document.getElementById('duck-drawer').hidden", 5)
+
+            # the trigger list offers the other channels and NOT the channel itself (the daemon refuses that)
+            angebot = ch.eval("[..." + _q("duckBy") + ".querySelectorAll('option')].map(o => o.value)")
+            assert "game" not in angebot and "voice" in angebot, angebot
+
+            # sliders start disabled: nothing to configure while no trigger is chosen
+            assert ch.eval(_q("duckParam/depth") + ".disabled") is True
+
+            ch.eval("(() => { const s = " + _q("duckBy") + "; s.value = 'voice'; s.dispatchEvent(new Event('change')); })()", False)
+            ch.wait("(() => { const j = JSON.parse(window.kmixdeck.state.objects['/org/kmixdeck1/channel/game'].Ducking || '{}'); return j.duckedBy === 'voice'; })()", 8)
+            assert stack.cli("--json", "duck", "show", "game", json_out=True)["duckedBy"] == "voice"
+            assert ch.eval(_q("channelDuck/game") + ".classList.contains('on')") is True
+
+            # how hard it ducks — driven through the slider, read back through the CLI
+            ch.eval("(() => { const s = " + _q("duckParam/depth") + "; s.value = -24; s.dispatchEvent(new Event('input')); s.dispatchEvent(new Event('change')); })()", False)
+            assert wait_for(lambda: stack.cli("--json", "duck", "show", "game", json_out=True)["depth"] == -24.0, 8.0), \
+                "the CLI never saw depth -24 after the slider moved"
+            for key, wert in (("release", 500), ("attack", 40), ("threshold", -30)):
+                ch.eval("(() => { const s = " + _q("duckParam/%s" % key) + "; s.value = %d; s.dispatchEvent(new Event('input')); s.dispatchEvent(new Event('change')); })()" % wert, False)
+                assert wait_for(lambda k=key, w=wert: stack.cli("--json", "duck", "show", "game", json_out=True)[k] == float(w), 8.0), \
+                    "the CLI never saw %s %s" % (key, wert)
+            # and the rest survived every single write
+            endstand = stack.cli("--json", "duck", "show", "game", json_out=True)
+            assert (endstand["depth"], endstand["release"], endstand["attack"], endstand["threshold"]) == (-24.0, 500.0, 40.0, -30.0), endstand
+
+            # a slider cannot produce a value the daemon refuses (limits, not copied numbers)
+            grenzen = ch.eval("(() => { const g = {}; for (const k of ['depth','threshold','attack','release']) "
+                              "{ const s = document.querySelector('[data-probe=\"duckParam/' + k + '\"]'); g[k] = [+s.min, +s.max]; } return g; })()")
+            assert grenzen == {"depth": [-60, 0], "threshold": [-60, 0], "attack": [2, 400], "release": [2, 800]}, grenzen
+
+            # the other direction: the CLI changes it, the drawer follows
+            stack.cli("duck", "set", "game", "--depth", "-6")
+            ch.wait(_q("duckParam/depth") + "?.dataset.value === '-6'", 8)
+
+            # and stopping it from the browser removes the ducker
+            _click(ch, "duckClear")
+            assert wait_for(lambda: stack.cli("--json", "duck", "show", "game", json_out=True)["duckedBy"] == "", 8.0), \
+                "ducking was still configured after the browser cleared it"
+            ch.shot("/tmp/web-duck.png")
+            ch.close()
+    finally:
+        stack.cli("duck", "clear", "game", check=False)
+        web.close()
+
+
+def test_fx9_badge_in_the_channel_row(stack):
+    """FX-9, Spec-Wortlaut: der abgesenkte Kanal zeigt ein "ducked by <channel>"-Abzeichen samt der aktuellen
+    Reduktion. Hier die Web-Haelfte der Dreifach-Paritaet — CLI-Baum und KDE-Kanalkopf pruefen
+    test_frontends_sync.py::test_fx9_badge_says_who_ducks_and_how_much_in_all_three_frontends.
+    """
+    stack.cli("duck", "set", "game", "--by", "voice", "--depth", "-18")
+    web = Web(stack, token="")
+    try:
+        trigger = next(c["Name"] for c in stack.cli("channel", "list", json_out=True) if c["Slug"] == "voice")
+        with Chrome(web.url, size=(1280, 800)) as ch:
+            ch.wait("window.kmixdeck && window.kmixdeck.state.connected && " + _q("channelDuckBadge/game"), 15)
+            txt = ch.eval(_q("channelDuckBadge/game") + ".textContent")
+            assert trigger in txt, f"Abzeichen nennt den Trigger nicht: {txt!r}"
+            # Gegengewicht: der Trigger-Kanal selbst traegt keines — sonst waere die Pruefung oben wertlos.
+            assert ch.eval(_q("channelDuckBadge/voice")) is None, "nicht abgesenkter Kanal traegt ein Abzeichen"
+    finally:
+        web.close(); stack.cli("duck", "clear", "game")

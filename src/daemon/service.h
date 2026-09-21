@@ -38,6 +38,9 @@ protected:
     /// `busctl set-property … Trim d 5.0`). QtDBus answers the Set call itself; the most we can do is refuse the
     /// value and say why in the log. Value-range checks that MUST surface to the client belong on methods
     /// (SetVolumeDb, ToggleMute, MoveTo …), which do have a context.
+    /// Verified again 2026-09-21 with a calledFromDBus() guard in place: inside a property setter the flag is
+    /// false, so the error cannot be delivered from here and the client keeps seeing rc 0 (no crash either —
+    /// the guard does prevent the segfault above). Hence SetDucking() as a method for FX-9.
     void rejectProperty(const QString &name, const QString &why) const { qCWarning(lcDbus).noquote() << QStringLiteral("%1: refused %2 (%3)").arg(m_path, name, why); }
     QString m_path;
 };
@@ -117,6 +120,9 @@ public Q_SLOTS:
     bool AddInput(const QString &ref);              // ADR 0009 B1: one more wire into this channel
     bool RemoveInput(const QString &ref);
     bool SetFx(const QString &chainJson);           // FX-1: replace the chain (validated; false = refused)
+    /// FX-9: the same change as writing Ducking, but as a method, so a refusal reaches the caller with its
+    /// reason instead of only the daemon log (a property setter has no QDBusContext — see rejectProperty).
+    bool SetDucking(const QString &json);
     bool SetFxControl(const QString &control, double value);   // FX-3 live
 private:
     Mixer *m_mixer; QString m_slug;

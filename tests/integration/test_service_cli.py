@@ -1024,7 +1024,13 @@ def test_cl5_tree_shows_the_signal_path(stack):
     assert kanal_j["inputDevice"].endswith("fake.mic"), f"inputDevice fehlt: {kanal_j}"
     mix_j = next(m for m in j["mixes"] if m["slug"] == "aufnahme")
     assert mix_j["outputs"] == ["fake.headphones"], f"outputs fehlen: {mix_j}"
-    assert [s["name"] for s in j["scenes"]] == ["nacht"], f"Szenen fehlen im JSON: {j.get('scenes')}"
+    # Szenen sind Dateien und ueberleben jeden Test in dieser Datei — die stack-Fixture ist modulweit.
+    # Darum die eigene Szene SUCHEN statt die Liste gleichzusetzen: ein "== [nacht]" ist nur gruen, solange
+    # dieser Test allein laeuft, und faerbte die ganze Datei rot, sobald ein Szenen-Test vorher lief
+    # (vorbestehend, gemessen 2026-09-21 am Commit-Stand: 7 Szenen statt einer).
+    szenen = [s["name"] for s in j["scenes"]]
+    assert "nacht" in szenen, f"eigene Szene fehlt im JSON: {szenen}"
+    assert all(s.get("ref") == s["name"] for s in j["scenes"]), f"ref stimmt nicht mit name: {j['scenes']}"
 
     # Die Referenzen muessen BENUTZBAR sein, nicht nur vorhanden: jede wird in dem
     # Kommando eingesetzt, fuer das sie gedacht ist. Eine Referenz, die man nicht
@@ -1371,3 +1377,41 @@ def test_fx8_denoiser_is_offered_honestly(stack):
         # 6. Nach der Ablehnung darf nichts halb angewandt sein.
         assert stack.cli("fx", "get", "channel", "voice", json_out=True) == gesetzt, (
             "abgelehnte Kette hat die bestehende veraendert")
+
+
+def test_fx9_ducking_is_configurable_from_the_cli(stack):
+    """FX-9: `duck set` decides how hard it ducks, and a refusal names the reason.
+
+    The reduction is measured at the ducker's own output, not read back from what we wrote: the point of
+    `--depth` is the level a listener hears. Two depths are checked, because a single value would also pass
+    if the gain were hard-coded (measured 2026-09-21: -12 dB and -24 dB both land within 1 dB).
+    """
+    stack.cli("duck", "set", "game", "--by", "voice", "--depth", "-18", "--threshold", "-40")
+    gesetzt = stack.cli("--json", "duck", "show", "game", json_out=True)
+    assert gesetzt["duckedBy"] == "voice" and gesetzt["depth"] == -18.0, gesetzt
+
+    # one flag on its own keeps the rest — the usual way a user changes their mind about the tail
+    stack.cli("duck", "set", "game", "--release", "500")
+    nach = stack.cli("--json", "duck", "show", "game", json_out=True)
+    assert nach["release"] == 500.0 and nach["depth"] == -18.0 and nach["duckedBy"] == "voice", nach
+
+    # every refusal must reach the caller WITH its reason; a property setter cannot do that, so SetDucking
+    # is a method (see rejectProperty in service.h). Exit code 4 = rejected by the daemon.
+    for args, bruchstueck in [
+        (["duck", "set", "game", "--by", "game"], "cannot duck itself"),
+        (["duck", "set", "game", "--by", "nixda"], "no trigger channel"),
+        (["duck", "set", "game", "--threshold", "5"], "threshold must be"),
+        (["duck", "set", "game", "--depth", "-99"], "depth must be"),
+        (["duck", "set", "game", "--attack", "9999"], "attack must be"),
+        (["duck", "set", "game", "--release", "9999"], "release must be"),
+    ]:
+        r = stack.cli(*args, check=False)
+        assert r.returncode == 4, f"{args} came back rc={r.returncode}: {r.stdout}{r.stderr}"
+        assert bruchstueck in (r.stdout + r.stderr), f"{args} said: {r.stdout}{r.stderr}"
+
+    # a bad flag value is a usage error (code 1) and must not reach the bus at all
+    r = stack.cli("duck", "set", "game", "--depth", "laut", check=False)
+    assert r.returncode == 1 and "must be a number" in (r.stdout + r.stderr), (r.returncode, r.stdout, r.stderr)
+
+    stack.cli("duck", "clear", "game")
+    assert stack.cli("--json", "duck", "show", "game", json_out=True)["duckedBy"] == ""
