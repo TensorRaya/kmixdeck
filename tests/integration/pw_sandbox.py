@@ -16,6 +16,30 @@ REPO = Path(__file__).resolve().parents[2]
 # change to the generator shows up in the unit test first. (Until v0.2 this was a hand-written prototype conf.)
 PROTOTYPE_CONF = REPO / "tests" / "unit" / "golden" / "starter.conf"
 
+# 🔴 Gemessen 2026-09-21: drei Sandbox-Daemons (pipewire, wireplumber, kmixdeckd) liefen
+# 30.856 s — 8,5 Stunden — nach dem Ende ihres Testlaufs weiter, einer davon bei 6,9 % CPU
+# auf einer 4-Kern-Maschine. Dazu fuenf verwaiste /tmp/kmixdeck-pw-*-Verzeichnisse.
+#
+# Ursache: close() ruft _stop_procs(), aber close() laeuft nicht, wenn pytest selbst
+# hart wegstirbt (SIGKILL, ctest-TIMEOUT, abgebrochener Gate-Lauf). Die Kinder haengen
+# dann am init-Prozess und niemand raeumt sie mehr auf. Jeder abgebrochene Lauf hat die
+# Grundlast der Maschine dauerhaft erhoeht — und damit die naechste Audiomessung
+# verfaelscht, weil PipeWire soft-realtime ist und bei Deadline-Verlust Stille liefert.
+# Das erklaert Fehlschlaege, die "nur bei -j2" auftraten: nicht die Parallelitaet war
+# das Problem, sondern die Leichen der vorherigen Laeufe.
+#
+# PR_SET_PDEATHSIG laesst den Kernel das Kind toeten, sobald der Elternprozess endet —
+# unabhaengig davon, wie er endet. Das ist die einzige Variante, die auch SIGKILL
+# ueberlebt; ein atexit-Handler oder finally-Block tut das nicht.
+PR_SET_PDEATHSIG = 1
+
+
+def _stirb_mit_eltern() -> None:
+    """Im Kind vor exec(): Kernel soll SIGKILL schicken, wenn der Elternprozess endet."""
+    import ctypes
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    libc.prctl(PR_SET_PDEATHSIG, 9, 0, 0, 0)   # 9 = SIGKILL
+
 
 @dataclass
 class PwDaemon:
@@ -245,9 +269,11 @@ class PwDaemon:
 
     # ---- lifecycle
     def _start_procs(self) -> None:
-        pw = subprocess.Popen(["pipewire"], env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        pw = subprocess.Popen(["pipewire"], env=self.env, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, preexec_fn=_stirb_mit_eltern)
         time.sleep(0.8)
-        wp = subprocess.Popen(["wireplumber"], env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        wp = subprocess.Popen(["wireplumber"], env=self.env, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, preexec_fn=_stirb_mit_eltern)
         self.procs = [pw, wp]
         for _ in range(50):
             if subprocess.run(["pw-cli", "info", "0"], env=self.env, capture_output=True).returncode == 0:

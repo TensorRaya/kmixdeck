@@ -46,9 +46,29 @@ Rules for such tests:
   true" is not proof that anything is audible (UX-12 headphone bug, 2026-09-16).
 - **One test per feature, all six steps in it.** Spreading the life cycle over several tests hides the ordering
   bugs (replug after restart while absent is where things break).
+- **Zwei Gates, und das Messen bestimmt, welches.** `ctest -L schnell` sind 9 Tests in **2,7 s**: Unit-Tests,
+  sot-audit, die Doku- und CLI-Hilfe-Pruefungen. Das Vollgate (`ctest --output-on-failure`) braucht **~25 min
+  pro Durchlauf**, weil 96 % der Laufzeit in neun PipeWire-Suiten stecken (`integration-frontends_sync` 460 s,
+  `integration-ports` 453 s, `integration-routing` 210 s). Faktor zwischen beiden: **~180x**.
+  Regel: Doku, Hilfetexte, Kommentare, CLI-Ausgabe → `-L schnell`. Alles, was Daemon, Graph oder Audioverhalten
+  beruehrt → Vollgate, und zwar vor dem Commit. Wer das Vollgate hinter jede Kommentarzeile haengt, verbrennt
+  Stunden ohne Aussagegewinn (2026-09-21, von mir, mehrfach).
+- **Serialisieren ist kein Fix.** Am 2026-09-21 habe ich `RESOURCE_LOCK "audio"` eingebaut, weil Audiofehler
+  „nur bei -j2" auftraten. Kosten: Gate-Laufzeit verdoppelt. Ergebnis: `test_ports.py` fiel mit Lock und auf
+  aufgeraeumter Maschine **trotzdem** mit `last reading -inf dB` aus. Wieder entfernt. Die echte Ursache jener
+  Runde waren Sandbox-Leichen (siehe naechster Punkt) — nicht die Parallelitaet.
+- **Kein Testlauf darf Daemons hinterlassen.** Gemessen: drei Sandbox-Daemons liefen **8,5 h** nach ihrem Lauf
+  weiter und hielten die Grundlast auf 9–10 bei 4 Kernen. PipeWire ist soft-realtime: bei verpasster Deadline
+  liefert es Stille, also `-inf dB` in einer Messung, die nichts mit dem Code zu tun hat. `tests/integration/
+  conftest.py` setzt deshalb `PR_SET_PDEATHSIG` fuer jeden Popen der Suite — ein `atexit`-Handler kann den
+  SIGKILL-Fall prinzipiell nicht abdecken, der Kernel schon. Jeder Lauf zeigt im Kopf `host load X on N cores`;
+  steht da eine Warnung, ist jede Audiomessung des Laufs wertlos.
 - **Run the whole suite before you push:** `cd build && ctest --output-on-failure` must be 10/10. Isolated green
   is not green — three of today's daemon bugs only showed under full-suite load.
 - **Do not build or run daemons in the tree while ctest runs.** Half of today's red runs were self-inflicted.
+  Das gilt auch fuer „isolierte" A/B-Vergleiche: am 2026-09-21 habe ich drei Suiten „allein" laufen lassen,
+  waehrend daneben ein Vollgate lief (Last 8,3–11,0). Beide Seiten waren ueberbucht, das Gruen bewies nichts.
+  Vor jedem A/B: `cat /proc/loadavg` gegen `nproc` pruefen und im Protokoll festhalten.
 
 ## Where things live
 

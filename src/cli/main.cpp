@@ -151,6 +151,42 @@ bool parseLevel(const QString &s, double *lin) {
 }
 bool parseBool(const QStringList &a, int i, bool *b) { if (a.size() <= i) { *b = true; return true; } const QString s = a[i].toLower(); if (s == "on" || s == "1" || s == "true") *b = true; else if (s == "off" || s == "0" || s == "false") *b = false; else return false; return true; }
 
+/// CL-5: Zeichensatz fuer den Baum. Box-Zeichen nur, wenn das Locale UTF-8 kann.
+///
+/// Warum nicht immer Unicode: in einer POSIX/C-Locale oder auf einer seriellen Konsole
+/// kommen `├──` als Fragezeichen oder Muell an, und dann ist der Baum unlesbar —
+/// schlimmer als ASCII. Geprueft wird dieselbe Kette wie bei GNU tree(1): LC_ALL,
+/// dann LC_CTYPE, dann LANG.
+struct Baumzeichen {
+    const char *ast;        // Verzweigung, es folgen weitere Geschwister
+    const char *letzter;    // letzte Verzweigung auf dieser Ebene
+    const char *strich;     // senkrechte Fortsetzung
+    const char *leer;
+};
+
+Baumzeichen baumzeichen() {
+    for (const char *var : {"LC_ALL", "LC_CTYPE", "LANG"}) {
+        const QByteArray v = qgetenv(var);
+        if (v.isEmpty()) continue;
+        const QByteArray o = v.toUpper();
+        return (o.contains("UTF-8") || o.contains("UTF8"))
+                ? Baumzeichen{"├── ", "└── ", "│   ", "    "}
+                : Baumzeichen{"|-- ", "`-- ", "|   ", "    "};
+    }
+    return Baumzeichen{"|-- ", "`-- ", "|   ", "    "};
+}
+
+/// CL-5: Farbe nur, wenn sie erwuenscht UND sinnvoll ist.
+///
+/// no-color.org: JEDE nicht-leere Belegung von NO_COLOR schaltet Farbe ab, unabhaengig
+/// vom Wert. Zusaetzlich nie faerben, wenn stdout keine Konsole ist — sonst landen
+/// Escape-Sequenzen in `kmixdeck tree > datei.txt` und in jeder Pipe.
+bool farbeAn() {
+    if (!qEnvironmentVariableIsEmpty("NO_COLOR")) return false;
+    if (qgetenv("TERM") == "dumb") return false;
+    return isatty(STDOUT_FILENO) != 0;
+}
+
 int cmdStatus(const Objects &o) {
     if (g_json) {
         QJsonObject j{{"version", o.mixer.value("Version").toString()}, {"connected", o.mixer.value("Connected").toBool()}, {"lastError", o.mixer.value("LastError").toString()}};
