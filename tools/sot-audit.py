@@ -16,22 +16,34 @@ for f in (root / "tests/integration").glob("*.py"):
 # unit tests count too (v0.2): a row may cite `tests/unit/<name>.cpp` — the file must exist and be a registered ctest
 unit_files = {p.name for p in (root / "tests/unit").glob("*.cpp")}
 unit_registered = set(re.findall(r"ecm_add_test\(unit/([a-z0-9_]+\.cpp)", (root / "tests/CMakeLists.txt").read_text()))
+# add_test(NAME <x> …)-Tests: doku-groff, cl9-hilfe-gegen-code, cl2-hilfe-ohne-daemon. Eine Zeile darf sie als Beleg
+# nennen, aber nur wenn sie wirklich registriert sind — sonst ist der Beleg eine Behauptung.
+registered_ctest = set(re.findall(r"add_test\(NAME ([a-z0-9-]+)", (root / "tests/CMakeLists.txt").read_text()))
 sync = (root / "tests/integration/test_frontends_sync.py").read_text()
 core_covered = set(re.findall(r'^\s*\("([A-Z]{2}-\d+)\b', sync, re.M))
 bad, missing, core_missing = [], [], []
 for line in sot.splitlines():
-    m = re.match(r"\| ([A-Z]{2}-\d+) \|", line)
+    # [a-z]? — MX-2a hat ein Buchstabensuffix und fiel sonst aus der Pruefung
+    # UND aus der Zeilenzaehlung (120 statt 121, gemessen 2026-09-21).
+    m = re.match(r"\| ([A-Z]{2}-\d+[a-z]?) \|", line)
     if not m or "✅" not in line: continue
     rid = m.group(1)
     refs = re.findall(r"test_[a-z0-9_]+", line)
     unit_refs = re.findall(r"tests/unit/([a-z0-9_]+\.cpp)", line)
-    if not refs and not unit_refs and not re.search(r"enforced by|ctest|rule;", line): bad.append(rid); continue
+    # ctest-Tests ohne test_-Praefix: add_test(NAME doku-groff …), cl9-hilfe-gegen-code,
+    # cl2-hilfe-ohne-daemon. Sie sind genauso registriert wie die test_-Dateien, heissen
+    # nur nach dem, was sie pruefen. Der Name muss in tests/CMakeLists.txt stehen.
+    ctest_refs = [r for r in re.findall(r"\b((?:doku|cl\d+|sot)-[a-z0-9-]+)\b", line)]
+    if not refs and not unit_refs and not ctest_refs \
+            and not re.search(r"enforced by|ctest|rule;", line): bad.append(rid); continue
     for r in refs:
         if r not in have and not any(h.startswith(r) for h in have): missing.append((rid, r))
     for u in unit_refs:
         if u not in unit_files or u not in unit_registered: missing.append((rid, "tests/unit/" + u))
+    for c in ctest_refs:
+        if c not in registered_ctest: missing.append((rid, f"add_test(NAME {c})"))
     if "tier:core" in line and rid not in core_covered: core_missing.append(rid)
-rows = [l for l in sot.splitlines() if re.match(r"\| [A-Z]{2}-\d+ \|", l)]
+rows = [l for l in sot.splitlines() if re.match(r"\| [A-Z]{2}-\d+[a-z]? \|", l)]
 core_rows = [l for l in rows if "tier:core" in l]
 # RQ-1 (review 2026-09-18): the count in the head of the SoT is not typed by hand — the audit fails when it disagrees,
 # and `--write` puts the current numbers there. A number that can go stale must have exactly one author.

@@ -40,6 +40,17 @@ add_test(NAME sot-audit COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/sot-audit.py)
 # the generated roff. Without the groff test, typography (—, →, Ü) silently drops out of the rendered page: 20 such
 # warnings existed when the generator was first wired up on 2026-09-21 and none were visible in the markdown.
 add_test(NAME doku-abschnitte COMMAND python3 ${CMAKE_SOURCE_DIR}/docs/generiere-doku.py pruefen)
+
+# CL-9: jedes Kommando der Dispatch-Tabelle steht in der Doku und umgekehrt.
+# `scene` ging in v0.3.0 heraus, ohne im Hilfetext zu stehen — die Funktion war
+# da, niemand konnte sie finden. Genau das faengt dieser Test.
+add_test(NAME cl9-hilfe-gegen-code COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/pruefe-hilfe.py)
+
+# CL-2 + CL-4: Hilfe und Version ohne Daemon, ohne Bus-Aufruf, ohne argv[0] in
+# der Usage-Zeile. Laeuft mit zerschossener DBUS_SESSION_BUS_ADDRESS.
+add_test(NAME cl2-hilfe-ohne-daemon COMMAND ${CMAKE_COMMAND}
+        -DCLI=$<TARGET_FILE:kmixdeck-cli>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/pruefe-hilfe-offline.cmake)
 find_program(GROFF_EXECUTABLE groff)
 if(GROFF_EXECUTABLE)
     add_test(NAME doku-groff COMMAND ${CMAKE_COMMAND}

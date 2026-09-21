@@ -3,6 +3,8 @@
 #include <QCoreApplication>
 #include "kmixdeck_version.h"
 #include <QCommandLineParser>
+
+#include "hilfe_text.h"   // CL-1: generiert aus docs/kmixdeck.md
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusReply>
@@ -18,6 +20,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QTextStream>
+#include <QProcess>       // CL-2: $PAGER am TTY
+#include <unistd.h>       // isatty()
 #include <QTimer>
 #include <QMap>
 #include <cmath>
@@ -797,54 +801,81 @@ struct Cli {
     }
 };
 
+/// CL-2 + CL-4: Hilfe ohne Daemon, ohne Bus-Aufruf, und `Usage:` nennt das
+/// Werkzeug statt argv[0].
+///
+/// Warum nicht QCommandLineParser::showHelp(): Qt baut die Usage-Zeile aus
+/// argv[0], und in einem Build-Baum steht dann `Usage: /var/tmp/build/bin/
+/// kmixdeck [options] command` — Pfad-Rauschen, das CL-4 ausdruecklich
+/// verbietet. Der Text kommt ohnehin generiert aus docs/kmixdeck.md, also geben
+/// wir ihn selbst aus und Qt kommt nicht dazwischen.
+///
+/// Am TTY laeuft die Ausgabe durch $PAGER (CL-2). In einer Pipe nicht: sonst
+/// blockiert `kmixdeck --help | grep mix` auf less.
+static int zeigeHilfe(const char *text, bool istTty)
+{
+    if (istTty) {
+        QString pager = qEnvironmentVariable("PAGER");
+        if (pager.isEmpty())
+            pager = QStringLiteral("less -FRX");     // -F: kurze Ausgabe direkt durchlassen
+        QStringList teile = QProcess::splitCommand(pager);
+        if (!teile.isEmpty()) {
+            const QString prog = teile.takeFirst();
+            QProcess pg;
+            pg.setProcessChannelMode(QProcess::ForwardedOutputChannel);
+            pg.start(prog, teile);
+            if (pg.waitForStarted(2000)) {
+                pg.write(text);
+                pg.closeWriteChannel();
+                pg.waitForFinished(-1);
+                return 0;
+            }
+            // Kein Pager da (z. B. minimaler Container): einfach selbst drucken.
+        }
+    }
+    QTextStream out(stdout);
+    out << QString::fromUtf8(text);
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("kmixdeck"));
     QCoreApplication::setApplicationVersion(QStringLiteral(KMIXDECK_VERSION_STRING));
     qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<PortMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
     QCommandLineParser p;
-    p.setApplicationDescription(QStringLiteral(
-        "kmixdeck — control the kmixdeck service (org.kmixdeck1) from the shell.\n\n"
-        "Commands:\n"
-        "  status                                     matrix overview\n"
-        "  undo                                    restore the last removed channel or mix (CH-9)\n"
-        "  setup [--apply]                         first-run wizard: show (or do) default routing — Monitor -> default output,\n"
-        "                                          Voice <- default mic, running apps -> channels by role (UX-3)\n"
-        "  export [file]                           backup: layout + every fader/trim/mute as JSON (CT-7)\n"
-        "  streamdeck install|uninstall|path       hook the OpenAction plugin (streamdeck/) into OpenDeck's plugins folder (CT-3)\n"
-        "  import <file>                           restore such a backup (replaces the running layout)\n"
-        "  channel list|add <name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|trim <slug> <level>|mute <slug> [on|off]|input <slug> <node.name|none>\n"
-        "  channel default [<slug>|none]         where never-seen applications land (CH-5)\n"
-        "  channel group <slug> [<name>|none]; channel groups   CH-8: grouped channels move together (trim as one dB delta, mute mirrored)\n"
-        "  channel inputs <slug>                 all wires into a channel (ADR 0009 B1); input-add|input-remove <slug> <ref>\n"
-        "  channel pan <slug> [<-1..1>|L|C|R]    stereo position of the channel (DV-22)\n"
-        "  mix     list|add <name>|duplicate <slug> <new name>|remove <slug>|rename <slug> <name>|icon <slug> <icon|none>|color <slug> <#rrggbb|none>|move <slug> <index|up|down|top|bottom>|output <slug> <node.name|none>|volume <slug> <level>|mute <slug> [on|off]\n"
-        "  mix     outputs <slug>                 list all hardware outputs of a mix (MX-9)\n"
-        "  mix     output-add|output-remove <slug> <node.name>\n"
-        "  mix     fallback <slug> <node.name|none>   played while every output is unplugged (DV-15)\n"
-        "  devices [in]                               hardware outputs a mix can play to (in: sources a channel can be fed by)\n"
-        "  devices hide|unhide <node.name>|hidden      CH-11: keep a device out of every picker (still routable by name)\n"
-        "  mix loudness <slug> [on|off|<LUFS>]        EBU R128 meter for a mix; no argument reads the state\n"
-        "  scene save|recall|list|delete <name>      named snapshots of faders/mutes; recall --add keeps other mixes\n"
-        "  loudness [--once]                          live LUFS (M/S/I) and true peak per mix that has it on\n"
-        "  levels [--once]                            live meters: peak '#', RMS '=', clip '!' (Ctrl-C to stop; --once = one reading)\n"
-        "  cell    get <ch> <mix>|set <ch> <mix> <level>|mute <ch> <mix> [on|off]\n"
-        "  cell    link <ch> <mix> <other-mix|none>   MX-7: this cell follows the other mix's cell (volume+mute)\n"
-        "  fx      types                                  built-in effect catalog (JSON)\n"
-        "  fx      presets                                one-click chains (FX-4), editable starting points\n"
-        "  fx      get|set|clear <channel|mix> <slug> ['<json>']   ordered insert chain on one object\n"
-        "  fx      copy <channel|mix> <from> <kind> <to>          copy the chain to another object\n"
-        "  fx      control <channel|mix> <slug> <node:Control> <value>   live tweak, no reload\n"
-        "  app     list|move <id|name> <channel>          running application streams\n"
-        "  app     assign <id|name> <ch>[,<ch>...]   CH-12: several channels at once (first = primary)\n"
-        "  listen  [<node.name>|none]            UX-2: the device I listen on + which mixes play there\n"
-        "  audition <channel|mix> <slug>|none    UX-12: solo one entity on the main output; none restores\n"
-        "  watch                                      print property changes as they happen\n\n"
-        "Levels: linear 0..1, or NdB (e.g. -12dB), or N% (UI/cubic scale). Exit codes: 0 ok, 1 usage, 2 no service, 3 not found, 4 rejected."));
+    // CL-1: der Hilfetext kommt GENERIERT aus docs/kmixdeck.md (hilfe_text.h,
+    // erzeugt von docs/generiere-doku.py). Bis 2026-09-21 standen hier 38 Zeilen
+    // Handtext — das Duplikat, das CL-1 verbietet, und der Drift war schon da:
+    // `devices ports`, `devices virtual`, `channel wire`, `mix wire`, `mix get`
+    // und `fx clear` fehlten. tools/pruefe-hilfe.py (CL-9) haelt Doku und
+    // Dispatch-Tabelle ab jetzt zusammen.
+    p.setApplicationDescription(QString::fromUtf8(kmixdeck::HILFE_TEXT));
     p.addHelpOption(); p.addVersionOption();
     QCommandLineOption json({"j", "json"}, "machine-readable output"); p.addOption(json);
     p.addPositionalArgument("command", "see above");
     p.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);   // so "-12dB" is a value, not options
+
+    // CL-2: --help/-h/help/--version MUESSEN ohne laufenden Daemon gehen und
+    // duerfen keinen Bus-Aufruf versuchen. Deshalb hier, VOR p.process() und
+    // vor jeder Bus-Pruefung, direkt aus argv gelesen. `help` ohne Striche
+    // gehoert dazu: die man page ist nicht ueberall installiert.
+    // CL-4: eigene Ausgabe statt p.showHelp(), sonst steht argv[0] in der
+    // Usage-Zeile (gemessen: "Usage: /var/tmp/build_cl1/bin/kmixdeck ...").
+    {
+        const QStringList argumente = app.arguments().mid(1);
+        const bool willHilfe = argumente.contains(QStringLiteral("--help"))
+                || argumente.contains(QStringLiteral("-h"))
+                || (!argumente.isEmpty() && argumente.first() == QStringLiteral("help"));
+        const bool willVersion = argumente.contains(QStringLiteral("--version"))
+                || argumente.contains(QStringLiteral("-v"));
+        if (willVersion) {
+            QTextStream(stdout) << "kmixdeck " << KMIXDECK_VERSION_STRING << "\n";
+            return Ok;
+        }
+        if (willHilfe || argumente.isEmpty())
+            return zeigeHilfe(kmixdeck::HILFE_TEXT, isatty(STDOUT_FILENO) != 0);
+    }
     p.process(app);
     g_json = p.isSet(json);
     QStringList a = p.positionalArguments();

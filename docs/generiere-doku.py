@@ -213,21 +213,101 @@ def als_man(teile: list[tuple[str, list[str]]], version: str) -> str:
     return "\n".join(aus) + "\n"
 
 
+def _kommandos(zeilen: list[str]) -> list[tuple[str, str]]:
+    """Kommandonamen + Kurztext aus dem COMMANDS-Abschnitt (CL-3, CL-9).
+
+    Die Definitionszeilen sehen so aus:
+
+        `mix list` · `mix add <name>` · `mix remove <slug>`
+        : As for channels.
+
+    Genommen wird das ERSTE Wort jeder Backtick-Marke — das ist das Kommando,
+    wie es die Dispatch-Tabelle in src/cli/main.cpp kennt (`mix`, `cell`, …).
+    Unterkommandos (`add`, `remove`) gehoeren in die Pro-Kommando-Hilfe (CL-3),
+    nicht in die Uebersicht. Reihenfolge: erstes Auftreten, damit `status` oben
+    steht und nicht alphabetisch zwischen `scene` und `streamdeck` verschwindet.
+    """
+    erklaerung: dict[str, str] = {}
+    folge: list[str] = []
+    i = 0
+    while i < len(zeilen):
+        z = zeilen[i]
+        marken = re.findall(r"`([^`]+)`", z)
+        # Nur Zeilen, die wirklich Kommandos definieren: es folgt eine ':'-Zeile.
+        if marken and i + 1 < len(zeilen) and zeilen[i + 1].lstrip().startswith(":"):
+            text = _klartext(zeilen[i + 1].lstrip()[1:].strip())
+            kurz = re.split(r"(?<=\.)\s", text)[0].rstrip(".")
+            for m in marken:
+                name = m.split()[0].strip("<>[]|")
+                if not name or not name[0].isalpha():
+                    continue
+                if name not in erklaerung:
+                    erklaerung[name] = kurz
+                    folge.append(name)
+            i += 2
+            continue
+        i += 1
+    return [(n, erklaerung[n]) for n in folge]
+
+
+def _unterabschnitte(zeilen: list[str]) -> list[tuple[str, list[str]]]:
+    """'## name'-Bloecke eines Abschnitts aufteilen -> [(name, inhalt), …].
+
+    Gemeinsam genutzt von als_help (Kommandoliste) und CL-9 (Abgleich gegen die
+    Dispatch-Tabelle in src/cli/main.cpp). Eine Quelle fuer die Kommandonamen.
+    """
+    raus: list[tuple[str, list[str]]] = []
+    name: str | None = None
+    inhalt: list[str] = []
+    for z in zeilen:
+        if z.startswith("## "):
+            if name is not None:
+                raus.append((name, inhalt))
+            name = z[3:].strip()
+            inhalt = []
+        elif name is not None:
+            inhalt.append(z)
+    if name is not None:
+        raus.append((name, inhalt))
+    return raus
+
+
 def als_help(teile: list[tuple[str, list[str]]]) -> str:
+    """docs/kmixdeck.md -> der `--help`-Text (CL-3: eine Schirmseite).
+
+    Reihenfolge NAME · USAGE · COMMANDS (ein Zeile je Kommando) · OPTIONS ·
+    EXAMPLES · Zeiger auf `man kmixdeck`. Ueberschriften englisch, weil das
+    Programm englisch ist — die deutschen Titel kamen aus dem tbload-Vorbild
+    und waren hier ein Fremdkoerper.
+    """
     d = dict(teile)
     aus: list[str] = []
     kopf = " ".join(x.strip() for x in d.get("NAME", []) if x.strip())
     aus.append(kopf.replace(" - ", " — ", 1))
     aus.append("")
-    aus.append("AUFRUF")
+    aus.append("USAGE")
     for z in d.get("SYNOPSIS", []):
         if z.strip() and not z.strip().startswith("```"):
             aus.append("  " + _klartext(z.strip()))
-    for name in ("EXAMPLES", "OPTIONS"):
-        titel = {"EXAMPLES": "BEISPIELE", "OPTIONS": "OPTIONEN"}[name]
+
+    # COMMANDS: eine Zeile je Kommando. Die '## '-Titel sind Themengruppen
+    # ("Overview and state", "Mixes") — richtig fuer die man page, unbrauchbar
+    # als Kommandoliste. Die echten Namen stehen in den `…`-Definitionszeilen,
+    # also erste Marke jeder Zeile nehmen und nach erstem Wort gruppieren.
+    # CL-9 prueft diese Menge gegen die Dispatch-Tabelle in src/cli/main.cpp.
+    befehle = _kommandos(d.get("COMMANDS", []))
+    if befehle:
+        aus.append("")
+        aus.append("COMMANDS")
+        for name, erkl in befehle:
+            aus.append(f"  {name:11} {erkl}"[:94].rstrip())
+
+    for name, titel in (("OPTIONS", "OPTIONS"), ("EXAMPLES", "EXAMPLES")):
+        zeilen = d.get(name, [])
+        if not zeilen:
+            continue
         aus.append("")
         aus.append(titel)
-        zeilen = d.get(name, [])
         i = 0
         while i < len(zeilen):
             z = zeilen[i]
@@ -243,21 +323,26 @@ def als_help(teile: list[tuple[str, list[str]]]) -> str:
                     erkl.append(zeilen[i].strip())
                     i += 1
                 text = _klartext(_fuege(erkl))
-                # Erste Satzhaelfte reicht in der Kurzfassung.
                 kurz = re.split(r"(?<=\.)\s", text)[0]
                 aus.append(f"  {begriff:22} {kurz}")
                 continue
-            # Zaunzeilen gehoeren nicht in die Kurzhilfe — der Inhalt schon.
             if z.strip().startswith("```"):
                 i += 1
                 continue
+            # 🔴 Fortsetzungszeilen eines Absatzes anhaengen statt als eigene
+            # Zeile ausgeben: sonst reisst ein umgebrochener Satz mitten im Wort
+            # auseinander und liest sich wie ein eigener Eintrag (gemessen
+            # 2026-09-21: "`interfaces/*.xml` and are stable." stand allein da).
             if z.startswith("    "):
                 aus.append("      " + _klartext(z.strip()))
+            elif aus and aus[-1].startswith("  ") and not aus[-1].strip().startswith("kmixdeck") \
+                    and len(aus[-1]) + len(z.strip()) < 94 and not z.startswith("`"):
+                aus[-1] = aus[-1].rstrip() + " " + _klartext(z.strip())
             else:
                 aus.append("  " + _klartext(z.strip()))
             i += 1
     aus.append("")
-    aus.append("Vollstaendige Beschreibung, auch was die Zahlen bedeuten:")
+    aus.append("Full reference, including what the numbers mean:")
     aus.append("  man kmixdeck")
     return "\n".join(aus) + "\n"
 
@@ -313,6 +398,38 @@ def _version() -> str:
     return "0"
 
 
+def als_header(teile: list[tuple[str, list[str]]]) -> str:
+    """docs/kmixdeck.md -> C++-Header mit dem --help-Text (CL-1).
+
+    Warum ueberhaupt ein Header: bis 2026-09-21 stand in src/cli/main.cpp ein
+    38-zeiliger, handgepflegter Hilfetext in setApplicationDescription() —
+    genau das Duplikat, das CL-1 verbietet. Der Drift war schon messbar: dem
+    Handtext fehlten `devices ports`, `devices virtual`, `channel wire`,
+    `mix wire`, `mix get` und `fx clear`. Jetzt kommt der Text aus derselben
+    Quelle wie man page und docs/cli.md, und CL-9 prueft die Kommandonamen
+    gegen die Dispatch-Tabelle.
+    """
+    text = als_help(teile)
+    aus = [
+        "// CL-1: GENERIERT aus docs/kmixdeck.md — nicht von Hand aendern.",
+        "// Erzeugt von docs/generiere-doku.py (Ziel `header`), eingehaengt in",
+        "// src/CMakeLists.txt. Aenderungen gehoeren in docs/kmixdeck.md.",
+        "#pragma once",
+        "",
+        "namespace kmixdeck {",
+        "/// Der --help-Text, wortgleich mit `man kmixdeck` (dort vollstaendig).",
+        "inline constexpr const char *HILFE_TEXT =",
+    ]
+    for zeile in text.rstrip("\n").split("\n"):
+        # C-String-Literal: Backslash und Anfuehrungszeichen entschaerfen.
+        sicher = zeile.replace("\\", "\\\\").replace('"', '\\"')
+        aus.append(f'    "{sicher}\\n"')
+    aus.append("    ;")
+    aus.append("}   // namespace kmixdeck")
+    aus.append("")
+    return "\n".join(aus)
+
+
 def main() -> int:
     was = sys.argv[1] if len(sys.argv) > 1 else "man"
     teile = lese()
@@ -320,10 +437,12 @@ def main() -> int:
         sys.stdout.write(als_man(teile, _version()))
     elif was == "help":
         sys.stdout.write(als_help(teile))
+    elif was == "header":
+        sys.stdout.write(als_header(teile))
     elif was == "pruefen":
         return pruefen(teile)
     else:
-        print(f"unbekannt: {was} (man | help | pruefen)", file=sys.stderr)
+        print(f"unbekannt: {was} (man | help | header | pruefen)", file=sys.stderr)
         return 2
     return 0
 

@@ -26,9 +26,22 @@ endif()
 install(TARGETS kmixdeckd DESTINATION ${KDE_INSTALL_LIBEXECDIR})
 
 # --- kmixdeck: the CLI. Pure D-Bus client, no PipeWire.
-add_executable(kmixdeck-cli cli/main.cpp)
+# CL-1: the --help text is GENERATED from docs/kmixdeck.md into hilfe_text.h. Before 2026-09-21 main.cpp carried a
+# 38-line hand-written copy — exactly the duplicate CL-1 forbids, and it had already drifted (six commands missing).
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/hilfe_text.h
+        COMMAND ${CMAKE_COMMAND}
+                -DPYTHON3=${Python3_EXECUTABLE}
+                -DGENERATOR=${CMAKE_SOURCE_DIR}/docs/generiere-doku.py
+                -DZIEL=header
+                -DOUT=${CMAKE_CURRENT_BINARY_DIR}/hilfe_text.h
+                -P ${CMAKE_SOURCE_DIR}/cmake/erzeuge-manpage.cmake
+        DEPENDS ${CMAKE_SOURCE_DIR}/docs/kmixdeck.md ${CMAKE_SOURCE_DIR}/docs/generiere-doku.py
+        COMMENT "Generating hilfe_text.h from docs/kmixdeck.md"
+        VERBATIM)
+
+add_executable(kmixdeck-cli cli/main.cpp ${CMAKE_CURRENT_BINARY_DIR}/hilfe_text.h)
 set_target_properties(kmixdeck-cli PROPERTIES OUTPUT_NAME kmixdeck)
-target_include_directories(kmixdeck-cli PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/..)
+target_include_directories(kmixdeck-cli PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/.. ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(kmixdeck-cli PRIVATE Qt6::Core Qt6::DBus)
 target_compile_options(kmixdeck-cli PRIVATE -Wall -Wextra)
 # CLI is literal-heavy; the KDE ASCII-cast ban buys nothing here.
