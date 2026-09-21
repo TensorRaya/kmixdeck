@@ -17,6 +17,7 @@ ecm_add_test(unit/fxtest.cpp
 # Frontend smoke: every QML file must load (offscreen, no daemon needed — the client shows "not reachable").
 if(BUILD_KDE_FRONTEND)
     add_test(NAME frontend-qml-loads COMMAND kmixdeck-kde --self-test)
+    set_tests_properties(frontend-qml-loads PROPERTIES LABELS "fast")
     set_tests_properties(frontend-qml-loads PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_LOGGING_RULES=*.debug=false" TIMEOUT 60 FAIL_REGULAR_EXPRESSION "failed to load component;is not a type;unavailable")
 endif()
 # qmllint as a pre-flight: --self-test needs a full build + 5s of runtime, qmllint finds the same class of
@@ -27,47 +28,55 @@ find_program(QMLLINT_EXECUTABLE NAMES qmllint qmllint-qt6 HINTS /usr/lib/qt6/bin
 if(QMLLINT_EXECUTABLE AND BUILD_KDE_FRONTEND)
     file(GLOB KMIXDECK_QML_FILES ${CMAKE_SOURCE_DIR}/src/qml/*.qml)
     add_test(NAME frontend-qmllint COMMAND ${QMLLINT_EXECUTABLE} ${KMIXDECK_QML_FILES})
+    set_tests_properties(frontend-qmllint PROPERTIES LABELS "fast")
     # qmllint exits 0 on warnings, so the gate is the message itself: these two are hard QML load errors.
     set_tests_properties(frontend-qmllint PROPERTIES TIMEOUT 120
         FAIL_REGULAR_EXPRESSION "Cannot assign;is not a type")
 endif()
 
 # VF-2: every ✅ requirement names an existing test (tools/sot-audit.py)
-# Label "schnell": alles, was KEINEN PipeWire-Sandkasten und keine Audiomessung braucht.
+# Label "fast": alles, was KEINEN PipeWire-Sandkasten und keine Audiomessung braucht.
 # Gemessen 2026-09-21: diese Gruppe laeuft in 17 s, die Audio-Integration in ~25 min.
-# `ctest -L schnell` ist das Gate fuer Text-, Doku- und CLI-Aenderungen; das Vollgate
+# `ctest -L fast` ist das Gate fuer Text-, Doku- und CLI-Aenderungen; das Vollgate
 # gehoert vor einen Commit, der Audioverhalten beruehrt — nicht hinter jede Zeile Kommentar.
-set_tests_properties(mixerlogictest layouttest fxtest PROPERTIES LABELS "schnell")
+set_tests_properties(mixerlogictest layouttest fxtest PROPERTIES LABELS "fast")
+
+# Gate-Label: jeder Test gehoert in genau eins der beiden Gates. Der Filter selbst ist
+# fail-open (fehlendes Label = stilles Ueberspringen), dieser Test macht ihn fail-closed.
+add_test(NAME gate-label-vollstaendig COMMAND ${CMAKE_COMMAND}
+    -DBUILD=${CMAKE_BINARY_DIR} -DCTEST=${CMAKE_CTEST_COMMAND}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/pruefe-label.cmake)
+set_tests_properties(gate-label-vollstaendig PROPERTIES LABELS "fast")
 
 add_test(NAME sot-audit COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/sot-audit.py)
-set_tests_properties(sot-audit PROPERTIES LABELS "schnell")
+set_tests_properties(sot-audit PROPERTIES LABELS "fast")
 
 # CL-1: docs/kmixdeck.md is the ONE source for the man page, --help and docs/cli.md. These two tests keep it that
 # way: `pruefen` rejects invented section names and any deviation from the man-pages(7) order, and groff -z parses
 # the generated roff. Without the groff test, typography (—, →, Ü) silently drops out of the rendered page: 20 such
 # warnings existed when the generator was first wired up on 2026-09-21 and none were visible in the markdown.
 add_test(NAME doku-abschnitte COMMAND python3 ${CMAKE_SOURCE_DIR}/docs/generiere-doku.py pruefen)
-set_tests_properties(doku-abschnitte PROPERTIES LABELS "schnell")
+set_tests_properties(doku-abschnitte PROPERTIES LABELS "fast")
 
 # CL-9: jedes Kommando der Dispatch-Tabelle steht in der Doku und umgekehrt.
 # `scene` ging in v0.3.0 heraus, ohne im Hilfetext zu stehen — die Funktion war
 # da, niemand konnte sie finden. Genau das faengt dieser Test.
 add_test(NAME cl9-hilfe-gegen-code COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/pruefe-hilfe.py)
-set_tests_properties(cl9-hilfe-gegen-code PROPERTIES LABELS "schnell")
+set_tests_properties(cl9-hilfe-gegen-code PROPERTIES LABELS "fast")
 
 # CL-3: jedes Kommando hat eine eigene Hilfe mit mindestens einem Beispiel, und
 # die Top-Level-Hilfe bleibt eine Schirmseite. Geprueft wird der GENERIERTE Text
 # — ein Beispiel, das der Generator verschluckt, ist keins (loudness verlor sein
 # Beispiel an einer Fortsetzungszeile, die mit ` anfing).
 add_test(NAME cl3-kommando-hilfe COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/pruefe-kommando-hilfe.py)
-set_tests_properties(cl3-kommando-hilfe PROPERTIES LABELS "schnell")
+set_tests_properties(cl3-kommando-hilfe PROPERTIES LABELS "fast")
 
 # CL-2 + CL-4: Hilfe und Version ohne Daemon, ohne Bus-Aufruf, ohne argv[0] in
 # der Usage-Zeile. Laeuft mit zerschossener DBUS_SESSION_BUS_ADDRESS.
 add_test(NAME cl2-hilfe-ohne-daemon COMMAND ${CMAKE_COMMAND}
         -DCLI=$<TARGET_FILE:kmixdeck-cli>
         -P ${CMAKE_CURRENT_SOURCE_DIR}/pruefe-hilfe-offline.cmake)
-set_tests_properties(cl2-hilfe-ohne-daemon PROPERTIES LABELS "schnell")
+set_tests_properties(cl2-hilfe-ohne-daemon PROPERTIES LABELS "fast")
 find_program(GROFF_EXECUTABLE groff)
 if(GROFF_EXECUTABLE)
     add_test(NAME doku-groff COMMAND ${CMAKE_COMMAND}
@@ -75,7 +84,7 @@ if(GROFF_EXECUTABLE)
             -DGROFF=${GROFF_EXECUTABLE}
             -DOUT=${CMAKE_CURRENT_BINARY_DIR}/kmixdeck-test.1
             -P ${CMAKE_CURRENT_SOURCE_DIR}/pruefe-manpage.cmake)
-    set_tests_properties(doku-groff PROPERTIES LABELS "schnell")
+    set_tests_properties(doku-groff PROPERTIES LABELS "fast")
 endif()
 
 # Integration tests: private PipeWire daemon per session (pytest). Skipped if tools are missing.

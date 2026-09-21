@@ -89,6 +89,12 @@ add_subdirectory(src)
 add_subdirectory(data)
 
 if(BUILD_TESTING)
+    # 🔴 appstreamtest wird von KDECMakeSettings.cmake angelegt, nicht von uns — und kam
+    # deshalb ohne Label. Ein Test ohne Label fiel bei `ctest -L fast` UND bei
+    # `ctest -L integration` durchs Raster: gemessen 2026-09-21 liefen 9 + 10 von 22
+    # Tests, drei liefen in KEINEM Gate. Ein Label-Filter ist fail-open, und genau das
+    # macht ihn als Gate gefaehrlich. Hier nachgetragen, weil der Test 0,08 s braucht.
+    set_tests_properties(appstreamtest PROPERTIES LABELS "fast")
     add_subdirectory(tests)
 endif()
 

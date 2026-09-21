@@ -46,29 +46,35 @@ Rules for such tests:
   true" is not proof that anything is audible (UX-12 headphone bug, 2026-09-16).
 - **One test per feature, all six steps in it.** Spreading the life cycle over several tests hides the ordering
   bugs (replug after restart while absent is where things break).
-- **Zwei Gates, und das Messen bestimmt, welches.** `ctest -L schnell` sind 9 Tests in **2,7 s**: Unit-Tests,
-  sot-audit, die Doku- und CLI-Hilfe-Pruefungen. Das Vollgate (`ctest --output-on-failure`) braucht **~25 min
-  pro Durchlauf**, weil 96 % der Laufzeit in neun PipeWire-Suiten stecken (`integration-frontends_sync` 460 s,
-  `integration-ports` 453 s, `integration-routing` 210 s). Faktor zwischen beiden: **~180x**.
-  Regel: Doku, Hilfetexte, Kommentare, CLI-Ausgabe → `-L schnell`. Alles, was Daemon, Graph oder Audioverhalten
-  beruehrt → Vollgate, und zwar vor dem Commit. Wer das Vollgate hinter jede Kommentarzeile haengt, verbrennt
-  Stunden ohne Aussagegewinn (2026-09-21, von mir, mehrfach).
-- **Serialisieren ist kein Fix.** Am 2026-09-21 habe ich `RESOURCE_LOCK "audio"` eingebaut, weil Audiofehler
-  „nur bei -j2" auftraten. Kosten: Gate-Laufzeit verdoppelt. Ergebnis: `test_ports.py` fiel mit Lock und auf
-  aufgeraeumter Maschine **trotzdem** mit `last reading -inf dB` aus. Wieder entfernt. Die echte Ursache jener
-  Runde waren Sandbox-Leichen (siehe naechster Punkt) — nicht die Parallelitaet.
-- **Kein Testlauf darf Daemons hinterlassen.** Gemessen: drei Sandbox-Daemons liefen **8,5 h** nach ihrem Lauf
-  weiter und hielten die Grundlast auf 9–10 bei 4 Kernen. PipeWire ist soft-realtime: bei verpasster Deadline
-  liefert es Stille, also `-inf dB` in einer Messung, die nichts mit dem Code zu tun hat. `tests/integration/
-  conftest.py` setzt deshalb `PR_SET_PDEATHSIG` fuer jeden Popen der Suite — ein `atexit`-Handler kann den
-  SIGKILL-Fall prinzipiell nicht abdecken, der Kernel schon. Jeder Lauf zeigt im Kopf `host load X on N cores`;
-  steht da eine Warnung, ist jede Audiomessung des Laufs wertlos.
+- **Two gates, and the full one goes LAST.** `ctest -L fast` is 13 tests in **12 s**: unit tests, the label
+  check, sot-audit, the QML smoke tests, the doc and CLI-help checks. The full gate takes **~25 min per run**,
+  because 96 % of the runtime sits in nine PipeWire suites (`integration-frontends_sync` 460 s,
+  `integration-ports` 453 s, `integration-routing` 210 s) — a factor of **~120x**.
+  Working order, not negotiable: build → `-L fast` → next change. The full gate runs **once, at the end**, when
+  the feature is otherwise finished and you are about to commit. Never between two edits of the same feature,
+  never after a comment or doc change. On 2026-09-21 I ran it after doc edits, twice with two passes each, and
+  burned hours for nothing.
+- **Every test carries exactly one gate label** — `fast` or `integration`. A label filter is fail-OPEN: a test
+  without a label is silently skipped by BOTH gates and the run still goes green. That happened here — three of
+  22 tests (`appstreamtest`, `frontend-qml-loads`, `frontend-qmllint`) ran in no gate at all after the fast gate
+  was introduced. `tests/pruefe-label.cmake` now turns that into fail-CLOSED: a missing label fails the run and
+  names the test. Label names are English, like every other test name and label in this project.
+- **Serialising is not a fix.** On 2026-09-21 I added `RESOURCE_LOCK "audio"` because audio checks failed "only
+  under -j2". Cost: gate runtime doubled. Result: with the lock AND on a cleaned-up machine (load 4.19)
+  `test_ports.py` **still** failed with `last reading -inf dB`. Reverted. The real cause that round was sandbox
+  leftovers (next point) — not parallelism.
+- **No test run may leave daemons behind.** Measured: three sandbox daemons kept running **8.5 h** after their
+  suite finished and held the machine's load at 9–10 on 4 cores. PipeWire is soft-realtime: a missed deadline
+  produces silence, i.e. `-inf dB` in a measurement that has nothing to do with the code.
+  `tests/integration/conftest.py` sets `PR_SET_PDEATHSIG` on every Popen of the suite — an `atexit` handler
+  cannot cover the SIGKILL case, the kernel can. Each run prints `host load X on N cores` in its header; if that
+  line carries a warning, every audio measurement in the run is worthless.
 - **Run the whole suite before you push:** `cd build && ctest --output-on-failure` must be 10/10. Isolated green
   is not green — three of today's daemon bugs only showed under full-suite load.
 - **Do not build or run daemons in the tree while ctest runs.** Half of today's red runs were self-inflicted.
-  Das gilt auch fuer „isolierte" A/B-Vergleiche: am 2026-09-21 habe ich drei Suiten „allein" laufen lassen,
-  waehrend daneben ein Vollgate lief (Last 8,3–11,0). Beide Seiten waren ueberbucht, das Gruen bewies nichts.
-  Vor jedem A/B: `cat /proc/loadavg` gegen `nproc` pruefen und im Protokoll festhalten.
+  This includes "isolated" A/B comparisons: on 2026-09-21 I ran three suites "alone" while a full gate was
+  running next to them (load 8.3–11.0). Both sides were oversubscribed, so the green proved nothing. Before any
+  A/B: check `cat /proc/loadavg` against `nproc` and record both in the log.
 
 ## Where things live
 
