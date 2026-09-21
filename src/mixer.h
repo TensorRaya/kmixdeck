@@ -106,7 +106,10 @@ public:
     Q_INVOKABLE QJsonObject fxChain(const QString &slug) const;
     /// Validate + store + apply the chain (live, no PipeWire restart). False keeps the old chain; the
     /// refusal reason goes to the log. An empty chain clears the effects.
-    Q_INVOKABLE bool setFxChain(const QString &slug, const QJsonObject &chainJson);
+    /// FX-8: why_out (optional) carries the refusal reason out — "effect 'noise' needs
+    /// librnnoise_ladspa — noise-suppression-for-voice (Arch/AUR) or …". Logging it and
+    /// returning a bare false leaves the D-Bus caller with nothing to show the user.
+    Q_INVOKABLE bool setFxChain(const QString &slug, const QJsonObject &chainJson, QString *why_out = nullptr);
     /// Live control update for one object's chain. `control` is the short key ("threshold") or the full
     /// Props key ("gate:Threshold (dB)"); resolved against the object's own chain, first match wins.
     Q_INVOKABLE bool setFxControl(const QString &slug, const QString &control, double value);

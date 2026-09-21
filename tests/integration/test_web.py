@@ -219,6 +219,28 @@ def test_fx8_web_ui_edits_the_chain_the_window_and_cli_see(stack):
             ch.wait("!!document.querySelector('[data-probe=\"fxPanel\"]') && !document.getElementById('fx-drawer').hidden", 5)
             options = ch.eval("[...document.querySelectorAll('[data-probe=\"fxAddType\"] option')].map(o => o.value).filter(Boolean)")
             assert "gate" in options and "limiter" in options, options
+            # FX-8: ein Effekt, dessen LADSPA-Plugin fehlt, darf nicht waehlbar AUSSEHEN. Vor
+            # dem 2026-09-21 stand er wie jeder andere in der Liste, der Nutzer waehlte ihn,
+            # der Daemon wies die ganze Kette ab — und der Paketname ging nur in den
+            # Daemon-Log. Geprueft wird im echten Browser gegen das echte DOM: `disabled`
+            # gesetzt, Paketname sichtbar im Label. Die Testmaschine hat librnnoise_ladspa
+            # nicht, der Zweig ist also gemessen und nicht gestellt.
+            katalog = {t["type"]: t for t in json.loads(stack.cli("fx", "types").stdout)}
+            fehlende = [typ for typ, t in katalog.items() if t.get("available") is False]
+            for typ in fehlende:
+                zustand = ch.eval(
+                    "(() => { const o = [...document.querySelectorAll('[data-probe=\"fxAddType\"] option')]"
+                    f".find(o => o.value === '{typ}');"
+                    " return o ? {disabled: o.disabled, text: o.textContent, title: o.title} : null; })()")
+                assert zustand, f"{typ} fehlt ganz in der Auswahl — es soll sichtbar, nur nicht waehlbar sein"
+                assert zustand["disabled"] is True, f"{typ} ist waehlbar, obwohl das Plugin fehlt: {zustand}"
+                paket = katalog[typ]["package"].split()[0]
+                assert paket in zustand["text"] or paket in zustand["title"], (
+                    f"Paketname {paket!r} steht nirgends am Eintrag: {zustand}")
+            # Und die verfuegbaren MUESSEN waehlbar bleiben — sonst waere die Pruefung oben
+            # auch mit einem generell kaputten Dropdown gruen.
+            assert ch.eval("[...document.querySelectorAll('[data-probe=\"fxAddType\"] option')]"
+                           ".filter(o => o.value && !o.disabled).length") >= 4
             # add a gate from the drawer
             ch.eval("(() => { const s = document.querySelector('[data-probe=\"fxAddType\"]'); s.value = 'gate'; s.dispatchEvent(new Event('change')); })()")
             ch.wait("document.querySelector('[data-probe=\"fxList\"]')?.dataset.value === '1'", 8)

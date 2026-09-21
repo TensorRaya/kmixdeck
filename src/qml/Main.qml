@@ -136,7 +136,10 @@ Kirigami.ApplicationWindow {
     // test hooks for the patchbay gestures (--gesture): same calls the drag / the wire click make
     function gestureConnect(fc, fp, tc, tp) { return Mixer.connectJacks(fc, fp, tc, tp) }
     // --probe "<objectName>.<property>": read a property of any item by objectName (MX-10/UX-10 proofs)
-    function probe(spec) {
+    // Wie probe(), aber ab einem beliebigen Item: das Effekt-Panel liegt auf dem Desktop in
+    // einem EIGENEN Fenster (pushDialogLayer), dessen contentItem die Shell hier hereingibt.
+    function probeIn(startItem, spec) { return startItem ? probe(spec, startItem) : "<probeIn: kein Startpunkt>" }
+    function probe(spec, startItem) {
         const dot = spec.lastIndexOf("."); const name = spec.slice(0, dot), prop = spec.slice(dot + 1)
         function find(item) {
             if (!item) return null
@@ -171,7 +174,8 @@ Kirigami.ApplicationWindow {
             }
             return null
         }
-        const it = find(root.contentItem) || find(root.pageStack) || findOverlay() || (patchBayPage && patchBayPage.probeItem ? patchBayPage.probeItem(name) : null)
+        const it = (startItem ? find(startItem) : null)
+                 || find(root.contentItem) || find(root.pageStack) || findOverlay() || (patchBayPage && patchBayPage.probeItem ? patchBayPage.probeItem(name) : null)
                  || (name === "trayOverview" ? trayOverviewWin : find(trayOverviewWin.contentItem))
                  || findAction(root.globalDrawer ? root.globalDrawer.actions : null)
         if (!it) return "<not found: " + name + ">"
@@ -211,6 +215,29 @@ Kirigami.ApplicationWindow {
         const w = kind === "input" ? { kind: "input", channel: owner, ref: ref } : { kind: "output", mix: owner, ref: ref }
         return patchBayPage.openWirePopup(w)
     }
+    // FX-8: das Effekt-Dropdown aufklappen, wie der Nutzer es tut. Eine ComboBox baut ihre
+    // Delegates erst beim Oeffnen — ohne diese Geste liefert --probe "<not found>" fuer jeden
+    // Eintrag, und die KDE-Seite der Anforderung waere nur behauptet statt geprueft.
+    // FX-8: das Effekt-Dropdown aufklappen, wie der Nutzer es tut. Eine ComboBox baut ihre
+    // Delegates erst beim Oeffnen — ohne diese Geste liefert --probe leere Werte fuer jeden
+    // Eintrag. `wurzel` kommt von der Shell, weil das Panel auf dem Desktop in einem eigenen
+    // Fenster liegt (pushDialogLayer) und findByName nur das Hauptfenster kennt.
+    function gestureFxAddOpen(wurzel) {
+        const b = wurzel ? findIn(wurzel, "fxAddType") : findByName("fxAddType")
+        if (!b) return "<no fx add box — is the fx panel open?>"
+        b.popup.open()
+        return ""
+    }
+    function findIn(startItem, name) {
+        function find(item) {
+            if (!item) return null
+            if (item.objectName === name) return item
+            for (let i = 0; i < (item.children ? item.children.length : 0); ++i) { const r = find(item.children[i]); if (r) return r }
+            if (item.contentItem && item.contentItem !== item) { const r = find(item.contentItem); if (r) return r }
+            return null
+        }
+        return find(startItem)
+    }
     // UX-14: drive the mixer page's own handlers — the fader's onMoved, the header's Outputs menu entry, the "I hear" box
     function findByName(name) {
         function find(item) {
@@ -220,8 +247,25 @@ Kirigami.ApplicationWindow {
             if (item.contentItem && item.contentItem !== item) { const r = find(item.contentItem); if (r) return r }
             return null
         }
-        return find(root.contentItem) || find(root.pageStack)
+        // Auch das Overlay durchsuchen. Alles, was in einem Popup oder DialogLayer sitzt, haengt
+        // NICHT unter contentItem — probe() weiss das laengst und hat seinen eigenen
+        // Overlay-Walker. findByName hatte ihn nicht, also fand jede Geste, die auf ein Element
+        // in einem Dialog zeigt, nichts: "<no fx add box>" bei geoeffnetem Panel (FX-8,
+        // 2026-09-21). Statt den Walker zu kopieren die eine Quelle nutzen, sonst driften die
+        // beiden Suchen auseinander und der naechste sucht denselben Fehler nochmal.
+        const direkt = find(root.contentItem) || find(root.pageStack)
+        if (direkt) return direkt
+        const ov = QQC2.Overlay.overlay
+        const kids = ov ? (ov.contentChildren || ov.children || []) : []
+        for (let i = 0; i < kids.length; ++i) {
+            const k = kids[i]
+            if (k.objectName === name) return k
+            if (k.parent && k.parent.objectName === name) return k.parent
+            const r = find(k); if (r) return r
+        }
+        return null
     }
+
     function gestureFader(channel, mix, value) {
         const f = findByName("cellFader/" + channel + "/" + mix); if (!f) return "<no fader " + channel + "/" + mix + ">"
         f.value = Number(value); f.moved(); return ""
@@ -401,9 +445,17 @@ Kirigami.ApplicationWindow {
     function iconDialogOpen(kind, slug) { iconDialog.open(kind, slug) }
     // FX panel opens as a dialog layer over the matrix — narrow windows keep the grid behind them.
     function fxPanelOpen(kind, slug) {
+        // createObject gibt bei einem Fehler in der Komponente null zurueck und schreibt den
+        // Grund NUR ins Log — pushDialogLayer(null) tut dann lautlos nichts. Genau so war das
+        // Effekt-Panel monatelang unoeffenbar, ohne dass irgendwo ein Fehler sichtbar wurde.
         const page = fxPanelComp.createObject(this, {kind: kind, slug: slug,
             title: kind === "mix" ? Mixer.mixName(slug) : Mixer.channelName(slug)})
+        if (!page) {
+            console.warn("fxPanelOpen: FxPanel konnte nicht erzeugt werden:", fxPanelComp.errorString())
+            return "<FxPanel: " + fxPanelComp.errorString() + ">"
+        }
         root.pageStack.pushDialogLayer(page)
+        return ""
     }
     Component {
         id: fxPanelComp

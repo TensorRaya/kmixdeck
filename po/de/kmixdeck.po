@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kmixdeck\n"
 "Report-Msgid-Bugs-To: https://github.com/TensorRaya/kmixdeck/issues\n"
-"POT-Creation-Date: 2026-09-19 21:44+0200\n"
+"POT-Creation-Date: 2026-09-21 19:30+0200\n"
 "PO-Revision-Date: 2026-09-17 14:00+0200\n"
 "Last-Translator: Raya Elena Solano\n"
 "Language-Team: German\n"
@@ -29,7 +29,7 @@ msgstr "Bilder (*.png *.svg *.svgz *.jpg *.jpeg *.webp)"
 
 #: src/frontend/kdeintegration.cpp:21 src/frontend/kdeintegration.cpp:70
 #: src/frontend/kdeintegration.cpp:190 src/frontend/kdeintegration.cpp:195
-#: src/frontend/kdeintegration.cpp:202 src/main.cpp:52 src/qml/Main.qml:12
+#: src/frontend/kdeintegration.cpp:202 src/main.cpp:55 src/qml/Main.qml:12
 #: src/qml/Main.qml:19
 #, kde-format
 msgid "kmixdeck"
@@ -182,22 +182,22 @@ msgstr "2 (R)"
 msgid "Capture: %1"
 msgstr "Aufnahme: %1"
 
-#: src/main.cpp:53
+#: src/main.cpp:56
 #, kde-format
 msgid "A streamer's audio mixer for KDE Plasma on PipeWire"
 msgstr "Der Audio-Mixer für Streaming auf KDE Plasma mit PipeWire"
 
-#: src/main.cpp:54
+#: src/main.cpp:57
 #, kde-format
 msgid "© 2026 kmixdeck contributors"
 msgstr "© 2026 die kmixdeck-Mitwirkenden"
 
-#: src/main.cpp:57
+#: src/main.cpp:60
 #, kde-format
 msgid "Raya Elena Solano"
 msgstr "Raya Elena Solano"
 
-#: src/main.cpp:57
+#: src/main.cpp:60
 #, kde-format
 msgid "Maintainer"
 msgstr "Betreuung"
@@ -686,24 +686,36 @@ msgstr "Einrichten"
 msgid "Start mixing"
 msgstr "Loslegen"
 
-#: src/qml/FxPanel.qml:35
+#: src/qml/FxPanel.qml:49
 #, kde-format
 msgid "Effects on %1"
 msgstr "Effekte auf %1"
 
-#: src/qml/FxPanel.qml:37
+#: src/qml/FxPanel.qml:52
 #, kde-format
 msgctxt "@action enable/disable whole effect chain"
 msgid "Enabled"
 msgstr "Aktiv"
 
-#: src/qml/FxPanel.qml:57
+#: src/qml/FxPanel.qml:74
 #, kde-format
 msgctxt "@action bypass one effect"
 msgid "On"
 msgstr "An"
 
-#: src/qml/FxPanel.qml:113
+#: src/qml/FxPanel.qml:143
+#, kde-format
+msgctxt "@item effect needing an uninstalled plugin"
+msgid "%1 — needs %2"
+msgstr "%1 — benötigt %2"
+
+#: src/qml/FxPanel.qml:147
+#, kde-format
+msgctxt "@info:tooltip"
+msgid "Install %1 to use this effect"
+msgstr "%1 installieren, um diesen Effekt zu nutzen"
+
+#: src/qml/FxPanel.qml:154
 #, kde-format
 msgctxt "@label"
 msgid "Preset:"
@@ -798,32 +810,32 @@ msgstr "Einstellungen importieren …"
 msgid "About kmixdeck"
 msgstr "Über kmixdeck"
 
-#: src/qml/Main.qml:259
+#: src/qml/Main.qml:303
 #, kde-format
 msgid "Output ports for %1"
 msgstr "Ausgänge für %1"
 
-#: src/qml/Main.qml:259
+#: src/qml/Main.qml:303
 #, kde-format
 msgid "Input ports for %1"
 msgstr "Eingänge für %1"
 
-#: src/qml/Main.qml:285
+#: src/qml/Main.qml:329
 #, kde-format
 msgid "Removed %1"
 msgstr "%1 entfernt"
 
-#: src/qml/Main.qml:285
+#: src/qml/Main.qml:329
 #, kde-format
 msgid "Undo"
 msgstr "Rückgängig"
 
-#: src/qml/Main.qml:312
+#: src/qml/Main.qml:356
 #, kde-format
 msgid "Hidden devices"
 msgstr "Ausgeblendete Geräte"
 
-#: src/qml/Main.qml:317
+#: src/qml/Main.qml:361
 #, kde-format
 msgid ""
 "These devices are left out of the pickers. Routing that uses them is "
@@ -832,67 +844,67 @@ msgstr ""
 "Diese Geräte fehlen in den Auswahllisten. Routing, das sie benutzt, bleibt "
 "unberührt."
 
-#: src/qml/Main.qml:324
+#: src/qml/Main.qml:368
 #, kde-format
 msgid " (not connected)"
 msgstr " (nicht verbunden)"
 
-#: src/qml/Main.qml:325
+#: src/qml/Main.qml:369
 #, kde-format
 msgid "Show again"
 msgstr "Wieder zeigen"
 
-#: src/qml/Main.qml:335
+#: src/qml/Main.qml:379
 #, kde-format
 msgid "Export kmixdeck settings"
 msgstr "kmixdeck-Einstellungen exportieren"
 
-#: src/qml/Main.qml:337
+#: src/qml/Main.qml:381
 #, kde-format
 msgid "kmixdeck settings (*.kmixdeck.json)"
 msgstr "kmixdeck-Einstellungen (*.kmixdeck.json)"
 
-#: src/qml/Main.qml:337
+#: src/qml/Main.qml:381
 #, kde-format
 msgid "JSON (*.json)"
 msgstr "JSON (*.json)"
 
-#: src/qml/Main.qml:344
+#: src/qml/Main.qml:388
 #, kde-format
 msgid "Import kmixdeck settings"
 msgstr "kmixdeck-Einstellungen importieren"
 
-#: src/qml/Main.qml:346
+#: src/qml/Main.qml:390
 #, kde-format
 msgid "kmixdeck settings (*.kmixdeck.json *.json)"
 msgstr "kmixdeck-Einstellungen (*.kmixdeck.json *.json)"
 
-#: src/qml/Main.qml:351
+#: src/qml/Main.qml:395
 #, kde-format
 msgid "Settings exported to %1"
 msgstr "Einstellungen nach %1 geschrieben"
 
-#: src/qml/Main.qml:351
+#: src/qml/Main.qml:395
 #, kde-format
 msgid "Export failed: %1"
 msgstr "Export fehlgeschlagen: %1"
 
-#: src/qml/Main.qml:355
+#: src/qml/Main.qml:399
 #, kde-format
 msgid "Settings imported from %1"
 msgstr "Einstellungen aus %1 geladen"
 
-#: src/qml/Main.qml:355
+#: src/qml/Main.qml:399
 #, kde-format
 msgid "Import failed: %1"
 msgstr "Import fehlgeschlagen: %1"
 
-#: src/qml/Main.qml:392
+#: src/qml/Main.qml:436
 #, kde-format
 msgid "New channel group"
 msgstr "Neue Kanalgruppe"
 
-#: src/qml/Main.qml:393
+#: src/qml/Main.qml:437
 #, kde-format
 msgid ""
 "Channels in one group move together: trim as one dB step for all, mute "
@@ -901,17 +913,17 @@ msgstr ""
 "Kanäle einer Gruppe bewegen sich gemeinsam: Trim als ein dB-Schritt für "
 "alle, Stumm gespiegelt."
 
-#: src/qml/Main.qml:395
+#: src/qml/Main.qml:439
 #, kde-format
 msgid "e.g. Music & Game"
 msgstr "z. B. Musik & Game"
 
-#: src/qml/Main.qml:421
+#: src/qml/Main.qml:473
 #, kde-format
 msgid "The kmixdeck service (kmixdeckd) is not running."
 msgstr "Der kmixdeck-Dienst (kmixdeckd) läuft nicht."
 
-#: src/qml/Main.qml:422
+#: src/qml/Main.qml:474
 #, kde-format
 msgid "kmixdeckd has no connection to PipeWire."
 msgstr "kmixdeckd hat keine Verbindung zu PipeWire."

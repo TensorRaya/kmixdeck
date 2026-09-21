@@ -333,11 +333,18 @@ nothing; LADSPA effects (noise suppression, gate, compressor via swh-plugins /
 rnnoise) are listed only when the library is installed.
 
 `fx types`
-: The catalog: every effect type with its controls, ranges and defaults (JSON).
+: The catalog: every effect type with its controls, ranges and defaults (JSON). Each entry also
+carries `available` and, when an effect needs a LADSPA plugin that is not installed,
+`package` — the name to install. An unavailable effect still appears in the catalog (both UIs
+grey it out and show the package), and `fx set` refuses a chain that uses one, naming the
+package in the error rather than only in the daemon log (FX-8).
 > kmixdeck fx types                 # every effect with ranges and defaults
+> kmixdeck fx types | jq -r '.[] | select(.available == false) | "\(.type): install \(.package)"'
 
 `fx presets`
-: One-click chains ("Podcast voice", …) as editable starting points (FX-4).
+: One-click chains ("Podcast voice", …) as editable starting points (FX-4). "Voice — clean"
+carries the denoiser as its first stage but **switched off** — enabling it is one toggle, and
+the preset applies on a machine without the plugin (FX-8).
 
 `fx get channel|mix <slug>`
 : The current chain (JSON).

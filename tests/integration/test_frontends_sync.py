@@ -604,3 +604,46 @@ def test_ch8_channel_groups_move_together_in_cli_window_and_tray(stack):
     # --- refused: a slash (would break slugs/paths in the tray keys) — and the CLI reports it
     r = stack.cli("channel", "group", "game", "a/b", check=False); assert r.returncode != 0 and "group name" in r.stderr
     for c in ("game", "system"): stack.cli("channel", "group", c, "none")
+
+def test_fx8_the_kde_window_can_open_the_fx_panel_and_greys_out_missing_plugins(stack):
+    """FX-8 im KDE-Fenster — und der Grund, warum es diesen Test gibt.
+
+    Zwei Funde vom 2026-09-21, beide vorher von KEINEM Test beruehrt:
+
+    1. Das Effekt-Panel liess sich im Fenster GAR NICHT oeffnen. FxPanel.qml hatte eine
+       Kirigami.FormLayout als Wurzel, Main.qml schob sie mit pushDialogLayer() — das
+       verlangt eine Page. verifyPages() lehnte ab, PageRow.qml starb an "Value is null",
+       und im Fenster passierte sichtbar nichts. Der Klick auf "Effects…" im Kanalkopf war
+       tot. Gemerkt hat es niemand, weil die FX-Tests ueber CLI und Browser liefen und
+       --self-test die Datei nur laedt, ohne sie zu pushen.
+    2. Ein Effekt ohne installiertes LADSPA-Plugin sah wie jeder andere waehlbar aus.
+
+    Der Test geht durch die Shell wie ein Nutzer: Panel oeffnen, Dropdown aufklappen,
+    Eintraege lesen. Faellt (1) zurueck, findet der Probe das Dropdown nicht mehr; faellt
+    (2) zurueck, ist `enabled` true oder der Paketname fehlt.
+    """
+    katalog = {t["type"]: t for t in json.loads(stack.cli("fx", "types").stdout)}
+    fehlende = [typ for typ, s in katalog.items() if s.get("available") is False]
+    vorhandene = [typ for typ, s in katalog.items() if s.get("available") is not False]
+    assert vorhandene, "kein einziger Effekt verfuegbar — dann prueft der Test unten nichts"
+
+    specs = ["fxAddType.count"]
+    for typ in fehlende + vorhandene[:2]:
+        specs += [f"fxAddType/{typ}.enabled", f"fxAddType/{typ}.text"]
+    g = kde(stack, "--open", "fx/channel/voice", "--gesture", "fxaddopen",
+            *sum((["--probe", s] for s in specs), []))
+
+    # (1) Das Panel ist offen und das Dropdown gefuellt — sonst waere jeder Probe "<not found>".
+    assert g["fxAddType.count"] == str(len(katalog)), (
+        f"Dropdown zeigt {g['fxAddType.count']} Eintraege, der Daemon kennt {len(katalog)}: {g}")
+
+    # (2) Fehlendes Plugin: gesperrt, mit Paketname am Eintrag.
+    for typ in fehlende:
+        assert g[f"fxAddType/{typ}.enabled"] == "false", f"{typ} ist waehlbar, obwohl das Plugin fehlt"
+        paket = katalog[typ]["package"].split()[0]
+        assert paket in g[f"fxAddType/{typ}.text"], (
+            f"Paketname {paket!r} fehlt am Eintrag: {g[f'fxAddType/{typ}.text']!r}")
+    # Gegengewicht: vorhandene Effekte MUESSEN waehlbar bleiben, sonst wuerde ein generell
+    # kaputtes Dropdown die Pruefung oben gruen faerben.
+    for typ in vorhandene[:2]:
+        assert g[f"fxAddType/{typ}.enabled"] == "true", f"{typ} ist gesperrt, obwohl das Plugin da ist"

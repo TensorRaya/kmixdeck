@@ -88,7 +88,13 @@ QString ChannelObject::fxChainJson() const { return QJsonDocument(m_mixer->fxCha
 bool ChannelObject::SetFx(const QString &chainJson) {
     const QJsonDocument doc = QJsonDocument::fromJson(chainJson.toUtf8());
     if (!doc.isObject()) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("expected a JSON object")); return false; }
-    if (!m_mixer->setFxChain(m_slug, doc.object())) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("refused: see daemon log")); return false; }
+    QString warum;
+    if (!m_mixer->setFxChain(m_slug, doc.object(), &warum)) {
+        // FX-8: den Grund weitergeben, nicht auf den Daemon-Log verweisen. Wer die Meldung
+        // liest, ist genau der, der das Paket installieren kann — er muss dessen Namen sehen.
+        sendErrorReply(QDBusError::InvalidArgs, warum.isEmpty() ? QStringLiteral("refused") : warum);
+        return false;
+    }
     emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("FxChain"), fxChainJson()}});
     return true;
 }
@@ -129,7 +135,13 @@ QString MixObject::fxChainJson() const { return QJsonDocument(m_mixer->fxChain(m
 bool MixObject::SetFx(const QString &chainJson) {
     const QJsonDocument doc = QJsonDocument::fromJson(chainJson.toUtf8());
     if (!doc.isObject()) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("expected a JSON object")); return false; }
-    if (!m_mixer->setFxChain(m_slug, doc.object())) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("refused: see daemon log")); return false; }
+    QString warum;
+    if (!m_mixer->setFxChain(m_slug, doc.object(), &warum)) {
+        // FX-8: den Grund weitergeben, nicht auf den Daemon-Log verweisen. Wer die Meldung
+        // liest, ist genau der, der das Paket installieren kann — er muss dessen Namen sehen.
+        sendErrorReply(QDBusError::InvalidArgs, warum.isEmpty() ? QStringLiteral("refused") : warum);
+        return false;
+    }
     emitPropertiesChanged(m_path, interfaceName(), {{QStringLiteral("FxChain"), fxChainJson()}});
     return true;
 }

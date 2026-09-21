@@ -11,6 +11,9 @@
 #include <QDBusConnection>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QQuickWindow>
+#include <QQuickItem>
+#include <QWindow>
 #include <QIcon>
 #include <QCommandLineParser>
 
@@ -112,16 +115,42 @@ int main(int argc, char *argv[])
     }
     // --gesture "connect:<fromCard>|<fromPos>|<toCard>|<toPos>" / "remove:<kind>|<channel|mix>|<ref>" — the patchbay's
     // drag/click, driven from the shell so the integration tests can prove the gestures reach the daemon (DV-24).
+    // --open gehoert an EINE Stelle: vorher stand derselbe Zielabgleich zweimal da — einmal im
+    // gesture-Zweig (Zeile ~120, aber uebersprungen wenn --probe gesetzt war) und einmal im
+    // probe-Zweig. Wer `--open X --gesture Y --probe Z` kombinierte, bekam ein Fenster, in dem X
+    // NIE geoeffnet wurde: die Geste lief gegen die nackte Mixer-Seite, die Probes sagten
+    // "<not found>", und nichts im Output verriet, dass das Ziel fehlte. Gekostet hat mich das
+    // ~40 Minuten Suche in der QML, wo gar kein Fehler war (FX-8, 2026-09-21).
+    const auto openZiel = [](QQuickWindow *win, const QString &open) {
+        if (open.isEmpty()) return;
+        if (open == QLatin1String("apps")) QMetaObject::invokeMethod(win, "showApps");
+        else if (open == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
+        else if (open == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
+        else if (open == QLatin1String("channel-ports")) QMetaObject::invokeMethod(win, "addDialogOpenPorts");
+        // FX-8: Effekt-Panel, Form "fx/channel/<slug>" oder "fx/mix/<slug>".
+        else if (open.startsWith(QLatin1String("fx/"))) {
+            const QStringList t = open.split(QLatin1Char('/'));
+            if (t.size() == 3) {
+                // Rueckgabewert PRUEFEN: ein Tippfehler im Methodennamen laesst invokeMethod
+                // still false zurueckgeben — genau die Sorte Schweigen, die diese Suche teuer
+                // gemacht hat.
+                if (!QMetaObject::invokeMethod(win, "fxPanelOpen", Q_ARG(QVariant, t[1]), Q_ARG(QVariant, t[2])))
+                    fprintf(stderr, "kmixdeck: --open %s: fxPanelOpen() not invokable on the root window\n", qPrintable(open));
+            }
+            else fprintf(stderr, "kmixdeck: --open fx needs fx/channel|mix/<slug>, got '%s'\n", qPrintable(open));
+        }
+        // Ein unbekanntes Ziel MUSS auffallen, statt lautlos zu verschwinden.
+        else fprintf(stderr, "kmixdeck: --open: unknown target '%s' (apps|routing|patchbay|channel-ports|fx/channel|mix/<slug>)\n",
+                     qPrintable(open));
+    };
+
     if (parser.isSet(gestureArg)) {
         if (engine.rootObjects().isEmpty()) return 1;
         auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         const QStringList gestures = parser.values(gestureArg);
         const QString openG = parser.value(openArg);
-        if (!parser.isSet(probeArg)) QTimer::singleShot(900, &app, [win, openG] {
-            if (openG == QLatin1String("apps")) QMetaObject::invokeMethod(win, "showApps");
-            else if (openG == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
-            else if (openG == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
-        });
+        // Ziel IMMER oeffnen, auch mit --probe: genau diese Bedingung war der Fehler.
+        QTimer::singleShot(900, &app, [win, openG, openZiel] { openZiel(win, openG); });
         QTimer::singleShot(1200, &app, [win, gestures, &kde] {
             for (const QString &g : gestures) {
                 const QString op = g.section(QLatin1Char(':'), 0, 0), rest = g.section(QLatin1Char(':'), 1);
@@ -187,7 +216,26 @@ int main(int argc, char *argv[])
                     const int n = a[0].toInt(); for (int i = 0; i < n; ++i) kde.trayClick(QPoint(100, 100)); ret = QString();
                 }
                 else if (op == QLatin1String("wirepopup") && a.size() == 3) QMetaObject::invokeMethod(win, "gestureWirePopup", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]), Q_ARG(QVariant, a[2]));
+                // Argumentlose Geste: rest ist "", und "".split('|') ergibt EINE leere Zeichenkette,
+                // nie size()==0 — darum auf leeres erstes Element pruefen, nicht auf leere Liste.
+                else if (op == QLatin1String("fxaddopen") && a.value(0).isEmpty()) {
+                    // Das Panel liegt in einem eigenen Fenster: dessen contentItem als Suchwurzel
+                    // mitgeben, sonst sucht die Geste im Hauptfenster und findet nichts.
+                    QQuickItem *wurzel = nullptr;
+                    for (QWindow *w : QGuiApplication::topLevelWindows()) {
+                        auto *qw = qobject_cast<QQuickWindow *>(w);
+                        if (qw && qw != win && qw->isVisible()) { wurzel = qw->contentItem(); break; }
+                    }
+                    QMetaObject::invokeMethod(win, "gestureFxAddOpen", Q_RETURN_ARG(QVariant, ret),
+                                              Q_ARG(QVariant, QVariant::fromValue(wurzel)));
+                }
                 else if (op == QLatin1String("monitors") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureMonitors", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
+                else { fprintf(stderr, "kmixdeck: --gesture: unknown or wrong-arity '%s'\n", qPrintable(g)); ret = QStringLiteral("<unknown gesture>"); }
+                // ret leer = "ok" ist nur richtig, wenn die Geste WIRKLICH lief. Vorher fiel ein
+                // unbekannter Name (oder eine falsche Argumentzahl) durch alle Zweige, ret blieb
+                // leer, und die Ausgabe sagte "ok" fuer eine Geste, die es nicht gibt. Ich habe
+                // darauf eine halbe Stunde Fehlersuche verschwendet: die Geste meldete Erfolg,
+                // die Probes fanden nichts, und ich habe den Fehler in der QML gesucht.
                 fprintf(stdout, "gesture %s -> %s\n", qPrintable(g), qPrintable(ret.toString().isEmpty() ? QStringLiteral("ok") : ret.toString()));
             }
             fflush(stdout);
@@ -206,13 +254,36 @@ int main(int argc, char *argv[])
         const QString open = parser.value(openArg); const QStringList probes = parser.values(probeArg);
         { const QStringList wh = parser.value(sizeArg).split(QLatin1Char('x')); win->resize(wh.size() == 2 ? wh[0].toInt() : 1280, wh.size() == 2 ? wh[1].toInt() : 760); }
         win->show();
-        QTimer::singleShot(900, &app, [win, open] {
-            if (open == QLatin1String("apps")) QMetaObject::invokeMethod(win, "showApps");
-            else if (open == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
-            else if (open == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
-        });
+        QTimer::singleShot(900, &app, [win, open, openZiel] { openZiel(win, open); });
         QTimer::singleShot(2000, &app, [win, probes] {
-            for (const QString &p : probes) { QVariant ret; QMetaObject::invokeMethod(win, "probe", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, p)); fprintf(stdout, "probe %s = %s\n", qPrintable(p), qPrintable(ret.toString())); }
+            // Alle Top-Level-Fenster fragen, nicht nur das Hauptfenster: pushDialogLayer oeffnet
+            // auf dem Desktop ein eigenes QQuickWindow (Kirigami PageRow.qml, Zweig "open as a new
+            // window"). Ein Probe auf ein Element im Effekt-Panel fand darum nie etwas, obwohl das
+            // Panel offen war — und das sah nach einem QML-Fehler aus, wo keiner war.
+            for (const QString &p : probes) {
+                QVariant ret;
+                // invokeMethod-Rueckgabe PRUEFEN. Nach dem Umbau auf probe(spec, startItem) war
+                // die QML-Funktion zweiargumentig, der Aufruf mit einem Argument schlug fehl, ret
+                // blieb LEER — und weil mein Fallback nur bei "<not found" ansprang, lief er nie.
+                // Jeder Probe gab einen Leerstring zurueck, was nach "Property ist leer" aussah
+                // statt nach "Aufruf ist gescheitert". Zweite Runde derselben Lektion an einem Tag.
+                if (!QMetaObject::invokeMethod(win, "probe", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, p), Q_ARG(QVariant, QVariant())))
+                    ret = QStringLiteral("<probe() not invokable — signature changed?>");
+                if (ret.toString().startsWith(QLatin1String("<not found"))) {
+                    for (QWindow *w : QGuiApplication::topLevelWindows()) {
+                        auto *qw = qobject_cast<QQuickWindow *>(w);
+                        if (!qw || qw == win) continue;
+                        QVariant r2;
+                        // Das Dialog-Fenster ist ein nacktes QQuickWindow ohne probe()-Methode:
+                        // ueber contentItem suchen lassen, indem das Hauptfenster den Baum bekommt.
+                        if (!QMetaObject::invokeMethod(win, "probeIn", Q_RETURN_ARG(QVariant, r2),
+                                                       Q_ARG(QVariant, QVariant::fromValue(qw->contentItem())), Q_ARG(QVariant, p)))
+                            continue;
+                        if (!r2.toString().startsWith(QLatin1String("<not found"))) { ret = r2; break; }
+                    }
+                }
+                fprintf(stdout, "probe %s = %s\n", qPrintable(p), qPrintable(ret.toString()));
+            }
             fflush(stdout);
             // gestures (if any) ended in asyncCall()s — round-trip the bus before leaving, same as the gesture-only path
             QDBusInterface(QStringLiteral("org.kmixdeck1"), QStringLiteral("/org/kmixdeck1"), QStringLiteral("org.freedesktop.DBus.Peer"), QDBusConnection::sessionBus()).call(QStringLiteral("Ping"));

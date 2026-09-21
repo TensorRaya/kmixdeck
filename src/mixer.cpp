@@ -215,13 +215,23 @@ QJsonObject Mixer::fxChain(const QString &slug) const {
     return c->toJson();
 }
 
-bool Mixer::setFxChain(const QString &slug, const QJsonObject &chainJson) {
+bool Mixer::setFxChain(const QString &slug, const QJsonObject &chainJson, QString *why_out) {
     qCInfo(lcMixer) << "fx: setFxChain" << slug;
+    auto abweisen = [&](const QString &grund) {
+        // FX-8: the REASON has to reach the caller, not just the daemon log. validate() already
+        // words it ("effect 'noise' needs librnnoise_ladspa — noise-suppression-for-voice …"),
+        // and until 2026-09-21 that sentence was logged and thrown away: the CLI printed
+        // "refused: see daemon log", so the one person who could install the package was the
+        // one person not told which package. Telling a user to read a log is telling them no.
+        qCWarning(lcMixer) << "kmixdeck: refusing fx chain:" << grund;
+        if (why_out) *why_out = grund;
+        return false;
+    };
     fx::Chain *chain = chainOf(m_layout, slug);
-    if (!chain) return false;
+    if (!chain) return abweisen(QStringLiteral("no channel or mix '%1'").arg(slug));
     const fx::Chain next = fx::Chain::fromJson(chainJson);
     const QString why = fx::validate(next, m_layout.mix(slug) != nullptr);
-    if (!why.isEmpty()) { qCWarning(lcMixer) << "kmixdeck: refusing fx chain:" << why; return false; }
+    if (!why.isEmpty()) return abweisen(why);
     // Same topology (types, order, enabled flags) and only parameter values differ → this is a control tweak, not a
     // rebuild: write the controls live (glitch-free Props write, ADR 0008 finding 2) and keep the nodes. Every frontend
     // saves the whole chain JSON after a slider move (FxPanel.qml onMoved, web fx.js onchange); before this the node
@@ -293,8 +303,21 @@ QJsonArray Mixer::fxTypes() const {
         for (const auto &p : t.params) params.append(QJsonObject{{QStringLiteral("key"), p.key}, {QStringLiteral("label"), p.label},
                                                                 {QStringLiteral("unit"), p.unit}, {QStringLiteral("min"), p.min},
                                                                 {QStringLiteral("max"), p.max}, {QStringLiteral("def"), p.def}});
-        out.append(QJsonObject{{QStringLiteral("type"), t.type}, {QStringLiteral("label"), t.label},
-                               {QStringLiteral("description"), t.description}, {QStringLiteral("params"), params}});
+        // FX-8: every type says whether its LADSPA plugin is actually installed, and if not,
+        // which package provides it. Until 2026-09-21 the check existed but ran only when
+        // someone ENABLED the effect — so `fx types` happily advertised the RNNoise denoiser
+        // on a machine without librnnoise_ladspa, and the user found out by picking it and
+        // getting a rejection. A catalog that lists what it cannot deliver is worse than a
+        // short catalog: the frontends draw their pickers from this list, so an unavailable
+        // effect must be visible AS unavailable, with the package name next to it.
+        QJsonObject obj{{QStringLiteral("type"), t.type}, {QStringLiteral("label"), t.label},
+                        {QStringLiteral("description"), t.description}, {QStringLiteral("params"), params},
+                        {QStringLiteral("available"), fx::ladspaAvailable(t.ladspaFile)}};
+        if (!fx::ladspaAvailable(t.ladspaFile)) {
+            obj[QStringLiteral("plugin")] = t.ladspaFile;
+            obj[QStringLiteral("package")] = fx::packageHint(t.ladspaFile);
+        }
+        out.append(obj);
     }
     return out;
 }

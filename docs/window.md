@@ -77,7 +77,23 @@ Every control is reachable with Tab and carries an accessible name (tested). Fad
 
 ## For developers
 
-`kmixdeck-kde --screenshot out.png [--open channel|mix] [--size 1280x760]` renders the window offscreen;
+`kmixdeck-kde --screenshot out.png [--open <target>] [--size 1280x760]` renders the window offscreen;
 `--probe <objectName>.<property>` prints one UI value; `--self-test` loads the QML and exits non-zero on any warning. The
 integration tests use these to prove that the window shows what the daemon holds (`tests/integration/test_presentation.py`,
 `test_frontends_sync.py`).
+
+`--open` targets: `apps`, `routing`, `patchbay`, `channel-ports`, `fx/channel/<slug>`, `fx/mix/<slug>`.
+An unknown target is reported on stderr instead of being ignored — it used to vanish silently, which
+made a probe against a page that was never opened look like a QML bug.
+
+Two traps worth knowing before you write a window test:
+
+- **A dialog pushed with `pushDialogLayer()` is its own window on the desktop**, not an entry in
+  `pageStack.layers` (see Kirigami's `PageRow.qml`, branch "open as a new window"). `--probe`
+  therefore searches every top-level window, not just the main one. Checking `layers.depth` to
+  see whether a dialog opened gives the wrong answer on desktop.
+- **Whatever you push must be a Page.** `pushDialogLayer()` runs `verifyPages()` and answers a
+  non-Page with a `console.warn` plus `null`, so nothing opens and no error reaches the shell.
+  `FxPanel.qml` had a `Kirigami.FormLayout` root for months: the "Effects…" button did nothing,
+  and no test noticed because the FX tests went through the CLI and the browser, while
+  `--self-test` only loads the file without pushing it (fixed 2026-09-21, FX-8).

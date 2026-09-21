@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fx.h"
 
+#include <QDebug>
 #include <QDir>
 #include <QLatin1Char>
 
@@ -108,6 +109,34 @@ QJsonObject presetChains() {
         return QJsonObject{{QStringLiteral("enabled"), true}, {QStringLiteral("chain"), a}};
     };
     QJsonObject voice = chain({QByteArrayLiteral("noise").constData(), QByteArrayLiteral("highpass").constData(), QByteArrayLiteral("gate").constData(), QByteArrayLiteral("compressor").constData(), QByteArrayLiteral("limiter").constData()});
+    // FX-8: the denoiser sits FIRST in the chain but ships SWITCHED OFF. Two separate reasons,
+    // both of which cost someone a stream if ignored:
+    //
+    // Off, because RNNoise needs a LADSPA plugin that most distros do not install by default.
+    // A preset that enables it would be rejected as a whole on such a machine (validate()
+    // refuses an enabled effect whose plugin is missing) — the user asks for a voice chain and
+    // gets an error instead of the four effects that would work fine. Off means the preset
+    // always applies; the denoiser is one toggle away once the package is there.
+    //
+    // First, because denoising belongs before the gate: the gate's threshold should see the
+    // cleaned signal, otherwise it opens on room noise and the chain fights itself.
+    {
+        QJsonArray c = voice[QStringLiteral("chain")].toArray();
+        QJsonObject erst = c[0].toObject();
+        // Not Q_ASSERT: that compiles away in release builds, and this is exactly the kind of
+        // invariant that breaks silently when someone reorders the chain above. If the first
+        // entry is ever not the denoiser, switching off index 0 would disable the wrong effect
+        // and ship a preset that quietly does less than it says.
+        if (erst[QStringLiteral("type")].toString() == QLatin1String("noise")) {
+            erst[QStringLiteral("enabled")] = false;
+            c[0] = erst;
+            voice[QStringLiteral("chain")] = c;
+        } else {
+            qWarning("kmixdeck: preset 'Voice — clean': expected the denoiser first, found '%s' "
+                     "— leaving the chain alone rather than disabling the wrong effect",
+                     qUtf8Printable(erst[QStringLiteral("type")].toString()));
+        }
+    }
     // broadcast: tighter, no denoiser (hardware gate does it), stronger compression
     QJsonObject bcast = chain({QByteArrayLiteral("gate").constData(), QByteArrayLiteral("compressor").constData(), QByteArrayLiteral("eq").constData(), QByteArrayLiteral("limiter").constData()});
     return {{QStringLiteral("Voice — clean"), voice}, {QStringLiteral("Voice — broadcast"), bcast}};

@@ -1293,3 +1293,81 @@ def test_cl7_shell_completion_uses_one_source(stack):
             f"zsh-Completion nicht installiert (gefunden: {gefunden})")
     finally:
         shutil.rmtree(ziel, ignore_errors=True)
+
+def test_fx8_denoiser_is_offered_honestly(stack):
+    """FX-8: RNNoise im Katalog, im Voice-Preset AUS, und ehrlich ueber Verfuegbarkeit.
+
+    Die Anforderung klingt nach einem Feature, ist aber dreimal eine Frage der
+    Ehrlichkeit — und alle drei Punkte waren am 2026-09-21 verletzt, obwohl der
+    `noise`-Typ und die LADSPA-Pruefung laengst existierten:
+
+    1. `fx types` bewarb den Denoiser ohne Verfuegbarkeitsangabe. Die Pruefung lief
+       nur beim EINSCHALTEN, also erfuhr man es durch eine Ablehnung. Ein Katalog, der
+       auflistet, was er nicht liefern kann, ist schlechter als ein kurzer Katalog:
+       die Frontends zeichnen ihre Auswahl aus dieser Liste.
+    2. Das Preset "Voice — clean" hatte den Denoiser auf `enabled: true`. Auf jeder
+       Maschine ohne das Paket war damit das GANZE Preset unbenutzbar — validate()
+       weist eine Kette mit fehlendem Plugin komplett ab. Der Nutzer will eine
+       Sprachkette und bekommt einen Fehler statt der vier Effekte, die laufen wuerden.
+    3. Beim Einschalten sagte das CLI "refused: see daemon log". Der Grund samt
+       Paketname stand fertig formuliert in validate() und wurde weggeworfen. Wer die
+       Meldung liest, ist genau der, der das Paket installieren kann.
+
+    Diese Maschine hat librnnoise_ladspa NICHT — der unavailable-Zweig ist also echt
+    gemessen, nicht simuliert.
+    """
+    typen = {e["type"]: e for e in stack.cli("fx", "types", json_out=True)}
+    assert "noise" in typen, f"Denoiser fehlt im Katalog: {sorted(typen)}"
+    noise = typen["noise"]
+
+    # 1. Verfuegbarkeit steht an JEDEM Typ, nicht nur am Denoiser — sonst weiss ein
+    #    Frontend bei den anderen nicht, ob "kein Feld" ja oder nein bedeutet.
+    for typ, e in typen.items():
+        assert "available" in e, f"{typ} sagt nichts ueber Verfuegbarkeit: {e}"
+        assert isinstance(e["available"], bool), f"{typ}: available ist {type(e['available'])}"
+
+    # 2. Fehlt das Plugin, MUSS der Paketname dabeistehen — eine Absage ohne Weg nach
+    #    vorn ist keine Hilfe. Ist es da, darf kein package-Feld Verwirrung stiften.
+    for typ, e in typen.items():
+        if e["available"]:
+            assert "package" not in e, f"{typ} ist verfuegbar, nennt aber ein Paket: {e}"
+        else:
+            assert e.get("package"), f"{typ} nicht verfuegbar, ohne Paketnamen: {e}"
+            assert e.get("plugin"), f"{typ} nicht verfuegbar, ohne Plugin-Namen: {e}"
+
+    # 3. Das Preset traegt den Denoiser, aber AUSGESCHALTET, und an erster Stelle
+    #    (Entrauschen vor dem Gate, sonst oeffnet das Gate auf Raumgeraeusch).
+    presets = stack.cli("fx", "presets", json_out=True)
+    vc = presets["Voice — clean"]
+    kette = vc["chain"]
+    assert kette[0]["type"] == "noise", f"Denoiser nicht zuerst: {[e['type'] for e in kette]}"
+    assert kette[0]["enabled"] is False, "FX-8 verlangt den Denoiser AUS im Preset"
+    assert all(e["enabled"] for e in kette[1:]), f"nur der Denoiser darf aus sein: {kette}"
+
+    # 4. Der Kern: das Preset muss sich auf dieser Maschine ANWENDEN lassen. Genau das
+    #    war kaputt — mit enabled:true wies validate() die ganze Kette ab.
+    stack.cli("fx", "set", "channel", "voice", json.dumps(vc))
+    gesetzt = stack.cli("fx", "get", "channel", "voice", json_out=True)
+    aktiv = [e["type"] for e in gesetzt["chain"] if e["enabled"]]
+    assert aktiv == ["highpass", "gate", "compressor", "limiter"], (
+        f"das Preset muss ohne rnnoise die restlichen vier Effekte fahren, aktiv: {aktiv}")
+
+    # 5. Einschalten ohne Plugin: Ablehnung MIT Paketname, nicht "see daemon log".
+    if not noise["available"]:
+        an = json.loads(json.dumps(vc))
+        for e in an["chain"]:
+            if e["type"] == "noise":
+                e["enabled"] = True
+        r = stack.cli("fx", "set", "channel", "voice", json.dumps(an), check=False)
+        assert r.returncode != 0, "Denoiser ohne Plugin darf nicht angenommen werden"
+        meldung = (r.stderr or "") + (r.stdout or "")
+        assert "daemon log" not in meldung, (
+            f"Verweis auf den Log statt einer Begruendung: {meldung.strip()!r}")
+        assert noise["plugin"] in meldung, f"Plugin-Name fehlt: {meldung.strip()!r}"
+        erstes_paketwort = noise["package"].split()[0]
+        assert erstes_paketwort in meldung, (
+            f"Paketname fehlt in der Meldung: {meldung.strip()!r} (erwartet {erstes_paketwort})")
+
+        # 6. Nach der Ablehnung darf nichts halb angewandt sein.
+        assert stack.cli("fx", "get", "channel", "voice", json_out=True) == gesetzt, (
+            "abgelehnte Kette hat die bestehende veraendert")

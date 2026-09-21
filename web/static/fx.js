@@ -70,7 +70,17 @@ export function render() {
   const add = el("div", { class: "fx-add" });
   const sel = el("select", { probe: "fxAddType", "aria-label": "Effect to add" });
   sel.append(el("option", { value: "" }, "Add effect…"));
-  for (const t of types) sel.append(el("option", { value: t.type, title: t.description || "" }, t.label));
+  // FX-8: an effect whose LADSPA plugin is missing is offered as a DISABLED option with the
+  // package name in the label, not as a normal choice. Before 2026-09-21 it looked pickable,
+  // the daemon refused the whole chain, and the package name only went to the daemon log —
+  // the one person who could fix it was the one person not told how. `disabled` is also the
+  // honest markup here: a screen reader announces it, a grey label alone does not.
+  for (const t of types) {
+    const fehlt = t.available === false;
+    const attrs = { value: t.type, title: fehlt ? `Install ${t.package} to use this effect` : (t.description || "") };
+    if (fehlt) attrs.disabled = "";
+    sel.append(el("option", attrs, fehlt ? `${t.label} — needs ${t.package}` : t.label));
+  }
   sel.onchange = () => { if (!sel.value) return; const c = clone(chain); c.chain.push({ type: sel.value, enabled: true, params: {} }); c.enabled = true; save(c); sel.value = ""; };
   add.append(sel);
   host.append(add);
