@@ -61,4 +61,36 @@ foreach(kommando status mix cell channel scene fx app devices)
     endif()
 endforeach()
 
-message(STATUS "CL-2/CL-4 ok: help and version work with no bus, usage line names the tool")
+# CL-3: per-command help must work the same way offline, for both spellings, and every command must carry an
+# example. Measured 2026-09-21: all 18 commands reachable, 28 examples in total.
+foreach(kommando status levels loudness watch undo setup export import channel mix cell app devices listen
+        audition fx scene streamdeck)
+    foreach(schreibweise "help;${kommando}" "${kommando};--help")
+        execute_process(COMMAND ${CMAKE_COMMAND} -E env DBUS_SESSION_BUS_ADDRESS=${KAPUTTER_BUS}
+                                ${CLI} ${schreibweise}
+                        OUTPUT_VARIABLE hilfe_k ERROR_VARIABLE fehler_k RESULT_VARIABLE rc_k TIMEOUT 10)
+        if(NOT rc_k EQUAL 0)
+            message(FATAL_ERROR "`kmixdeck ${schreibweise}` exited ${rc_k} offline (CL-2/CL-3): ${fehler_k}")
+        endif()
+        if(NOT hilfe_k MATCHES "kmixdeck ${kommando}")
+            message(FATAL_ERROR "`kmixdeck ${schreibweise}` does not show help for `${kommando}` (CL-3):\n${hilfe_k}")
+        endif()
+        if(NOT hilfe_k MATCHES "\\$ kmixdeck")
+            message(FATAL_ERROR "the help for `${kommando}` has no worked example (CL-3 requires at least one) — "
+                                "add a '> kmixdeck …' line in docs/kmixdeck.md")
+        endif()
+    endforeach()
+endforeach()
+
+# A typo must be a usage error, not a silent full help: otherwise the user hunts their mistake in 54 lines.
+execute_process(COMMAND ${CMAKE_COMMAND} -E env DBUS_SESSION_BUS_ADDRESS=${KAPUTTER_BUS} ${CLI} help mixx
+                OUTPUT_VARIABLE tippfehler_out ERROR_VARIABLE tippfehler_err RESULT_VARIABLE rc_t TIMEOUT 10)
+if(rc_t EQUAL 0)
+    message(FATAL_ERROR "`kmixdeck help mixx` succeeded — an unknown command must exit non-zero (CL-8).")
+endif()
+if(NOT tippfehler_err MATCHES "mixx")
+    message(FATAL_ERROR "the error for an unknown command does not name it (CL-8):\n${tippfehler_err}")
+endif()
+
+message(STATUS "CL-2/CL-3/CL-4 ok: help and version work with no bus, 18 commands with examples, usage line names "
+               "the tool")

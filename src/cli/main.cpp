@@ -5,6 +5,7 @@
 #include <QCommandLineParser>
 
 #include "hilfe_text.h"   // CL-1: generiert aus docs/kmixdeck.md
+#include "kommando_hilfe.h"   // CL-3: Hilfe je Kommando, gleiche Quelle
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusReply>
@@ -54,7 +55,62 @@ QVariantMap plain(const QVariantMap &m) { QVariantMap r; for (auto it = m.cbegin
 
 struct Objects { QMap<QString, QVariantMap> channels, mixes, cells, apps; QVariantMap mixer; };
 
-int fail(Exit code, const QString &msg) { if (g_json) out << QJsonDocument(QJsonObject{{"error", msg}, {"code", int(code)}}).toJson(QJsonDocument::Compact) << "\n"; else err << "kmixdeck: " << msg << "\n"; return code; }
+/// CL-8: jeder Fehler geht nach STDERR, mit stabilem Prefix, benanntem Objekt
+/// und dem Exit-Code als Zahl.
+///
+/// Warum stderr auch im JSON-Modus: bis 2026-09-21 schrieb fail() das
+/// Fehlerobjekt nach stdout. Damit landete es im DATENSTROM — `kmixdeck --json
+/// status | jq '.mixes'` bekam bei nicht erreichbarem Dienst
+/// `{"code":2,"error":"no session bus"}` in dieselbe Pipe wie die Nutzdaten.
+/// Gemessen: exit=2, stdout trug das Objekt, stderr war leer. Ein Skript kann
+/// so nicht zwischen Ergebnis und Fehler trennen, ohne den Inhalt zu raten.
+///
+/// Das Textformat `kmixdeck: <meldung>` bleibt wie es war (103 Aufrufstellen
+/// haengen daran, und es ist die uebliche Form fuer Unix-Werkzeuge). Neu ist
+/// nur, dass das JSON-Objekt ein Feld `kind` mit dem symbolischen Namen des
+/// Codes traegt: eine Zahl allein zwingt jeden Aufrufer zu einer eigenen
+/// Tabelle.
+const char *codeName(Exit code) {
+    switch (code) {
+    case Ok: return "ok";
+    case Usage: return "usage";
+    case NoService: return "no-service";
+    case NotFound: return "not-found";
+    case Rejected: return "rejected";
+    }
+    return "unknown";
+}
+
+/// CL-8: die Namen der Kommandos, pruefbar OHNE Bus-Verbindung.
+///
+/// Warum getrennt von der Dispatch-Tabelle in Cli::run(): die Tabelle bildet auf
+/// Cli-Methoden ab und braucht ein fertiges Cli-Objekt, also einen erreichbaren
+/// Dienst. Ein Tippfehler ist aber ein Bedienfehler und kein Dienstproblem —
+/// gemessen 2026-09-21 gab `kmixdeck quatschkommando` den Code 2 ("service not
+/// reachable") samt Meldung ueber fehlende .service-Dateien. Der Benutzer sucht
+/// dann an der falschen Stelle. Beide Listen haelt der Test cl9-hilfe-gegen-code
+/// zusammen, der die Dispatch-Tabelle aus dieser Datei liest.
+constexpr const char *KOMMANDO_NAMEN[] = {
+    "status", "loudness", "streamdeck", "setup", "export", "import", "undo", "scene",
+    "devices", "channel", "mix", "fx", "cell", "app", "listen", "audition", "levels", "watch",
+};
+
+bool istKommando(const QString &name) {
+    for (const char *k : KOMMANDO_NAMEN)
+        if (name == QLatin1String(k)) return true;
+    return false;
+}
+
+int fail(Exit code, const QString &msg) {
+    if (g_json)
+        err << QJsonDocument(QJsonObject{{"error", msg},
+                                        {"code", int(code)},
+                                        {"kind", QString::fromLatin1(codeName(code))}})
+                       .toJson(QJsonDocument::Compact) << "\n";
+    else
+        err << "kmixdeck: " << msg << "\n";
+    return code;
+}
 
 bool fetch(Objects &o, QString *error) {
     QDBusInterface om(BUS, ROOT, "org.freedesktop.DBus.ObjectManager", QDBusConnection::sessionBus());
@@ -873,13 +929,44 @@ int main(int argc, char *argv[]) {
             QTextStream(stdout) << "kmixdeck " << KMIXDECK_VERSION_STRING << "\n";
             return Ok;
         }
-        if (willHilfe || argumente.isEmpty())
+        if (willHilfe) {
+            // CL-3: `kmixdeck help <cmd>` und `kmixdeck <cmd> --help` zeigen die
+            // Hilfe genau dieses Kommandos — Synopsis, Parameter, Beispiele. Der
+            // gesuchte Name ist das erste Argument, das kein Schalter und nicht
+            // "help" selbst ist; so treffen beide Schreibweisen dieselbe Stelle.
+            QString gesucht;
+            for (const QString &arg : argumente) {
+                if (arg.startsWith(QLatin1Char('-')) || arg == QStringLiteral("help"))
+                    continue;
+                gesucht = arg;
+                break;
+            }
+            if (!gesucht.isEmpty()) {
+                for (const auto &eintrag : kmixdeck::KOMMANDO_HILFE) {
+                    if (gesucht == QLatin1String(eintrag.name))
+                        return zeigeHilfe(eintrag.text, isatty(STDOUT_FILENO) != 0);
+                }
+                // Unbekanntes Kommando: das ist ein Bedienfehler (Usage), keine
+                // stille Vollhilfe — sonst sucht der Benutzer seinen Tippfehler
+                // in 54 Zeilen Text.
+                QTextStream(stderr) << "kmixdeck: unknown command `" << gesucht
+                                    << "` — `kmixdeck --help` lists them all\n";
+                return Usage;
+            }
+            return zeigeHilfe(kmixdeck::HILFE_TEXT, isatty(STDOUT_FILENO) != 0);
+        }
+        if (argumente.isEmpty())
             return zeigeHilfe(kmixdeck::HILFE_TEXT, isatty(STDOUT_FILENO) != 0);
     }
     p.process(app);
     g_json = p.isSet(json);
     QStringList a = p.positionalArguments();
     if (a.isEmpty()) { p.showHelp(Usage); }
+    // CL-8: ein unbekanntes Kommando ist ein Bedienfehler (Code 1) und muss VOR
+    // dem Bus-Zugriff auffallen. Sonst bekommt der Benutzer Code 2 mit einer
+    // Meldung ueber fehlende .service-Dateien und sucht am falschen Ende.
+    if (!istKommando(a[0]))
+        return fail(Usage, "unknown command '" + a[0] + "'; `kmixdeck --help` lists them all");
     if (!QDBusConnection::sessionBus().isConnected()) return fail(NoService, "no session bus");
 
     const bool offline = a[0] == QLatin1String("streamdeck");   // CT-3: file-system only, works without the daemon

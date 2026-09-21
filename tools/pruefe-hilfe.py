@@ -51,14 +51,33 @@ def kommandos_aus_code() -> set[str]:
     return namen
 
 
+def namen_vor_dem_bus() -> set[str]:
+    """KOMMANDO_NAMEN — die Liste, die VOR dem Bus-Zugriff geprueft wird (CL-8).
+
+    Zwei Listen im gleichen File sind ein Duplikat. Ohne diesen Abgleich faellt
+    ein neu gebautes Kommando in genau einer davon aus, und der Benutzer bekommt
+    `unknown command` fuer etwas, das implementiert ist — oder umgekehrt Code 2
+    statt Code 1 fuer einen Tippfehler.
+    """
+    quelle = MAIN_CPP.read_text(encoding="utf-8")
+    treffer = re.search(r"constexpr const char \*KOMMANDO_NAMEN\[\] = \{(.*?)\};", quelle, re.S)
+    if not treffer:
+        sys.exit("KOMMANDO_NAMEN not found in src/cli/main.cpp — CL-8 needs it to reject a "
+                 "typo before touching the bus.")
+    return set(re.findall(r'"([a-z][a-z-]*)"', treffer.group(1)))
+
+
 def main() -> int:
     gd = _lade_generator()
     teile = dict(gd.lese())
     doku = {name for name, _ in gd._kommandos(teile.get("COMMANDS", []))}
     code = kommandos_aus_code()
+    vorab = namen_vor_dem_bus()
 
     fehlt_in_doku = sorted(code - doku)
     fehlt_im_code = sorted(doku - code)
+    nur_vorab = sorted(vorab - code)
+    nur_tabelle = sorted(code - vorab)
 
     if fehlt_in_doku:
         print(f"FAIL: the CLI knows these commands, the documentation does not "
@@ -70,10 +89,16 @@ def main() -> int:
               f"have them: {fehlt_im_code}\n"
               f"      -> either implement them or remove them from "
               f"docs/kmixdeck.md.", file=sys.stderr)
-    if fehlt_in_doku or fehlt_im_code:
+    if nur_vorab or nur_tabelle:
+        print(f"FAIL: KOMMANDO_NAMEN and the dispatch table disagree (CL-8) — only in "
+              f"KOMMANDO_NAMEN: {nur_vorab}, only in the table: {nur_tabelle}\n"
+              f"      -> both lists live in src/cli/main.cpp and must name the same "
+              f"commands, otherwise a typo gets exit 2 instead of 1.", file=sys.stderr)
+    if fehlt_in_doku or fehlt_im_code or nur_vorab or nur_tabelle:
         return 1
 
-    print(f"CL-9 ok: {len(code)} commands, documentation and dispatch table agree")
+    print(f"CL-9 ok: {len(code)} commands, documentation, dispatch table and "
+          f"KOMMANDO_NAMEN all agree")
     return 0
 
 

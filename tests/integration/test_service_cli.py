@@ -122,6 +122,61 @@ def test_cli_level_syntax_and_exit_codes(stack):
     stack.cli("cell", "set", "game", "stream", "1.0")
 
 
+def test_cl8_errors_are_diagnosable(stack):
+    """CL-8: jeder Fehler auf stderr, mit Objekt und Regel, je Exit-Code gepruefte Form.
+
+    Zwei Dinge, die vor dem 2026-09-21 nicht stimmten:
+
+      1. Im JSON-Modus ging das Fehlerobjekt nach STDOUT. `kmixdeck --json status
+         | jq '.mixes'` bekam damit `{"code":2,"error":"no session bus"}` in
+         denselben Kanal wie die Nutzdaten — ein Skript kann Ergebnis und Fehler
+         dann nur am Inhalt unterscheiden.
+      2. Ein unbekanntes Kommando gab Code 2 ("service not reachable") statt 1,
+         weil der Bus vor der Namenspruefung angefasst wurde. Der Benutzer sucht
+         dann bei seiner Dienstinstallation statt bei seinem Tippfehler.
+    """
+    # --- Code 3 (not found): nennt das Objekt, das fehlt.
+    r = stack.cli("cell", "get", "gibtsnicht", "stream", check=False)
+    assert r.returncode == 3, (r.returncode, r.stderr)
+    assert not r.stdout.strip(), f"an error must not write to stdout, got: {r.stdout!r}"
+    assert "gibtsnicht" in r.stderr, f"the error must name the object that failed: {r.stderr!r}"
+    assert r.stderr.startswith("kmixdeck: "), f"stable prefix missing: {r.stderr!r}"
+
+    # --- Code 1 (usage): nennt die Regel, die den Wert abgelehnt hat.
+    r = stack.cli("cell", "set", "game", "stream", "+3dB", check=False)
+    assert r.returncode == 1, (r.returncode, r.stderr)
+    assert not r.stdout.strip(), f"an error must not write to stdout, got: {r.stdout!r}"
+    assert r.stderr.startswith("kmixdeck: ")
+
+    # --- Code 1 (usage) fuer ein unbekanntes Kommando, NICHT Code 2.
+    r = stack.cli("quatschkommando", check=False)
+    assert r.returncode == 1, \
+        f"an unknown command is a usage error, not a service problem: rc={r.returncode} {r.stderr!r}"
+    assert "quatschkommando" in r.stderr
+
+    # --- JSON-Fehler: ein Objekt auf STDERR, stdout bleibt leer und parsebar.
+    for args, erwartet in ((("cell", "get", "gibtsnicht", "stream"), 3),
+                           (("cell", "set", "game", "stream", "+3dB"), 1),
+                           (("quatschkommando",), 1)):
+        r = subprocess.run([str(BIN / "kmixdeck"), "--json", *args],
+                           capture_output=True, text=True, env=stack.env)
+        assert r.returncode == erwartet, (args, r.returncode, r.stderr)
+        assert not r.stdout.strip(), \
+            f"--json {args}: the error object belongs on stderr, stdout carried: {r.stdout!r}"
+        objekt = json.loads(r.stderr)     # muss ohne Regex parsebar sein
+        assert objekt["code"] == erwartet, objekt
+        assert objekt["error"], f"empty error message in {objekt}"
+        assert objekt["kind"] in ("usage", "no-service", "not-found", "rejected"), objekt
+
+    # --- Code 2 (service not reachable): ohne Bus, ohne Aktivierung.
+    umgebung = dict(stack.env, DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent-kmixdeck-test")
+    r = subprocess.run([str(BIN / "kmixdeck"), "--json", "status"],
+                       capture_output=True, text=True, env=umgebung)
+    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr)
+    assert not r.stdout.strip(), f"stdout must stay clean: {r.stdout!r}"
+    assert json.loads(r.stderr)["kind"] == "no-service"
+
+
 def test_ar1_cli_set_reaches_pipewire_and_is_audible(stack):
     """The whole chain: CLI → D-Bus → kmixdeckd → PipeWire → audio. −12 dB requested, −12 dB measured."""
     stack.cli("cell", "set", "game", "stream", "0.25"); stack.cli("cell", "set", "game", "monitor", "1.0")

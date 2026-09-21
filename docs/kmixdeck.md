@@ -100,46 +100,58 @@ that `-12dB` is a level and not an option. `kmixdeck --json status` works,
 : The matrix: every channel × every mix with level and mute, plus outputs,
 inputs, apps. `--json` gives the whole object tree — this is what the tests and
 the Stream Deck plugin read.
+> kmixdeck status                   # the matrix as a table
+> kmixdeck --json status | jq '.mixes[] | {Slug, Volume}'
 
 `levels [--once]`
 : Live peak meters at 25 Hz (`#` peak, `=` RMS, `!` clip). `--json` prints one
 object per tick. Ctrl-C stops and unsubscribes. `--once` prints a single reading
 and exits (scripts, tests).
+> kmixdeck levels --once            # one reading, then exit
+> kmixdeck --json levels --once | jq '.[] | select(.Clip)'
 
 `loudness [--once]`
 : EBU R128 per mix that has the meter on (UX-18): momentary, short-term and
 integrated loudness in LUFS plus true peak in dBTP. `--json` prints
 `{slug: [M, S, I, TP]}`.
+> kmixdeck loudness --once          # M/S/I in LUFS, true peak in dBTP
 
 `watch`
 : Prints every property change on the bus as it happens. Useful to see what a UI
 action actually did.
+> kmixdeck watch                    # every bus change, until Ctrl-C
 
 `undo`
 : Restores the last removed channel or mix — including its cells, outputs and FX
 (CH-9). One step.
+> kmixdeck mix remove talkback && kmixdeck undo   # brings it back with cells and FX
 
 ## First run, backup, restore
 
 `setup`
 : Shows the first-run plan: *Monitor* → default output, *Voice* ← default mic,
 running apps → channels by media role (UX-3).
+> kmixdeck setup                    # shows the plan, changes nothing
 
 `setup --apply`
 : Does it.
+> kmixdeck setup --apply            # creates the default desk
 
 `export [file]`
 : Writes the layout **and** every fader/trim/mute as one JSON document (to
 stdout without a file). This is the backup (CT-7).
+> kmixdeck export > ~/kmixdeck-$(date +%F).json
 
 `import <file>`
 : Replaces the running layout with that document and applies the levels. Refuses
 documents it cannot parse and keeps the current layout.
+> kmixdeck import ~/kmixdeck-2026-09-21.json
 
 ## Channels
 
 `channel list`
 : Slug and name of every channel (`--json`: all properties).
+> kmixdeck channel list             # slug and name of every channel
 
 `channel add <name>`
 : Creates the channel; prints its object path.
@@ -181,6 +193,7 @@ documents it cannot parse and keeps the current layout.
 
 `mix list` · `mix add <name>` · `mix remove <slug>` · `mix rename` · `mix icon` · `mix color` · `mix move`
 : As for channels.
+> kmixdeck mix add "Talkback"       # new mix, unity everywhere
 
 `mix duplicate <slug> <new name>`
 : Copy with every cell level, output and FX (MX-8).
@@ -212,6 +225,8 @@ running, only its capture source is audible.
 
 `cell get <ch> <mix>`
 : Level and mute of that one fader.
+> kmixdeck cell get game stream
+> kmixdeck cell set game stream -12dB   # one cell, other mixes untouched
 
 `cell set <ch> <mix> <level>`
 : The level of channel *ch* in mix *mix* only — the other mixes do not move.
@@ -227,6 +242,8 @@ Touching the follower breaks the link (MX-7).
 
 `app list`
 : Running application streams: id, name, running state, channel(s).
+> kmixdeck app list                 # id, name, running state, channels
+> kmixdeck app move firefox browser
 
 `app move <id|name> <channel>`
 : Move the stream to a channel. Remembered for next time the app starts (CH-4).
@@ -238,6 +255,7 @@ Touching the follower breaks the link (MX-7).
 
 `devices`
 : Hardware outputs a mix can play to (`node.name → description`).
+> kmixdeck devices                  # node.name → description
 
 `devices in`
 : Hardware inputs a channel can be fed by.
@@ -251,16 +269,21 @@ Touching the follower breaks the link (MX-7).
 `devices virtual list` · `devices virtual add <name> [--in N] [--out N]` · `devices virtual remove <slug>`
 : Virtual devices: a named block of ports other software can use as a sound card
 (DV-23).
+> kmixdeck devices virtual add "Loopback A" --in 2 --out 2
 
 ## Listening and auditioning
 
 `listen [<node.name>|none]`
 : The device *you* listen on and which mixes play there (UX-2).
+> kmixdeck listen                   # what plays where
+> kmixdeck listen alsa_output.usb-Focusrite_Scarlett-00.analog-stereo
 
 `audition channel|mix <slug>`
 : Solo that one entity on the main output — everything else muted;
 `audition none` restores the previous state exactly (UX-12). This is the
 hold-to-listen button of the UIs.
+> kmixdeck audition channel voice   # solo; everything else muted
+> kmixdeck audition none            # exactly back to before (UX-12)
 
 ## Effects
 
@@ -270,6 +293,7 @@ rnnoise) are listed only when the library is installed.
 
 `fx types`
 : The catalog: every effect type with its controls, ranges and defaults (JSON).
+> kmixdeck fx types                 # every effect with ranges and defaults
 
 `fx presets`
 : One-click chains ("Podcast voice", …) as editable starting points (FX-4).
@@ -280,6 +304,7 @@ rnnoise) are listed only when the library is installed.
 `fx set channel|mix <slug> '<json>'`
 : Replace the chain. Validated: unknown type, out-of-range control or missing
 plugin → refused with the reason.
+> kmixdeck fx set channel voice "$(kmixdeck fx presets | jq -c '.["Podcast voice"]')"
 
 `fx clear channel|mix <slug>`
 : Remove it.
@@ -300,6 +325,8 @@ other change (CH-9).
 
 `scene list`
 : Every stored scene name, one per line (`--json` for an array).
+> kmixdeck scene save "stream night"
+> kmixdeck scene recall "stream night"
 
 `scene save <name>`
 : Store the current mix state under that name. Overwrites an existing scene of
@@ -325,6 +352,7 @@ really is stored.
 `streamdeck install` · `streamdeck uninstall` · `streamdeck path`
 : Hooks the OpenAction plugin into OpenDeck's plugin folder (CT-3). Works
 without the daemon. See `streamdeck/README.md`.
+> kmixdeck streamdeck install       # hooks the plugin into OpenDeck
 
 # REFERENCES
 

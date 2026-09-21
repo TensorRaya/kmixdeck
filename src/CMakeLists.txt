@@ -39,7 +39,20 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/hilfe_text.h
         COMMENT "Generating hilfe_text.h from docs/kmixdeck.md"
         VERBATIM)
 
-add_executable(kmixdeck-cli cli/main.cpp ${CMAKE_CURRENT_BINARY_DIR}/hilfe_text.h)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/kommando_hilfe.h
+        COMMAND ${CMAKE_COMMAND}
+                -DPYTHON3=${Python3_EXECUTABLE}
+                -DGENERATOR=${CMAKE_SOURCE_DIR}/docs/generiere-doku.py
+                -DZIEL=kommando-header
+                -DOUT=${CMAKE_CURRENT_BINARY_DIR}/kommando_hilfe.h
+                -P ${CMAKE_SOURCE_DIR}/cmake/erzeuge-manpage.cmake
+        DEPENDS ${CMAKE_SOURCE_DIR}/docs/kmixdeck.md ${CMAKE_SOURCE_DIR}/docs/generiere-doku.py
+        COMMENT "Generating kommando_hilfe.h from docs/kmixdeck.md (CL-3)"
+        VERBATIM)
+
+add_executable(kmixdeck-cli cli/main.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/hilfe_text.h
+        ${CMAKE_CURRENT_BINARY_DIR}/kommando_hilfe.h)
 set_target_properties(kmixdeck-cli PROPERTIES OUTPUT_NAME kmixdeck)
 target_include_directories(kmixdeck-cli PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/.. ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(kmixdeck-cli PRIVATE Qt6::Core Qt6::DBus)

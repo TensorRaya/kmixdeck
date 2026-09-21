@@ -23,6 +23,7 @@ Konventionen, die hier durchgesetzt werden:
 from __future__ import annotations
 
 import os
+import textwrap
 import re
 import subprocess
 import sys
@@ -168,6 +169,25 @@ def als_man(teile: list[tuple[str, list[str]]], version: str) -> str:
             # und groff fliesst die Befehle zu einem Absatz zusammen
             # ("```sh kmixdeck cell set game stream -12dB ```") — gemessen
             # 2026-09-21 in EXAMPLES, unlesbar.
+            # '> kmixdeck …' — Beispielzeile zu einem Kommando (CL-3: jedes
+            # Kommando braucht mindestens ein durchgerechnetes Beispiel). Kuerzer
+            # notiert als ein Zaunblock, damit die Beispiele direkt unter der
+            # Definition stehen und nicht in einen Sammelabschnitt wandern.
+            if nackt.startswith("> "):
+                if offen_tp:
+                    aus.append(".RS")
+                else:
+                    aus.append(".PP")
+                    aus.append(".RS 4")
+                aus.append(".EX")
+                while i < len(zeilen) and zeilen[i].strip().startswith("> "):
+                    aus.append(_esc(zeilen[i].strip()[2:]))
+                    i += 1
+                aus.append(".EE")
+                aus.append(".RE")
+                if not offen_tp:
+                    aus.append(".PP")
+                continue
             if nackt.startswith("```"):
                 i += 1
                 if offen_tp:
@@ -430,6 +450,103 @@ def als_header(teile: list[tuple[str, list[str]]]) -> str:
     return "\n".join(aus)
 
 
+def hilfe_pro_kommando(teile: list[tuple[str, list[str]]]) -> dict[str, str]:
+    """Je Kommando ein Hilfetext (CL-3): Synopsis, Parameter, Beispiele.
+
+    Gesammelt werden ALLE Definitionszeilen, deren erste Marke mit dem Kommando
+    beginnt — `mix` bekommt also auch `mix volume`, `mix output-add` usw. Die
+    Unterkommandos gehoeren zusammen; wer `kmixdeck help mix` tippt, will die
+    ganze Gruppe sehen und nicht 18-mal nachfragen.
+    """
+    d = dict(teile)
+    zeilen = d.get("COMMANDS", [])
+    namen = [n for n, _ in _kommandos(zeilen)]
+    raus: dict[str, list[str]] = {n: [] for n in namen}
+
+    i = 0
+    while i < len(zeilen):
+        z = zeilen[i]
+        marken = re.findall(r"`([^`]+)`", z)
+        if not (marken and i + 1 < len(zeilen) and zeilen[i + 1].lstrip().startswith(":")):
+            i += 1
+            continue
+        kopf = marken[0].split()[0].strip("<>[]|")
+        # Erklaerung + eventuelle Fortsetzungszeilen + '> '-Beispiele einsammeln.
+        erkl: list[str] = [zeilen[i + 1].lstrip()[1:].strip()]
+        bsp: list[str] = []
+        j = i + 2
+        while j < len(zeilen):
+            nachfolger = zeilen[j]
+            if nachfolger.strip().startswith("> "):
+                bsp.append(nachfolger.strip()[2:])
+                j += 1
+                continue
+            if not nachfolger.strip():
+                break
+            # 🔴 Abbruch NUR bei einer neuen Definitionszeile, nicht bei jeder
+            # Zeile die mit ` beginnt: Fortsetzungen fangen oft mit einer Marke
+            # an ("`{slug: [M, S, I, TP]}`."). Daran verlor loudness sein
+            # Beispiel — gemessen 2026-09-21, der Text stand in der Quelle und
+            # kam nie in der Hilfe an. Eine Definitionszeile erkennt man daran,
+            # dass die NAECHSTE Zeile mit ':' anfaengt.
+            ist_definition = (nachfolger.startswith("`")
+                              and j + 1 < len(zeilen)
+                              and zeilen[j + 1].lstrip().startswith(":"))
+            if ist_definition or nachfolger.startswith("## "):
+                break
+            erkl.append(nachfolger.strip())
+            j += 1
+
+        if kopf in raus:
+            block = raus[kopf]
+            block.append("  " + " · ".join(_klartext(m) for m in marken))
+            for stueck in textwrap.wrap(_klartext(_fuege(erkl)), 74):
+                block.append("      " + stueck)
+            for b in bsp:
+                block.append("      $ " + _klartext(b))
+            block.append("")
+        i = j
+
+    fertig: dict[str, str] = {}
+    for name in namen:
+        zeilen_k = raus[name]
+        if not zeilen_k:
+            continue
+        kopf = [f"kmixdeck {name} — see `man kmixdeck` for the full reference", ""]
+        fertig[name] = "\n".join(kopf + zeilen_k)
+    return fertig
+
+
+def als_kommando_header(teile: list[tuple[str, list[str]]]) -> str:
+    """Die Pro-Kommando-Hilfen als C++-Tabelle (CL-3).
+
+    Eine Zeile je Kommando in einem constexpr-Array; die CLI sucht darin linear
+    (18 Einträge — eine Map waere hier Aufwand ohne Wirkung).
+    """
+    texte = hilfe_pro_kommando(teile)
+    aus = [
+        "// CL-3: GENERIERT aus docs/kmixdeck.md — nicht von Hand aendern.",
+        "// Erzeugt von docs/generiere-doku.py (Ziel `kommando-header`).",
+        "#pragma once",
+        "",
+        "namespace kmixdeck {",
+        "struct KommandoHilfe { const char *name; const char *text; };",
+        "",
+        "/// Hilfe je Kommando, Quelle docs/kmixdeck.md Abschnitt COMMANDS.",
+        "inline constexpr KommandoHilfe KOMMANDO_HILFE[] = {",
+    ]
+    for name, text in texte.items():
+        aus.append(f'    {{"{name}",')
+        for zeile in text.rstrip("\n").split("\n"):
+            sicher = zeile.replace("\\", "\\\\").replace('"', '\\"')
+            aus.append(f'        "{sicher}\\n"')
+        aus.append("    },")
+    aus.append("};")
+    aus.append("}   // namespace kmixdeck")
+    aus.append("")
+    return "\n".join(aus)
+
+
 def main() -> int:
     was = sys.argv[1] if len(sys.argv) > 1 else "man"
     teile = lese()
@@ -439,10 +556,12 @@ def main() -> int:
         sys.stdout.write(als_help(teile))
     elif was == "header":
         sys.stdout.write(als_header(teile))
+    elif was == "kommando-header":
+        sys.stdout.write(als_kommando_header(teile))
     elif was == "pruefen":
         return pruefen(teile)
     else:
-        print(f"unbekannt: {was} (man | help | header | pruefen)", file=sys.stderr)
+        print(f"unbekannt: {was} (man | help | header | kommando-header | pruefen)", file=sys.stderr)
         return 2
     return 0
 

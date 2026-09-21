@@ -46,6 +46,12 @@ add_test(NAME doku-abschnitte COMMAND python3 ${CMAKE_SOURCE_DIR}/docs/generiere
 # da, niemand konnte sie finden. Genau das faengt dieser Test.
 add_test(NAME cl9-hilfe-gegen-code COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/pruefe-hilfe.py)
 
+# CL-3: jedes Kommando hat eine eigene Hilfe mit mindestens einem Beispiel, und
+# die Top-Level-Hilfe bleibt eine Schirmseite. Geprueft wird der GENERIERTE Text
+# — ein Beispiel, das der Generator verschluckt, ist keins (loudness verlor sein
+# Beispiel an einer Fortsetzungszeile, die mit ` anfing).
+add_test(NAME cl3-kommando-hilfe COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/pruefe-kommando-hilfe.py)
+
 # CL-2 + CL-4: Hilfe und Version ohne Daemon, ohne Bus-Aufruf, ohne argv[0] in
 # der Usage-Zeile. Laeuft mit zerschossener DBUS_SESSION_BUS_ADDRESS.
 add_test(NAME cl2-hilfe-ohne-daemon COMMAND ${CMAKE_COMMAND}
