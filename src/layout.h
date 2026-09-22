@@ -152,6 +152,7 @@ struct Layout {
     static Layout starter();                        // Game/System/Voice × Monitor/Stream
 
     bool load(const QString &path);
+    bool loadFromJson(const QByteArray &roh);   // B2: judge a captured snapshot, not the live file
     bool save(const QString &path) const;
     QJsonObject toJson() const;
     static Layout fromJson(const QJsonObject &o);

@@ -199,6 +199,16 @@ Layout Layout::fromJson(const QJsonObject &o) {
     }
     return l;
 }
+// B2: the watcher must judge the bytes it captured when the event arrived, not whatever is on disk by
+// the time it gets round to looking — see Mixer::watchLayoutFile. Same rules as load(), one code path.
+bool Layout::loadFromJson(const QByteArray &roh) {
+    QJsonParseError err; const auto doc = QJsonDocument::fromJson(roh, &err);
+    if (err.error != QJsonParseError::NoError || !doc.isObject()) return false;
+    if (doc.object().value(QStringLiteral("version")).toInt(1) > kLayoutVersion) return false;
+    *this = fromJson(doc.object());
+    return true;
+}
+
 bool Layout::load(const QString &path) {
     QFile f(path); if (!f.open(QIODevice::ReadOnly)) return false;
     QJsonParseError err; const auto doc = QJsonDocument::fromJson(f.readAll(), &err);

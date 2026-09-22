@@ -57,6 +57,7 @@ public:
     /// B2: watch layoutPath and apply an edit made by anything other than us, without a restart.
     /// Idempotent, so calling it twice does not stack watchers. Off until called.
     void watchLayoutFile();
+    void armLayoutWatch() const;   // B2: point the file watch at the inode that is on disk now
 
     bool connected() const { return m_connected; }
     QStringList channelSlugs() const;
@@ -416,6 +417,9 @@ private:
     // against them and stays silent when they match, so our own writes never trigger a reload.
     // A hash, not an mtime: QSaveFile commits by rename, so the timestamp always looks new.
     mutable QByteArray m_layoutGeschrieben;
+    // B2: the file as it looked when the watcher fired. Captured in the signal, consumed in the
+    // debounce handler — anything the daemon writes in between must not be able to hide the edit.
+    mutable QByteArray m_layoutFremdeAenderung;
     mutable QFileSystemWatcher *m_layoutWatcher = nullptr;
     QTimer m_layoutEntprellung;           // editors write in several steps; coalesce to one reload
     bool m_reconciled = false;

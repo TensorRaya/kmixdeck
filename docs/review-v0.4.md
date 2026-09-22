@@ -117,6 +117,36 @@ Verzeichnis, 300 ms Entprellung, Schleifenbremse über die zuletzt geschriebenen
 Bytes. Neu: **DV-32** in `requirements.md`, drei Tests, externe Änderung wird in
 **0,50 s** übernommen.
 
+**B2, zweiter Schaden: gleichzeitiges Speichern zerstörte die fremde Änderung** (DV-33)
+
+Der erste Fix machte den Test grün — **einmal**. Im Vollgate fiel er wieder um, und dann
+6 von 6 Läufen unter Last, während er einzeln nie umfiel. Das war der Hinweis: nicht der
+Watcher, sondern ein Wettlauf.
+
+Gemessen im selben Lauf, zwei Zahlen nebeneinander: der Test schrieb **802 Bytes** mit dem
+neuen Mix, der Handler las 300 ms später **1128 Bytes** — unsere eigenen. Dazwischen hatte
+der Daemon selbst gespeichert (ein Retarget ruft `saveLayout`) und die Änderung von Hand
+überschrieben. Die Schleifenbremse verglich danach unsere frischen Bytes mit unserem eigenen
+Merker, fand sie gleich und schwieg. Die Änderung war weg, ohne ein Wort im Log.
+
+Das ist kein Testartefakt, das ist Datenverlust: wer `layout.json` von Hand editiert, während
+der Daemon aus irgendeinem Grund speichert, verliert seine Arbeit stillschweigend. Unter Last
+jedes Mal, im Leerlauf fast nie — deshalb sah es nach Flackern aus.
+
+Zwei Änderungen, weil es zwei Ursachen sind: der Schnappschuss wird jetzt **beim Signal**
+genommen statt 300 ms später (`m_layoutFremdeAenderung`), und `saveLayout()` schreibt nicht
+über eine Datei, die weder unsere noch unverändert ist. `Layout::loadFromJson` beurteilt die
+festgehaltenen Bytes statt erneut von der Platte zu lesen.
+
+Messung: **6 von 6 Läufen rot** vor dem Fix, **6 von 6 grün** danach, jeweils voller
+Dateilauf unter Last. Fünf Hypothesen waren vorher widerlegt: fehlendes Verzeichnis,
+Vorgänger-Datei, Löschung durch DV-1, `files()` nach rename, Reihenfolge von `saveLayout`
+und `watchLayoutFile`.
+
+Was ich mir selbst ankreide: ich habe „B2 ist durch, 27/27" gemeldet, nachdem ich **einen**
+grünen Lauf gesehen hatte. Der Test war zu dem Zeitpunkt schon unzuverlässig. Ein einzelner
+grüner Lauf ist kein Beweis — bei einem Zeitfehler ist er reine Glückssache.
+
 **C6 — toter Link in der README**
 
 `docs/cli.md#scenes` zeigte auf einen Abschnitt, den es seit CL-1 nicht mehr
