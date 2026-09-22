@@ -5,6 +5,7 @@
 
 export const state = { connected: false, root: {}, objects: {} };
 export const peaks = {};                       // meter key → linear peak, overwritten 25×/s; read by requestAnimationFrame
+export const loudness = {};                    // UX-18: mix slug → [M, S, I, TP], LUFS resp. dBTP; -70 = nothing yet
 const listeners = new Set();
 let ws = null, nextId = 1, pending = new Map(), backoff = 500;
 
@@ -38,6 +39,7 @@ export function connect() {
       case "snapshot": Object.assign(state, { root: {}, objects: {} }, m.state); notify(null); break;
       case "patch":    mergePatch(state, m.state); notify(m.state); break;
       case "meters":   Object.assign(peaks, m.peaks); break;
+      case "loudness": Object.assign(loudness, m.loudness); break;   // UX-18
       case "result": case "error": {
         const p = pending.get(m.id); pending.delete(m.id);
         if (p) m.op === "result" ? p.resolve(m.value) : p.reject(new Error(m.message));

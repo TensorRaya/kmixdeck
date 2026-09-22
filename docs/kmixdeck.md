@@ -496,6 +496,48 @@ Levels are written one of three ways, everywhere a level is expected:
 : the UI's cubic fader position: `100%` = 0 dB, `63%` ≈ −12 dB, `50%` ≈ −18 dB,
 `25%` ≈ −36 dB — the same curve as Plasma's volume slider.
 
+## Loudness (EBU R128)
+Peak meters answer "am I clipping"; loudness answers "am I as loud as everyone
+else". Platforms normalise to a target — Twitch and YouTube to about −14 LUFS,
+broadcast (EBU R128) to −23 — so a stream mastered by peak alone ends up quiet
+after their processing.
+
+Off by default per mix, because it costs CPU and screen space. Switch it on in
+the mix's context menu (*Loudness meter (EBU R128)*) or with
+`mix loudness <slug> on`; the target is editable in the same menu or with
+`mix loudness <slug> -16`. The Stream mix from the first-run wizard has it on.
+
+Once it is on, every frontend shows the same four numbers next to the mix meter:
+
+`M`
+: momentary — a 400 ms window, jumps around while you talk
+
+`S`
+: short-term — 3 s, what a listener perceives right now
+
+`I`
+: integrated — the whole session, gated per BS.1770. **This is the number that
+matters for a platform target.** It deliberately does *not* reset when you stop
+talking: it is cumulative over the programme, so it still reads correctly at the
+end of a stream. It turns green once it reaches the target.
+
+`TP`
+: true peak in dBTP, red above −1 dBTP — the level where a transcoder starts to
+distort even though your peak meter looks fine.
+
+The target itself is drawn as a dashed line inside the meter. It is an
+orientation mark, not a measurement: the meter's scale is peak dBFS while the
+target is LUFS, so the comparison that counts is the `I` number, and the line
+tells you roughly where you are aiming.
+
+Below −70 LUFS — the BS.1770 absolute gate — there is nothing to measure and the
+readouts show a dash rather than a number. `M` and `S` fall there a few seconds
+after you go quiet; `I` does not, by design.
+
+The tray popover shows just `I` against the target, which is the one-glance
+answer while you are mid-stream. `kmixdeck loudness --once` prints all of it for
+every mix, `--json` for scripts.
+
 ## Slugs
 Channels and mixes are addressed by their *slug*: the name lower-cased,
 ASCII-folded, runs of non-letters → `_` (`"Game Audio"` → `game_audio`,

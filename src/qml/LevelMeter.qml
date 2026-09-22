@@ -83,4 +83,35 @@ Item {
         width: meter.horizontal ? 2 : parent.width
         height: meter.horizontal ? parent.height : 2
     }
+    // UX-18: the R128 target line. "The target line MUST be drawn on the meter" — so it lives here, in the
+    // one meter every frontend shares, not painted next to it. Set targetLufs to draw it, NaN/0 hides it.
+    //
+    // The honest bit: this scale is dBFS peak, the target is LUFS (K-weighted, gated, integrated). Those are
+    // different units and no constant converts one into the other — a −14 LUFS mix peaks anywhere between
+    // −8 and −2 dBFS depending on material. The line is therefore positioned on the dB scale at the target's
+    // numeric value and marked as an ORIENTATION mark (dashed, low opacity), not as a measurement. The real
+    // comparison is the number next to the meter, which is LUFS against LUFS.
+    property double targetLufs: NaN
+    property bool targetReached: false      // set by the owner when I >= target; colours the line
+    Row {
+        // named after the meter that owns it, so a test can find THIS mix's line: mixMeter/game -> loudnessTarget/game
+        objectName: "loudnessTarget/" + (meter.objectName.includes("/") ? meter.objectName.split("/").slice(1).join("/") : meter.objectName)
+        visible: !isNaN(meter.targetLufs) && meter.targetLufs < 0
+        opacity: meter.targetReached ? 0.9 : 0.45
+        readonly property double frac: Math.max(0, Math.min(1, (meter.targetLufs - meter.floorDb) / -meter.floorDb))
+        x: meter.horizontal ? parent.width * frac - width / 2 : 0
+        y: meter.horizontal ? 0 : parent.height * (1 - frac) - height / 2
+        width: meter.horizontal ? 1 : parent.width
+        height: meter.horizontal ? parent.height : 1
+        spacing: 0
+        // dashed so it never reads as a level: 3 px mark, 2 px gap, along the meter's short axis
+        Repeater {
+            model: Math.max(1, Math.ceil((meter.horizontal ? meter.height : meter.width) / 5))
+            Rectangle {
+                width: meter.horizontal ? 1 : 3
+                height: meter.horizontal ? 3 : 1
+                color: meter.targetReached ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.textColor
+            }
+        }
+    }
 }

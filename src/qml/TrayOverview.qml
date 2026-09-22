@@ -88,7 +88,27 @@ Kirigami.AbstractApplicationWindow {
                     // the meter sits UNDER the row, full width, like the header bars in the window (UX-13) — a bar next to a
                     // slider read as a second broken slider in the first render 
                     LevelMeter { id: mm; objectName: "trayMixMeter/" + modelData.slug; horizontal: true; Layout.fillWidth: true; Layout.leftMargin: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing; Layout.rightMargin: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing; Layout.preferredHeight: 3
-                                 Connections { target: Mixer; function onPeaksChanged() { mm.peak = modelData.muted ? 0 : Mixer.peak(modelData.meterKey); mm.rms = modelData.muted ? 0 : Mixer.peak("rms/" + modelData.meterKey); mm.clip = !modelData.muted && Mixer.peak("clip/" + modelData.meterKey) > 0 } } }
+                                 Connections { target: Mixer; function onPeaksChanged() { mm.peak = modelData.muted ? 0 : Mixer.peak(modelData.meterKey); mm.rms = modelData.muted ? 0 : Mixer.peak("rms/" + modelData.meterKey); mm.clip = !modelData.muted && Mixer.peak("clip/" + modelData.meterKey) > 0 } }
+                                 // UX-18: the target line rides on the tray meter too, so the mark is in the same place everywhere
+                                 targetLufs: modelData.loudness ? modelData.loudnessTarget : NaN
+                                 targetReached: lufsI > -70 && lufsI >= modelData.loudnessTarget
+                                 property double lufsI: -70
+                                 Connections { target: Mixer; function onLoudnessChanged() { mm.lufsI = Mixer.loudness(modelData.slug, 2) } } }
+                    // UX-18: integrated loudness against the target — the tray's one-glance answer. Hidden unless the
+                    // analyser is on for this mix, so the popover does not grow a blank line per mix.
+                    QQC2.Label {
+                        objectName: "trayLufs/" + modelData.slug
+                        visible: modelData.loudness === true
+                        Layout.fillWidth: true
+                        Layout.leftMargin: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing
+                        horizontalAlignment: Text.AlignRight
+                        font.family: "monospace"
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        color: mm.lufsI > -70 && mm.lufsI >= modelData.loudnessTarget ? Kirigami.Theme.positiveTextColor
+                             : mm.lufsI > -70 ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.textColor
+                        text: mm.lufsI > -70 ? i18n("%1 LUFS / target %2", mm.lufsI.toFixed(1), modelData.loudnessTarget.toFixed(0))
+                                             : i18n("– LUFS / target %1", modelData.loudnessTarget.toFixed(0))
+                    }
                 }
             }
             Kirigami.Separator { Layout.fillWidth: true }

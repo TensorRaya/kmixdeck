@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kmixdeck\n"
 "Report-Msgid-Bugs-To: https://github.com/TensorRaya/kmixdeck/issues\n"
-"POT-Creation-Date: 2026-09-22 10:17+0200\n"
+"POT-Creation-Date: 2026-09-22 15:12+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -77,7 +77,7 @@ msgid "Now listening to: %1"
 msgstr ""
 
 #: src/frontend/kdeintegration.cpp:149 src/qml/PatchBayPage.qml:186
-#: src/qml/RoutingPage.qml:97 src/qml/TrayOverview.qml:97
+#: src/qml/RoutingPage.qml:97 src/qml/TrayOverview.qml:117
 #, kde-format
 msgid "Channels"
 msgstr ""
@@ -131,52 +131,52 @@ msgstr ""
 msgid "%1 unmuted"
 msgstr ""
 
-#: src/frontend/mixerclient.cpp:298
+#: src/frontend/mixerclient.cpp:299
 #, kde-format
 msgctxt "@label ref bound to the left side only"
 msgid " → L"
 msgstr ""
 
-#: src/frontend/mixerclient.cpp:299
+#: src/frontend/mixerclient.cpp:300
 #, kde-format
 msgctxt "@label ref bound to the right side only"
 msgid " → R"
 msgstr ""
 
-#: src/frontend/mixerclient.cpp:323
+#: src/frontend/mixerclient.cpp:324
 #, kde-format
 msgid ""
 "Connect a source to a channel, a channel to a mix, or a mix to an output."
 msgstr ""
 
-#: src/frontend/mixerclient.cpp:338
+#: src/frontend/mixerclient.cpp:339
 #, kde-format
 msgid "The capture device of a mix is always connected."
 msgstr ""
 
-#: src/frontend/mixerclient.cpp:339
+#: src/frontend/mixerclient.cpp:340
 #, kde-format
 msgid "A device feeds a channel, not a mix — add a channel first."
 msgstr ""
 
-#: src/frontend/mixerclient.cpp:340
+#: src/frontend/mixerclient.cpp:341
 #, kde-format
 msgid "These two cannot be wired."
 msgstr ""
 
-#: src/frontend/mixerclient.cpp:399
+#: src/frontend/mixerclient.cpp:400
 #, kde-format
 msgctxt "@label stereo row"
 msgid "1 (L)"
 msgstr ""
 
-#: src/frontend/mixerclient.cpp:399
+#: src/frontend/mixerclient.cpp:400
 #, kde-format
 msgctxt "@label stereo row"
 msgid "2 (R)"
 msgstr ""
 
-#: src/frontend/mixerclient.cpp:458 src/qml/RoutingPage.qml:161
+#: src/frontend/mixerclient.cpp:459 src/qml/RoutingPage.qml:161
 #, kde-format
 msgid "Capture: %1"
 msgstr ""
@@ -379,7 +379,7 @@ msgid ""
 "Applications can be routed here regardless."
 msgstr ""
 
-#: src/qml/ChannelHeader.qml:95 src/qml/MixHeader.qml:102
+#: src/qml/ChannelHeader.qml:95 src/qml/MixHeader.qml:174
 #, kde-format
 msgid "Change icon"
 msgstr ""
@@ -494,13 +494,13 @@ msgstr ""
 msgid "Listen to this channel"
 msgstr ""
 
-#: src/qml/ChannelHeader.qml:292 src/qml/MixHeader.qml:202
+#: src/qml/ChannelHeader.qml:292 src/qml/MixHeader.qml:274
 #, kde-format
 msgid "Effects (active)…"
 msgstr ""
 
 #: src/qml/ChannelHeader.qml:292 src/qml/ChannelHeader.qml:354
-#: src/qml/MixHeader.qml:202 src/qml/MixHeader.qml:227
+#: src/qml/MixHeader.qml:274 src/qml/MixHeader.qml:299
 #, kde-format
 msgid "Effects…"
 msgstr ""
@@ -520,12 +520,12 @@ msgstr ""
 msgid "Channel actions"
 msgstr ""
 
-#: src/qml/ChannelHeader.qml:322 src/qml/MixHeader.qml:212
+#: src/qml/ChannelHeader.qml:322 src/qml/MixHeader.qml:284
 #, kde-format
 msgid "Rename…"
 msgstr ""
 
-#: src/qml/ChannelHeader.qml:323 src/qml/MixHeader.qml:213
+#: src/qml/ChannelHeader.qml:323 src/qml/MixHeader.qml:285
 #, kde-format
 msgid "Icon…"
 msgstr ""
@@ -1027,25 +1027,40 @@ msgstr ""
 msgid "kmixdeckd has no connection to PipeWire."
 msgstr ""
 
-#: src/qml/MixHeader.qml:116
+#: src/qml/MixHeader.qml:134
+#, kde-format
+msgid "TP %1"
+msgstr ""
+
+#: src/qml/MixHeader.qml:134
+#, kde-format
+msgid "TP –"
+msgstr ""
+
+#: src/qml/MixHeader.qml:143
+#, kde-format
+msgid "target %1"
+msgstr ""
+
+#: src/qml/MixHeader.qml:188
 #, kde-format
 msgctxt "@title mix header while muted, %1 mix name"
 msgid "%1 — muted"
 msgstr ""
 
-#: src/qml/MixHeader.qml:132
+#: src/qml/MixHeader.qml:204
 #, kde-format
 msgctxt "@label mix is not routed to a hardware output (short)"
 msgid "Capture"
 msgstr ""
 
-#: src/qml/MixHeader.qml:132
+#: src/qml/MixHeader.qml:204
 #, kde-format
 msgctxt "@label mix is not routed to a hardware output"
 msgid "Capture only"
 msgstr ""
 
-#: src/qml/MixHeader.qml:134
+#: src/qml/MixHeader.qml:206
 #, kde-format
 msgctxt "@label number of hardware outputs of a mix"
 msgid "%1 output"
@@ -1053,115 +1068,140 @@ msgid_plural "%1 outputs"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/qml/MixHeader.qml:135
+#: src/qml/MixHeader.qml:207
 #, kde-format
 msgctxt "@label %1 device name(s), unplugged"
 msgid "%1 — unplugged"
 msgstr ""
 
-#: src/qml/MixHeader.qml:141
+#: src/qml/MixHeader.qml:213
 #, kde-format
 msgid ""
 "Where this mix plays — click to change. It is also available to OBS/Discord "
 "as the input “%1”."
 msgstr ""
 
-#: src/qml/MixHeader.qml:142
+#: src/qml/MixHeader.qml:214
 #, kde-format
 msgid ""
 "The device is unplugged. The mix is parked silently and resumes on this "
 "device as soon as it is back."
 msgstr ""
 
-#: src/qml/MixHeader.qml:149
+#: src/qml/MixHeader.qml:221
 #, kde-format
 msgid "Mix actions"
 msgstr ""
 
-#: src/qml/MixHeader.qml:162
+#: src/qml/MixHeader.qml:234
 #, kde-format
 msgid "Unmute mix"
 msgstr ""
 
-#: src/qml/MixHeader.qml:162
+#: src/qml/MixHeader.qml:234
 #, kde-format
 msgid "Mute mix"
 msgstr ""
 
-#: src/qml/MixHeader.qml:164
+#: src/qml/MixHeader.qml:236
 #, kde-format
 msgid "Mute the whole mix (all outputs and the capture source)"
 msgstr ""
 
-#: src/qml/MixHeader.qml:166
+#: src/qml/MixHeader.qml:238
 #, kde-format
 msgid "Mute mix %1"
 msgstr ""
 
-#: src/qml/MixHeader.qml:171 src/qml/MixHeader.qml:182
+#: src/qml/MixHeader.qml:243 src/qml/MixHeader.qml:254
 #, kde-format
 msgid "Master volume of mix %1"
 msgstr ""
 
-#: src/qml/MixHeader.qml:190
+#: src/qml/MixHeader.qml:262
 #, kde-format
 msgid "Listen to this mix"
 msgstr ""
 
-#: src/qml/MixHeader.qml:215
+#: src/qml/MixHeader.qml:287
 #, kde-format
 msgid "Duplicate…"
 msgstr ""
 
-#: src/qml/MixHeader.qml:218
+#: src/qml/MixHeader.qml:290
 #, kde-format
 msgid "Move left"
 msgstr ""
 
-#: src/qml/MixHeader.qml:223
+#: src/qml/MixHeader.qml:295
 #, kde-format
 msgid "Move right"
 msgstr ""
 
-#: src/qml/MixHeader.qml:226
+#: src/qml/MixHeader.qml:298
 #, kde-format
 msgid "Outputs…"
 msgstr ""
 
-#: src/qml/MixHeader.qml:229
+#: src/qml/MixHeader.qml:304
+#, kde-format
+msgid "Loudness meter (EBU R128)"
+msgstr ""
+
+#: src/qml/MixHeader.qml:312
+#, kde-format
+msgid "Loudness target… (%1 LUFS)"
+msgstr ""
+
+#: src/qml/MixHeader.qml:318
 #, kde-format
 msgid "Remove mix"
 msgstr ""
 
-#: src/qml/MixHeader.qml:238
+#: src/qml/MixHeader.qml:330
+#, kde-format
+msgid "%1 LUFS (EBU R128 broadcast)"
+msgstr ""
+
+#: src/qml/MixHeader.qml:331
+#, kde-format
+msgid "%1 LUFS (streaming)"
+msgstr ""
+
+#: src/qml/MixHeader.qml:332
+#, kde-format
+msgid "%1 LUFS"
+msgstr ""
+
+#: src/qml/MixHeader.qml:346
 #, kde-format
 msgctxt "@item mix output"
 msgid "No output (capture only)"
 msgstr ""
 
-#: src/qml/MixHeader.qml:259
+#: src/qml/MixHeader.qml:367
 #, kde-format
 msgctxt "@item pick single ports of a multichannel output"
 msgid "%1 · ports…"
 msgstr ""
 
-#: src/qml/MixHeader.qml:279
+#: src/qml/MixHeader.qml:387
 #, kde-format
 msgctxt "@item unplugged output kept as selection"
 msgid "%1 (unplugged)"
 msgstr ""
 
-#: src/qml/MixHeader.qml:287
+#: src/qml/MixHeader.qml:395
 #, kde-format
 msgid "Fallback: silence"
 msgstr ""
 
-#: src/qml/MixHeader.qml:288
+#: src/qml/MixHeader.qml:396
 #, kde-format
 msgid "Fallback: %1"
 msgstr ""
 
-#: src/qml/MixHeader.qml:290
+#: src/qml/MixHeader.qml:398
 #, kde-format
 msgctxt "@item no fallback output"
 msgid "Silence (never the system default)"
@@ -1695,61 +1735,71 @@ msgstr[1] ""
 msgid "Master: %1"
 msgstr ""
 
-#: src/qml/TrayOverview.qml:83 src/qml/TrayOverview.qml:129
+#: src/qml/TrayOverview.qml:83 src/qml/TrayOverview.qml:149
 #, kde-format
 msgid "Unmute %1"
 msgstr ""
 
-#: src/qml/TrayOverview.qml:83 src/qml/TrayOverview.qml:129
+#: src/qml/TrayOverview.qml:83 src/qml/TrayOverview.qml:149
 #, kde-format
 msgid "Mute %1"
 msgstr ""
 
-#: src/qml/TrayOverview.qml:112
+#: src/qml/TrayOverview.qml:109
+#, kde-format
+msgid "%1 LUFS / target %2"
+msgstr ""
+
+#: src/qml/TrayOverview.qml:110
+#, kde-format
+msgid "– LUFS / target %1"
+msgstr ""
+
+#: src/qml/TrayOverview.qml:132
 #, kde-format
 msgid "Group %1"
 msgstr ""
 
-#: src/qml/TrayOverview.qml:121
+#: src/qml/TrayOverview.qml:141
 #, kde-format
 msgid "Input unplugged"
 msgstr ""
 
-#: src/qml/TrayOverview.qml:121
+#: src/qml/TrayOverview.qml:141
 #, kde-format
 msgid "Trim: %1"
 msgstr ""
 
-#: src/qml/TrayOverview.qml:147
+#: src/qml/TrayOverview.qml:167
 #, kde-format
 msgid "Scene"
 msgid_plural "Scenes"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/qml/TrayOverview.qml:149
+#: src/qml/TrayOverview.qml:169
 #, kde-format
 msgid "Recall a saved scene: %1"
 msgstr ""
 
-#: src/qml/TrayOverview.qml:176
+#: src/qml/TrayOverview.qml:196
 #, kde-format
 msgid "Sample"
 msgid_plural "Samples"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/qml/TrayOverview.qml:178
+#: src/qml/TrayOverview.qml:198
 #, kde-format
 msgid "Play a sample without opening the mixer"
 msgstr ""
 
-#: src/qml/TrayOverview.qml:188
+#: src/qml/TrayOverview.qml:208
 #, kde-format
 msgid "%1 (playing)"
 msgstr ""
 
-#: src/qml/TrayOverview.qml:201
+#: src/qml/TrayOverview.qml:221
 #, kde-format
 msgid "Open mixer"
 msgstr ""

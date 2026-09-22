@@ -1,20 +1,31 @@
 // SPDX-FileCopyrightText: 2026 Raya Elena Solano
 // SPDX-License-Identifier: GPL-3.0-or-later
 // widgets.js — fader, meter, small buttons. DOM only, no framework (ADR 0011 §4).
-import { peaks, dbLabel, cubicToLin, linToCubic } from "./client.js";
+import { peaks, loudness, dbLabel, cubicToLin, linToCubic } from "./client.js";
 
 const FLOOR_DB = -60;
 const fracOf = (lin) => (lin <= 0 ? 0 : Math.max(0, Math.min(1, 1 - (20 * Math.log10(lin)) / FLOOR_DB)));
 
 /** Vertical peak meter, same drawing rules as LevelMeter.qml (UX-6/UX-16): dB scale −60…0, colour bands with 2 dB
  *  hysteresis, peak-hold marker that sits 1 s and then slides. Ballistics (hold/fall) come from the daemon. */
-export function meter(key, { horizontal = false, probe, cls = "" } = {}) {
+// UX-18: `targetLufs` draws the R128 target line INSIDE the meter, mirroring LevelMeter.qml — including the
+// caveat: the scale is dBFS peak, the target is LUFS, so the line is an orientation mark (dashed, faint), and
+// the actual target comparison is the LUFS number next to the meter. `lufsMix` colours it once I >= target.
+export function meter(key, { horizontal = false, probe, cls = "", targetLufs = null, lufsMix = null } = {}) {
   const el = document.createElement("div");
   el.className = "meter" + (horizontal ? " horizontal" : "") + (cls ? " " + cls : "");
   if (probe) el.dataset.probe = probe;
   el.dataset.meterKey = key;
-  el.innerHTML = '<div class="bar"></div><div class="hold"></div><div class="clip"></div>';
+  el.innerHTML = '<div class="bar"></div><div class="hold"></div><div class="clip"></div>'
+    + (targetLufs !== null ? '<div class="lufstarget"></div>' : "");
   const bar = el.firstChild, hold = bar.nextSibling;
+  const tline = targetLufs !== null ? el.querySelector(".lufstarget") : null;
+  if (tline) {
+    const frac = Math.max(0, Math.min(1, (targetLufs - -60) / 60));
+    tline.style[horizontal ? "left" : "bottom"] = `${frac * 100}%`;
+    tline.dataset.probe = `loudnessTarget/${lufsMix ?? key}`;
+    tline.dataset.lufs = String(targetLufs);
+  }
   let band = 0, holdFrac = 0, holdUntil = 0;
   el._tick = (now) => {
     const lin = peaks[el.dataset.meterKey] ?? 0, frac = fracOf(lin), db = lin > 0 ? 20 * Math.log10(lin) : -Infinity;
@@ -28,6 +39,10 @@ export function meter(key, { horizontal = false, probe, cls = "" } = {}) {
     hold.style.display = holdFrac > 0.02 ? "" : "none";
     hold.style[horizontal ? "left" : "bottom"] = `${holdFrac * 100}%`;
     el.dataset.level = frac.toFixed(3);
+    if (tline && lufsMix) {   // UX-18: green once the integrated loudness has reached the target
+      const i = loudness[lufsMix]?.[2] ?? -70;
+      tline.dataset.reached = i > -70 && i >= targetLufs ? "1" : "0";
+    }
   };
   meters.add(el);
   return el;

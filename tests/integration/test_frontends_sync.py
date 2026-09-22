@@ -864,3 +864,128 @@ def test_ct8_soundboard_is_the_same_in_all_three_frontends(stack):
         # would be stop-all. Removing the sample keeps the shared board usable for whoever runs next.
         stack.cli("sample", "stop", "solo", check=False)
         stack.cli("sample", "remove", slug, "solo", check=False)
+
+
+def test_ux18_loudness_is_visible_in_every_frontend(stack):
+    """UX-18: the R128 numbers and the target are readable in all four frontends, not just over the bus.
+
+    This row exists because the requirement sat on ✅ for two days while the UI side was missing entirely:
+    daemon, bus, CLI and a test were all green, and `grep -ri loudness src/qml web/static` returned nothing.
+    A bus property nobody can see is not a loudness meter — so each frontend is asked for the actual NUMBER
+    here, and the reference is measured with ffmpeg (via tone_at_known_loudness) instead of assumed. A wrong
+    unit, a wrong array index or a frontend reading M where it should read I therefore shows up as a number
+    that disagrees with the reference, not as "some text arrived".
+    """
+    # Own mix, so switching the analyser on cannot disturb the other rows sharing this module-scoped stack.
+    stack.cli("mix", "add", "R128", check=False)
+    try:
+        stack.cli("mix", "loudness", "r128", "on")
+        stack.cli("mix", "loudness", "r128", "-16")
+        # route the tone: a mix with no cell fed from a channel measures silence forever
+        stack.cli("cell", "set", "voice", "r128", "1.0", check=False)
+
+        tone, want = stack.pw.tone_at_known_loudness()
+        play = subprocess.Popen(["pw-play", "-P", '{ application.name = "Ux18Parity" node.name = "ux18-parity" '
+                                 'target.object = "kmixdeck.channel.voice" }', str(tone)],
+                                env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            # (1) CLI — the reference path. The wait condition is STABILITY, not "a number arrived": measured
+            # 2026-09-22, the first I above the -70 floor appears at t=0.25 s reading -26.72 LUFS, 6.7 LU below the
+            # reference, because BS.1770 integrates over gated blocks and has barely any of them yet. It passes 1 LU
+            # at t≈1.1 s and settles near -20.1. A wait on "I > -70" therefore samples mid-integration and the
+            # frontend assertions below inherit a number the analyser itself would disown a second later.
+            def stabil():
+                a = json.loads(stack.cli("--json", "loudness", "--once").stdout).get("r128", [-70] * 4)[2]
+                if a <= -70:
+                    return False
+                time.sleep(0.4)
+                b = json.loads(stack.cli("--json", "loudness", "--once").stdout).get("r128", [-70] * 4)[2]
+                return b > -70 and abs(b - a) < 0.3
+
+            wait_for(stabil, timeout=25.0, what="the integrated loudness of mix r128 to settle (BS.1770 gating)")
+            lu = json.loads(stack.cli("--json", "loudness", "--once").stdout)["r128"]
+            m, s, i, tp = lu
+            assert abs(i - want) < 2.0, f"integrated {i:.2f} LUFS should be near the measured reference {want:.2f} LUFS"
+
+            # (2) KDE window: the readout row must be there AND carry the same numbers, plus the target line
+            w = window(stack, "lufsRow/r128.visible", "lufsI/r128.text", "lufsM/r128.text",
+                       "lufsTP/r128.text", "lufsTarget/r128.text", "loudnessTarget/r128.visible")
+            assert w["lufsRow/r128.visible"] == "true", f"the analyser is on but the KDE readout is hidden: {w}"
+            assert w["loudnessTarget/r128.visible"] == "true", f"target line missing on the meter: {w}"
+            assert w["lufsTarget/r128.text"] == "target -16", w
+            # 0.5 LU between a frontend and the bus, not 3: the readouts are fed by the same signal at 25 Hz, so
+            # anything larger is a unit error or the wrong array index, which is exactly what this row must catch.
+            assert abs(float(w["lufsI/r128.text"]) - i) < 0.5, f"KDE shows I={w['lufsI/r128.text']}, bus says {i:.2f}"
+            assert abs(float(w["lufsM/r128.text"]) - m) < 2.0, f"KDE shows M={w['lufsM/r128.text']}, bus says {m:.2f}"
+            assert w["lufsTP/r128.text"].startswith("TP "), w
+
+            # (3) tray: the integrated value against the target, one glance
+            tr = tray(stack, "trayLufs/r128.visible", "trayLufs/r128.text")
+            assert tr["trayLufs/r128.visible"] == "true", f"analyser on but tray line hidden: {tr}"
+            assert "target -16" in tr["trayLufs/r128.text"], tr
+            assert abs(float(tr["trayLufs/r128.text"].split()[0]) - i) < 0.5, f"tray disagrees with the bus: {tr}"
+
+            # (4) web UI
+            b = browser(stack, "lufsRow/r128.textContent", "lufsI/r128.textContent", "lufsTP/r128.textContent",
+                        "loudnessTarget/r128.dataset.lufs")
+            assert "target -16" in b["lufsRow/r128.textContent"], b
+            assert b["loudnessTarget/r128.dataset.lufs"] == "-16", f"web target line at the wrong value: {b}"
+            assert abs(float(b["lufsI/r128.textContent"]) - i) < 0.5, f"web shows I={b['lufsI/r128.textContent']}, bus says {i:.2f}"
+        finally:
+            play.terminate()
+
+        # switching it off must remove the readout everywhere — a frozen last reading is worse than no reading,
+        # because it looks like a measurement of the current signal.
+        stack.cli("mix", "loudness", "r128", "off")
+        time.sleep(1.0)
+        w3 = window(stack, "lufsRow/r128.visible")
+        assert w3["lufsRow/r128.visible"] == "false", f"analyser off but the KDE readout is still there: {w3}"
+        tr3 = tray(stack, "trayLufs/r128.visible")
+        assert tr3["trayLufs/r128.visible"] == "false", f"analyser off but the tray line is still there: {tr3}"
+    finally:
+        stack.cli("mix", "remove", "r128", check=False)
+
+
+def test_ux18_silence_after_a_tone_reads_as_the_floor_not_as_minus_2432_db(stack):
+    """After the signal stops, every loudness value must sit at the -70 LUFS floor — not at -253 or -2432 dB.
+
+    Found 2026-09-22 by watching M across the end of a 12 s tone: it went -20.25 → -253.54 → -2432.19 dB and
+    those numbers went out over the bus into all four frontends. The guard in meters.cpp was `std::isfinite()`,
+    which is true for -2432, because libebur128 only promises -HUGE_VAL for actual negative infinity and returns
+    finite garbage for near-silence. ffmpeg's ebur128 — the reference tool — prints M:-163.2 for digital silence
+    but reports I: -70.0 LUFS, the BS.1770 absolute gate, and that is the clamp this asserts.
+
+    This is its own row because the parity test above measures while the tone PLAYS and never looks at what
+    happens when it stops: with the clamp reverted, that test stayed green (verified 2026-09-22).
+    """
+    stack.cli("mix", "add", "Floor", check=False)
+    try:
+        stack.cli("mix", "loudness", "floor", "on")
+        stack.cli("cell", "set", "voice", "floor", "1.0", check=False)
+        tone, _ = stack.pw.tone_at_known_loudness()
+        subprocess.run(["pw-play", "-P", '{ application.name = "Ux18Floor" node.name = "ux18-floor" '
+                        'target.object = "kmixdeck.channel.voice" }', str(tone)],
+                       env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=40)
+        # the tone has ended here; M's 400 ms window and S's 3 s window both run dry within ~4 s
+        schlimmster = {}
+        for _ in range(45):
+            time.sleep(0.2)
+            lu = json.loads(stack.cli("--json", "loudness", "--once").stdout).get("floor")
+            if not lu:
+                continue
+            for name, v in zip(("M", "S", "I", "TP"), lu, strict=True):
+                if v < schlimmster.get(name, 0.0):
+                    schlimmster[name] = v
+        assert schlimmster, "the analyser reported nothing at all after the tone"
+        for name, v in schlimmster.items():
+            assert v >= -70.0, f"{name} fell to {v:.2f} below the -70 LUFS floor after the tone ended: {schlimmster}"
+        # The frontends must show the floor as a dash — but only for the values that HAVE a floor. Measured while
+        # writing this: I stayed at -20.1 through the silence, and that is correct, not a bug. Integrated loudness
+        # is cumulative over the whole programme per BS.1770; it is the number a streamer checks at the end of a
+        # session, so it must NOT reset when nobody talks for a moment. M (400 ms) and S (3 s) are the sliding
+        # windows that do run dry, so they are what the dash applies to.
+        w = window(stack, "lufsM/floor.text", "lufsI/floor.text")
+        assert w["lufsM/floor.text"] == "–", f"momentary shows {w['lufsM/floor.text']!r} for silence, expected a dash"
+        assert float(w["lufsI/floor.text"]) < -10.0, f"integrated should still hold the programme value: {w}"
+    finally:
+        stack.cli("mix", "remove", "floor", check=False)

@@ -95,6 +95,22 @@ main { padding: 12px; overflow: auto; }
 .meter { position: relative; width: 6px; height: 28px; background: rgba(127,127,127,.15); border-radius: 3px; overflow: hidden; }
 
 .meter.horizontal { width: auto; height: 6px; }
+/* UX-18: the R128 target line inside the meter. Dashed and faint on purpose — the scale is dBFS peak while the
+   target is LUFS, so this is an orientation mark, not a measurement. It turns green once I reaches the target.
+   overflow:hidden on .meter clips it to the bar, which is exactly right. */
+.meter .lufstarget { position: absolute; background: repeating-linear-gradient(to bottom, var(--text) 0 3px, transparent 3px 5px);
+                     opacity: .45; pointer-events: none; }
+.meter.horizontal .lufstarget { top: 0; bottom: 0; width: 1px; transform: translateX(-.5px); }
+.meter:not(.horizontal) .lufstarget { left: 0; right: 0; height: 1px;
+                                      background: repeating-linear-gradient(to right, var(--text) 0 3px, transparent 3px 5px); }
+.meter .lufstarget[data-reached="1"] { background: var(--green); opacity: .9; }
+/* the LUFS readout row: one line, tabular digits so the numbers do not jitter while they update 25×/s */
+.lufsrow { display: flex; align-items: baseline; gap: 4px; margin: 2px 2px 0; font-size: 11px; }
+.lufslabel { opacity: .55; }
+.lufsval { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+.lufsval[data-reached="1"] { color: var(--green); }
+.lufsval[data-reached="0"] { color: var(--amber); }
+.lufsval.tp[data-hot="1"] { color: var(--red); }
 .meter .bar { position: absolute; inset: 0; transform-origin: bottom; transform: scaleY(0); background: var(--green); }
 .meter.horizontal .bar { transform-origin: left; transform: scaleX(0); }
 .meter[data-band="1"] .bar { background: var(--amber); }

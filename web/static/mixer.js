@@ -95,6 +95,13 @@ function mixHeader(m) {
       ["Colour…", async () => { const c = prompt2("Colour (#rrggbb or empty)", m.Color); if (c !== null) await C.set(m.path, "Color", c).catch(err); }],
       ["Output device…", () => outputPicker(m)],
       ["Effects…", () => openFx(m, m.Name)],
+      // UX-18: analyser toggle + target, same two entries as the KDE context menu
+      [m.Loudness ? "Loudness meter (EBU R128) ✓" : "Loudness meter (EBU R128)",
+       () => C.set(m.path, "Loudness", !m.Loudness).catch(err), "", `mixLoudness/${slug}`],
+      [`Loudness target… (${(m.LoudnessTarget ?? -14).toFixed(0)} LUFS)`, async () => {
+        const v = prompt2("Target loudness in LUFS (-40…0; -14 streaming, -23 EBU R128 broadcast)", String(m.LoudnessTarget ?? -14));
+        if (v !== null && v !== "") await C.set(m.path, "LoudnessTarget", parseFloat(v)).catch(err);
+      }, "", `mixLoudnessTarget/${slug}`],
       ["Duplicate…", async () => { const n = prompt2("Name for the copy", `${m.Name} copy`); if (n) await C.call(C.ROOT, "DuplicateMix", m.path, n).catch(err); }, "", `mixDuplicate/${slug}`],
       ["Move left", () => C.call(C.ROOT, "MoveMix", m.path, Math.max(0, C.mixes().findIndex((x) => x.path === m.path) - 1)).catch(err)],
       ["Move right", () => C.call(C.ROOT, "MoveMix", m.path, C.mixes().findIndex((x) => x.path === m.path) + 1).catch(err)],
@@ -111,9 +118,49 @@ function mixHeader(m) {
     onClick: () => { const dev = m.Outputs?.[0]; if (dev) C.set(C.ROOT, "ListeningDevice", dev).catch(err); else toast("This mix has no output device yet", true); } }));
   body.append(row);
   h.append(body);
-  h.append(meter(`out/${slug}`, { horizontal: true, probe: `mixMeter/${slug}`, cls: "outmeter" }));
+  // UX-18: the R128 row goes next to the meter, and the meter itself carries the target line — same layout
+  // decision as MixHeader.qml, so a streamer sees the same thing on the tablet as on the desktop.
+  if (m.Loudness) body.append(lufsRow(slug, m));
+  h.append(meter(`out/${slug}`, { horizontal: true, probe: `mixMeter/${slug}`, cls: "outmeter",
+                                  targetLufs: m.Loudness ? (m.LoudnessTarget ?? -14) : null, lufsMix: slug }));
   return h;
 }
+
+// UX-18: M/S/I in LUFS plus true peak, refreshed from the same rAF loop as the meters (a 25 Hz re-render of
+// the whole header would fight the faders). -70 is the daemon's "nothing yet" and reads as a dash, never as
+// a number — showing "-70.0" would look like a measurement of silence.
+function lufsRow(slug, m) {
+  const target = m.LoudnessTarget ?? -14;
+  const row = el("div", { class: "lufsrow", probe: `lufsRow/${slug}` });
+  const cells = {};
+  for (const [i, label] of [[0, "M"], [1, "S"], [2, "I"]]) {
+    row.append(el("span", { class: "lufslabel" }, label));
+    cells[i] = el("span", { class: "lufsval", probe: `lufs${label}/${slug}` }, "–");
+    row.append(cells[i]);
+  }
+  const tp = el("span", { class: "lufsval tp", probe: `lufsTP/${slug}` }, "TP –");
+  row.append(tp);
+  row.append(el("span", { class: "lufslabel", probe: `lufsTarget/${slug}` }, `target ${target.toFixed(0)}`));
+  row._tick = () => {
+    const v = loudnessOf(slug);
+    for (const i of [0, 1, 2]) {
+      cells[i].textContent = v[i] > -70 ? v[i].toFixed(1) : "–";
+      cells[i].dataset.lufs = v[i].toFixed(1);
+    }
+    cells[2].dataset.reached = v[2] > -70 && v[2] >= target ? "1" : "0";
+    tp.textContent = v[3] > -70 ? `TP ${v[3].toFixed(1)}` : "TP –";
+    tp.dataset.hot = v[3] > -1 ? "1" : "0";   // above -1 dBTP is what a transcoder turns into distortion
+  };
+  lufsRows.add(row);
+  return row;
+}
+const lufsRows = new Set();
+function lufsFrame() {
+  for (const r of lufsRows) { if (!r.isConnected) { lufsRows.delete(r); continue; } r._tick(); }
+  requestAnimationFrame(lufsFrame);
+}
+requestAnimationFrame(lufsFrame);
+const loudnessOf = (slug) => C.loudness[slug] ?? [-70, -70, -70, -70];
 
 function inputPicker(ch) {
   // ChannelHeader.qml's input line: every capture device from the daemon, ticked when it feeds this channel

@@ -9,6 +9,7 @@ Q_LOGGING_CATEGORY(lcFrontend, "kmixdeck.frontend")
 #include <QSet>
 #include <QDBusReply>
 #include <QDBusMetaType>
+#include <QDBusArgument>
 #include <QDBusVariant>
 #include <QDBusServiceWatcher>
 #include <QDBusPendingCallWatcher>
@@ -496,7 +497,10 @@ QVariantMap MixerClient::overview() const {
     for (const QString &m : m_mixOrder)
         mixes.push_back(QVariantMap{{QStringLiteral("slug"), m}, {QStringLiteral("name"), mixName(m)}, {QStringLiteral("icon"), mixIcon(m)}, {QStringLiteral("color"), mixColor(m)},
                                     {QStringLiteral("volume"), mixVolume(m)}, {QStringLiteral("muted"), mixMuted(m)}, {QStringLiteral("present"), mixOutputPresent(m)},
-                                    {QStringLiteral("outputs"), mixOutputs(m)}, {QStringLiteral("meterKey"), QStringLiteral("mix/") + m}});
+                                    {QStringLiteral("outputs"), mixOutputs(m)}, {QStringLiteral("meterKey"), QStringLiteral("mix/") + m},
+                                    // UX-18: the tray shows the integrated value — the one number that answers "am I
+                                    // at target?". M/S belong in the window, where there is room to watch them move.
+                                    {QStringLiteral("loudness"), mixLoudness(m)}, {QStringLiteral("loudnessTarget"), mixLoudnessTarget(m)}});
     for (const QString &c : m_channelOrder)
         channels.push_back(QVariantMap{{QStringLiteral("slug"), c}, {QStringLiteral("name"), channelName(c)}, {QStringLiteral("icon"), channelIcon(c)}, {QStringLiteral("color"), channelColor(c)},
                                        {QStringLiteral("muted"), channelMuted(c)}, {QStringLiteral("trim"), channelTrim(c)}, {QStringLiteral("inputPresent"), m_channels.value(c).value(QStringLiteral("InputPresent"), true).toBool()},
@@ -523,20 +527,62 @@ void MixerClient::setMetersEnabled(bool on) {
     QDBusInterface lv(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), bus);
     if (on) {
         bus.connect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Peaks"), this, SLOT(onPeaks(QVariantMap)));
+        bus.connect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Loudness"), this, SLOT(onLoudness(QDBusMessage)));   // UX-18
         lv.asyncCall(QStringLiteral("Subscribe"));
     } else {
         bus.disconnect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Peaks"), this, SLOT(onPeaks(QVariantMap)));
+        bus.disconnect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Loudness"), this, SLOT(onLoudness(QDBusMessage)));
         lv.asyncCall(QStringLiteral("Unsubscribe"));
         m_peaks.clear(); Q_EMIT peaksChanged();
+        m_loudness.clear(); Q_EMIT loudnessChanged();
     }
 }
 void MixerClient::onPeaks(const QVariantMap &peaks) {
     for (auto it = peaks.cbegin(); it != peaks.cend(); ++it) m_peaks[it.key()] = it.value().toDouble();
     Q_EMIT peaksChanged();
 }
+// UX-18. Unlike Peaks (a{sd} → QVariantMap for free) the Loudness signature is a{sad}: a map to an ARRAY.
+// Qt cannot hand that to a slot as a typed argument without the metatype, and even with it the nested
+// QDBusArgument has to be demarshalled by hand — hence the raw QDBusMessage. Reading it any other way
+// yields an empty map, which looks exactly like "the daemon sends nothing".
+void MixerClient::onLoudness(const QDBusMessage &msg) {
+    if (msg.arguments().isEmpty()) return;
+    const QDBusArgument arg = msg.arguments().constFirst().value<QDBusArgument>();
+    if (arg.currentType() != QDBusArgument::MapType) return;
+    QHash<QString, QList<double>> fresh;
+    arg.beginMap();
+    while (!arg.atEnd()) {
+        QString slug; QList<double> vals;
+        arg.beginMapEntry();
+        arg >> slug;
+        arg.beginArray();
+        while (!arg.atEnd()) { double d; arg >> d; vals << d; }
+        arg.endArray();
+        arg.endMapEntry();
+        fresh.insert(slug, vals);
+    }
+    arg.endMap();
+    if (fresh.isEmpty()) return;
+    for (auto it = fresh.cbegin(); it != fresh.cend(); ++it) m_loudness[it.key()] = it.value();
+    Q_EMIT loudnessChanged();
+}
 void MixerClient::setMixOutputDevice(const QString &slug, const QString &nodeName) {
     m_mixes[slug][QStringLiteral("OutputDevice")] = nodeName;
     setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("OutputDevice"), nodeName);
+}
+// UX-18: the per-mix analyser toggle and the target line, written straight onto the Mix object —
+// same route as every other mix property, so layout.json persists them without extra code.
+void MixerClient::setMixLoudness(const QString &slug, bool on) {
+    m_mixes[slug][QStringLiteral("Loudness")] = on;
+    setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("Loudness"), on);
+    if (!on) { m_loudness.remove(slug); Q_EMIT loudnessChanged(); }   // stale numbers must not linger on screen
+    Q_EMIT mixChanged(slug);
+}
+void MixerClient::setMixLoudnessTarget(const QString &slug, double lufs) {
+    const double t = std::clamp(lufs, -40.0, 0.0);
+    m_mixes[slug][QStringLiteral("LoudnessTarget")] = t;
+    setProperty(QStringLiteral("%1/mix/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Mix"), QStringLiteral("LoudnessTarget"), t);
+    Q_EMIT mixChanged(slug);
 }
 void MixerClient::undo() { callReportingErrors(QStringLiteral("Undo"), QVariant()); }
 // CT-9. callReportingErrors surfaces the daemon's error in lastError, which is why RecallScene had to stop

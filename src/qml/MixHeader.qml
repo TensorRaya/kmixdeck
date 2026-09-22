@@ -23,6 +23,23 @@ QQC2.Control {
     property string fallbackOutput: Mixer.mixFallbackOutput(mix)   // DV-15
     property bool hasFx: Mixer.fxEnabled("mix", mix)
     property string iconName: Mixer.mixIcon(mix)
+    // UX-18: analyser on/off and target come from the Mix object; the four readings arrive on their own signal
+    property bool loudnessOn: Mixer.mixLoudness(mix)
+    property double loudnessTarget: Mixer.mixLoudnessTarget(mix)
+    property double lufsM: -70
+    property double lufsS: -70
+    property double lufsI: -70
+    property double lufsTP: -70
+    Connections {
+        target: Mixer
+        function onLoudnessChanged() {
+            if (!header.loudnessOn) return
+            header.lufsM = Mixer.loudness(header.mix, 0)
+            header.lufsS = Mixer.loudness(header.mix, 1)
+            header.lufsI = Mixer.loudness(header.mix, 2)
+            header.lufsTP = Mixer.loudness(header.mix, 3)
+        }
+    }
     padding: 0
     // Narrow card (laptop, 3 mixes): the FX button folds into the ⋮ menu (it is there anyway) so the device line keeps
     // room. The listen button NEVER folds — hold-to-listen is a primary control (UX-12).
@@ -44,6 +61,10 @@ QQC2.Control {
             header.fallbackOutput = Mixer.mixFallbackOutput(slug)
             header.hasFx = Mixer.fxEnabled("mix", slug)
             header.iconName = Mixer.mixIcon(slug)
+            header.loudnessOn = Mixer.mixLoudness(slug)            // UX-18
+            header.loudnessTarget = Mixer.mixLoudnessTarget(slug)
+            // switching the analyser off must clear the digits, not freeze them at the last reading
+            if (!header.loudnessOn) { header.lufsM = -70; header.lufsS = -70; header.lufsI = -70; header.lufsTP = -70 }
         }
     }
 
@@ -72,6 +93,57 @@ QQC2.Control {
             // UX-13: what actually leaves towards the device (post master fader/mute) — out/<mix>; falls back to the
             // mix sink while the output edge is not metered yet
             Connections { target: Mixer; function onPeaksChanged() { const o = Mixer.peak("out/" + header.mix); const k = o > 0 ? "out/" + header.mix : "mix/" + header.mix; mixMeter.peak = header.masterMuted ? 0 : Mixer.peak(k); mixMeter.rms = header.masterMuted ? 0 : Mixer.peak("rms/" + k); mixMeter.clip = !header.masterMuted && Mixer.peak("clip/" + k) > 0 } }
+            // UX-18: the target line belongs ON the meter, so it is fed from the same place as the level
+            targetLufs: header.loudnessOn ? header.loudnessTarget : NaN
+            targetReached: header.loudnessOn && header.lufsI > -70 && header.lufsI >= header.loudnessTarget
+        }
+        // UX-18: M/S/I in LUFS plus true peak, next to the peak/RMS meter the requirement names. Only while the
+        // analyser is on for this mix — off means off, no empty row taking up header space (and no CPU in the
+        // daemon either). One line, monospaced digits, so the numbers do not dance while they update.
+        RowLayout {
+            id: lufsRow
+            objectName: "lufsRow/" + header.mix
+            visible: header.loudnessOn && !header.narrow
+            spacing: Kirigami.Units.smallSpacing
+            anchors { right: parent.right; bottom: mixMeter.top; rightMargin: Kirigami.Units.largeSpacing; bottomMargin: 2 }
+            Repeater {
+                model: [{ l: "M", v: header.lufsM }, { l: "S", v: header.lufsS }, { l: "I", v: header.lufsI }]
+                RowLayout {
+                    spacing: 2
+                    QQC2.Label {
+                        text: modelData.l
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.55
+                    }
+                    QQC2.Label {
+                        objectName: "lufs" + modelData.l + "/" + header.mix
+                        // -70 is the daemon's "nothing yet" (silence, or the R128 gate never opened) — showing
+                        // "-70.0" there would look like a measurement, so it reads as a dash instead.
+                        text: modelData.v > -70 ? modelData.v.toFixed(1) : "–"
+                        font.family: "monospace"
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        // I is the number a streamer is judged by: green once the target is met, amber while under it
+                        color: modelData.l === "I" && modelData.v > -70
+                               ? (modelData.v >= header.loudnessTarget ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.neutralTextColor)
+                               : Kirigami.Theme.textColor
+                    }
+                }
+            }
+            QQC2.Label {
+                objectName: "lufsTP/" + header.mix
+                text: header.lufsTP > -70 ? i18n("TP %1", header.lufsTP.toFixed(1)) : i18n("TP –")
+                font.family: "monospace"
+                font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                // true peak above -1 dBTP is what gets a stream transcoded into distortion
+                color: header.lufsTP > -1 ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+                opacity: header.lufsTP > -1 ? 1 : 0.75
+            }
+            QQC2.Label {
+                objectName: "lufsTarget/" + header.mix
+                text: i18n("target %1", header.loudnessTarget.toFixed(0))
+                font: Kirigami.Theme.smallFont
+                opacity: 0.55
+            }
         }
     }
     TapHandler { acceptedButtons: Qt.RightButton; onTapped: mixCtxMenu.popup() }
@@ -225,10 +297,46 @@ QQC2.Control {
         }
         QQC2.MenuItem { text: i18n("Outputs…"); icon.name: "audio-headphones"; onTriggered: outMenu.popup() }
         QQC2.MenuItem { text: i18n("Effects…"); icon.name: "view-media-equalizer"; onTriggered: applicationWindow().fxPanelOpen("mix", header.mix) }
+        // UX-18: the per-mix toggle. Checkable rather than a dialog — it is one bit, and the analyser costs a
+        // capture stream per mix in the daemon, so switching it off has to be as cheap as switching it on.
+        QQC2.MenuItem {
+            objectName: "mixLoudness/" + header.mix
+            text: i18n("Loudness meter (EBU R128)")
+            icon.name: "office-chart-line-stacked"
+            checkable: true
+            checked: header.loudnessOn
+            onTriggered: Mixer.setMixLoudness(header.mix, checked)
+        }
+        QQC2.MenuItem {
+            objectName: "mixLoudnessTarget/" + header.mix
+            text: i18n("Loudness target… (%1 LUFS)", header.loudnessTarget.toFixed(0))
+            icon.name: "measure"
+            enabled: header.loudnessOn
+            onTriggered: lufsTargetMenu.popup()
+        }
         QQC2.MenuSeparator {}
         QQC2.MenuItem { text: i18n("Remove mix"); icon.name: "edit-delete"; onTriggered: Mixer.removeMix(header.mix) }
     }
-            QQC2.Menu {
+    QQC2.Menu {
+        id: lufsTargetMenu
+        objectName: "lufsTargetMenu/" + header.mix
+        // UX-18: the numbers the platforms actually normalise to, plus the broadcast standard. A free-text
+        // field would be the flexible answer, but the daemon already refuses anything outside R128 range and
+        // nobody types -13.7 — these five cover streaming and broadcast.
+        Repeater {
+            model: [-14, -16, -18, -23, -9]
+            QQC2.MenuItem {
+                objectName: "lufsTargetItem/" + header.mix + "/" + modelData
+                text: modelData === -23 ? i18n("%1 LUFS (EBU R128 broadcast)", modelData)
+                    : modelData === -14 ? i18n("%1 LUFS (streaming)", modelData)
+                    : i18n("%1 LUFS", modelData)
+                checkable: true
+                checked: Math.abs(header.loudnessTarget - modelData) < 0.5
+                onTriggered: Mixer.setMixLoudnessTarget(header.mix, modelData)
+            }
+        }
+    }
+    QQC2.Menu {
         id: outMenu
         objectName: "outMenu/" + header.mix
         // UX-14 gesture: trigger the entry for one device as a click on it would

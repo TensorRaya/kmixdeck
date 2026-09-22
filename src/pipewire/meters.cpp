@@ -321,9 +321,17 @@ void Meters::publish() {
             ebur128_prev_true_peak(ls->st, 0, &tpL);
             ebur128_prev_true_peak(ls->st, 1, &tpR);
             const double tp = std::max(tpL, tpR);
-            lu.insert(it.key(), QVector<float>{okM ? float(m) : -70.f, okS ? float(st) : -70.f,
-                                               okI ? float(i) : -70.f,
-                                               tp > 0 ? float(20.0 * std::log10(tp)) : -70.f});
+            // Clamp at the -70 LUFS floor instead of publishing whatever the filter computes below it.
+            // isfinite() alone is NOT enough: libebur128 only promises -HUGE_VAL for true negative infinity, and
+            // for near-silence it returns perfectly finite nonsense — measured 2026-09-22, the moment a 12 s test
+            // tone ended: M went to -253.54, then -2432.19 dB, and those numbers travelled through the bus into
+            // all four frontends. ffmpeg's ebur128 (the reference tool) does exactly this clamp: it prints
+            // M:-163.2 for digital silence but reports I: -70.0 LUFS, the BS.1770 gate's absolute threshold.
+            // -70 is already this codebase's "nothing yet" everywhere else, so one floor covers both cases.
+            constexpr float kFloorLufs = -70.f;
+            const auto floorAt = [](bool ok, double v) { return ok && v > kFloorLufs ? float(v) : kFloorLufs; };
+            lu.insert(it.key(), QVector<float>{floorAt(okM, m), floorAt(okS, st), floorAt(okI, i),
+                                               tp > 0 ? std::max(kFloorLufs, float(20.0 * std::log10(tp))) : kFloorLufs});
         }
     }
     if (!lu.isEmpty()) Q_EMIT loudness(lu);

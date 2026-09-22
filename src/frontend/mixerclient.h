@@ -159,9 +159,20 @@ public:
     void setMetersEnabled(bool on);
     /// Last peak (linear 0..1) for "channel/<slug>" or "mix/<slug>"; 0 when unknown.
     Q_INVOKABLE double peak(const QString &key) const { return m_peaks.value(key, 0.0); }
+    // UX-18: EBU R128 for a mix. The daemon sends [M, S, I, true-peak] per mix on Levels.Loudness,
+    // LUFS resp. dBTP, with -70 standing in for "nothing yet" (silence, or the gate never opened).
+    // `which`: 0=M 1=S 2=I 3=TP. Anything unknown reads -70 so the UI has one rule for "no value".
+    Q_INVOKABLE double loudness(const QString &slug, int which) const {
+        const QList<double> v = m_loudness.value(slug);
+        return which >= 0 && which < v.size() ? v.at(which) : -70.0;
+    }
+    /// True while the daemon is actually delivering R128 numbers for this mix (analyser on AND a reading in).
+    Q_INVOKABLE bool loudnessLive(const QString &slug) const { return m_loudness.contains(slug); }
     Q_INVOKABLE QString mixOutputDevice(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("OutputDevice")).toString(); }
     Q_INVOKABLE QString mixCaptureSource(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("CaptureSource")).toString(); }
     Q_INVOKABLE void    setMixOutputDevice(const QString &slug, const QString &nodeName);
+    Q_INVOKABLE void    setMixLoudness(const QString &slug, bool on);              // UX-18
+    Q_INVOKABLE void    setMixLoudnessTarget(const QString &slug, double lufs);    // UX-18
     Q_INVOKABLE void    renameChannel(const QString &slug, const QString &name);
     Q_INVOKABLE void    renameMix(const QString &slug, const QString &name);
     Q_INVOKABLE void    duplicateMix(const QString &slug, const QString &name);   // MX-8
@@ -193,6 +204,9 @@ public:
     }
     Q_INVOKABLE double  mixVolume(const QString &slug) const { return std::cbrt(m_mixes.value(slug).value(QStringLiteral("Volume"), 1.0).toDouble()); }
     Q_INVOKABLE bool    mixMuted(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("Muted"), false).toBool(); }
+    // UX-18: analyser state and target of a mix, straight from the cached Mix properties
+    Q_INVOKABLE bool    mixLoudness(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("Loudness"), false).toBool(); }
+    Q_INVOKABLE double  mixLoudnessTarget(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("LoudnessTarget"), -14.0).toDouble(); }
     Q_INVOKABLE void    setMixVolume(const QString &slug, double cubic);
     Q_INVOKABLE void    toggleMixMute(const QString &slug);
     Q_INVOKABLE bool    mixOutputPresent(const QString &slug) const { return m_mixes.value(slug).value(QStringLiteral("OutputPresent"), true).toBool(); }
@@ -258,6 +272,7 @@ Q_SIGNALS:
     void fxTypesReady();
     void metersEnabledChanged();
     void peaksChanged();                                        // once per tick
+    void loudnessChanged();                                     // UX-18, same tick rate as peaksChanged
     void lastErrorChanged();
     void samplesChanged();   // CT-8
     void hiddenDevicesChanged();
@@ -267,6 +282,7 @@ Q_SIGNALS:
 
 private Q_SLOTS:
     void onPeaks(const QVariantMap &peaks);
+    void onLoudness(const QDBusMessage &msg);   // UX-18: a{sad}, needs the raw message to demarshal
     void onPropertiesChanged(const QDBusMessage &msg);
     void onInterfacesAdded(const QDBusObjectPath &path, const InterfaceMap &ifaces);
     void onInterfacesRemoved(const QDBusObjectPath &path, const QStringList &ifaces);
@@ -291,6 +307,7 @@ private:
     QStringList m_scenes;   // CT-9
     bool m_metersEnabled = false;
     QHash<QString, double> m_peaks;
+    QHash<QString, QList<double>> m_loudness;   // UX-18: slug -> [M, S, I, TP]
     QStringList m_channelOrder, m_mixOrder;
     QString m_lastError;
     QVariantList m_samples;   // CT-8: Mixer.Samples cache, rows of {channel,name,path,length,gain,sounding}

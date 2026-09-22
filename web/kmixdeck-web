@@ -12,6 +12,7 @@ Wire protocol (JSON text frames, one object per frame):
   server → client   {"op":"snapshot","state":{…}}                    the whole view model once, right after hello
                     {"op":"patch","state":{…}}                       RFC 7386 merge patch — apply over the last state
                     {"op":"meters","peaks":{"channel/mic":0.31,…}}   the daemon's 25 Hz Peaks signal, forwarded
+                    {"op":"loudness","loudness":{"stream":[-23.1,-22.8,-21.4,-6.2]}}   UX-18: EBU R128 per mix
                     {"op":"result","id":7,"ok":true,"value":…}       reply to a call
                     {"op":"error","id":7,"message":"…"}
 
@@ -82,6 +83,10 @@ class Daemon:
                                   Gio.DBusSignalFlags.NONE, self._on_removed)
         self.bus.signal_subscribe(BUS_NAME, "org.kmixdeck1.Levels", "Peaks", ROOT, None,
                                   Gio.DBusSignalFlags.NONE, self._on_peaks)
+        # UX-18: the R128 numbers ride their own signal at the same 25 Hz. GLib unwraps a{sad} into
+        # {slug: [M, S, I, TP]} without help, unlike Qt — no manual demarshalling needed on this side.
+        self.bus.signal_subscribe(BUS_NAME, "org.kmixdeck1.Levels", "Loudness", ROOT, None,
+                                  Gio.DBusSignalFlags.NONE, self._on_loudness)
         Gio.bus_watch_name_on_connection(self.bus, BUS_NAME, Gio.BusNameWatcherFlags.NONE,
                                          self._on_daemon_up, self._on_daemon_down)
 
@@ -150,6 +155,11 @@ class Daemon:
 
     def _on_peaks(self, _bus, _sender, _path, _iface, _sig, params):
         self.emit({"op": "meters", "peaks": unwrap(params)[0]})
+
+    def _on_loudness(self, _bus, _sender, _path, _iface, _sig, params):
+        lu = unwrap(params)[0]
+        if lu:
+            self.emit({"op": "loudness", "loudness": lu})   # UX-18: {mix: [M, S, I, TP]} in LUFS resp. dBTP
 
     # ---- called from the asyncio thread via GLib.idle_add; returns through `done`
     def set_property(self, path, prop, value, done):

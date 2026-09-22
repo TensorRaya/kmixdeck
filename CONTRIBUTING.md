@@ -36,6 +36,25 @@ Rules for such tests:
   genuinely broken tests (dv25, dv28) that had been hiding behind nonsense messages. If the predicate does
   not hold, raise and name what was last seen; never hand the caller a value nobody waited for. `waiting.py`
   is the reference.
+- **Wait for a measurement to SETTLE, not to appear.** A value crossing its "nothing yet" floor is not the same as
+  a value being right. Measured 2026-09-22 on UX-18: the integrated loudness of a tone normalised to −20.00 LUFS
+  first rises above the −70 floor at t=0.25 s reading **−26.72 LUFS** — 6.7 LU off — because BS.1770 integrates
+  over gated blocks and has almost none yet. It passes 1 LU at t≈1.1 s and settles at −20.1. A `wait_for(I > -70)`
+  therefore samples mid-integration, and every frontend assertion downstream inherits a number the analyser itself
+  would disown a second later. Poll for stability instead: two readings 0.4 s apart within 0.3 LU. The same applies
+  to anything with a sliding window or an average — levels, peaks, rates.
+- **A filter's "invalid" value is not always ±inf.** `std::isfinite()` is not a sanity check. libebur128 only
+  promises `-HUGE_VAL` for true negative infinity and returns perfectly finite nonsense for near-silence: when a
+  12 s test tone ended, momentary loudness went −20.25 → **−253.54** → **−2432.19 dB**, all finite, all published
+  over the bus into all four frontends (fixed 2026-09-22 in `meters.cpp` by clamping at the −70 LUFS floor). Check
+  what the REFERENCE tool prints, not what the header promises: ffmpeg's `ebur128` shows `M:-163.2` for digital
+  silence but reports `I: -70.0 LUFS`, and that clamp is the documented BS.1770 absolute gate.
+- **A green counter-proof means the test does not cover the bug — not that the bug is gone.** After fixing the
+  clamp above, reverting the fix left the new parity test GREEN (measured 2026-09-22): it asserts while the tone
+  plays, and the garbage only appears once the signal stops. The fix needed its own row
+  (`test_ux18_silence_after_a_tone_reads_as_the_floor_not_as_minus_2432_db`), which fails with
+  `M fell to -2691.26 below the -70 LUFS floor` when the clamp is removed. Always sabotage the fix and watch the
+  test go red; if it stays green, the test is about something else.
 - **Check the return code of every command you fire at the graph.** `pw-link` exits 255 with "failed to link
   ports: No such file or directory" when the target port does not exist *yet*, and two helpers threw that away:
   `play_into_port` and `play_into` slept a fixed 0.6 s and called `subprocess.run(..., capture_output=True)`
