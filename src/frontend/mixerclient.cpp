@@ -215,10 +215,10 @@ void MixerClient::toggleChannelMute(const QString &slug) {
 void MixerClient::callReportingErrors(const QString &method, const QVariant &arg, const QVariant &arg2) {
     QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
     auto *w = new QDBusPendingCallWatcher(arg2.isValid() ? iface.asyncCall(method, arg, arg2) : arg.isValid() ? iface.asyncCall(method, arg) : iface.asyncCall(method), this);
-    connect(w, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w) {
-        QDBusPendingReply<> r = *w;
+    connect(w, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *fertig) {
+        QDBusPendingReply<> r = *fertig;
         if (r.isError()) { qCWarning(lcFrontend) << "kmixdeck: request refused:" << r.error().message(); Q_EMIT errorOccurred(r.error().message()); }
-        w->deleteLater();
+        fertig->deleteLater();
     });
 }
 void MixerClient::addChannel(const QString &name) { callReportingErrors(QStringLiteral("AddChannel"), name); }
@@ -226,8 +226,8 @@ void MixerClient::addMix(const QString &name)     { callReportingErrors(QStringL
 void MixerClient::addChannelWithSource(const QString &name, const QString &kind, const QString &ref) {
     QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
     auto *w = new QDBusPendingCallWatcher(iface.asyncCall(QStringLiteral("AddChannel"), name), this);
-    connect(w, &QDBusPendingCallWatcher::finished, this, [this, kind, ref](QDBusPendingCallWatcher *w) {
-        QDBusPendingReply<QDBusObjectPath> r = *w; w->deleteLater();
+    connect(w, &QDBusPendingCallWatcher::finished, this, [this, kind, ref](QDBusPendingCallWatcher *fertig) {
+        QDBusPendingReply<QDBusObjectPath> r = *fertig; fertig->deleteLater();
         if (r.isError()) { qCWarning(lcFrontend) << "kmixdeck: request refused:" << r.error().message(); Q_EMIT errorOccurred(r.error().message()); return; }
         const QString path = r.value().path(), slug = path.section(QLatin1Char('/'), -1);
         if (kind == QLatin1String("app") && !ref.isEmpty()) assignApp(ref, {slug}, false);          // CH-4

@@ -294,7 +294,7 @@ QString renderFilterChainArgs(const Chain &c, const QString &description, const 
             // come would route FL into the side-chain and lose the right channel. A side-chain input is not a
             // channel of this chain — it is fed separately (FX-9) — so it is dropped here. What remains keeps
             // the plugin's own left/right order.
-            const auto istSidechain = [](const QString &n) { return n.compare(QLatin1String("sidechain"), Qt::CaseInsensitive) == 0; };
+            const auto istSidechain = [](const QString &portName) { return portName.compare(QLatin1String("sidechain"), Qt::CaseInsensitive) == 0; };
             ports.inputs.removeIf(istSidechain);
             push(name, {QStringLiteral("type = ladspa"), QStringLiteral("plugin = %1").arg(e.plugin),
                         e.label.isEmpty() ? QString() : QStringLiteral("label = %1").arg(e.label),

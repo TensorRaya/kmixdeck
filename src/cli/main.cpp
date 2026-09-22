@@ -899,7 +899,7 @@ struct Cli {
         return ::cmdPatch(o, rest.first(), trocken);
     }
     int cmdStreamdeck() {   // CT-3: kmixdeck streamdeck install|uninstall|path — hook the OpenAction plugin into OpenDeck
-        const QString sub = a.size() > 1 ? a[1] : QStringLiteral("path");
+        const QString unterbefehl = a.size() > 1 ? a[1] : QStringLiteral("path");
         // where the plugin lives: next to this binary in a build tree, else the installed data dir
         QStringList candidates{QCoreApplication::applicationDirPath() + QStringLiteral("/../../streamdeck/me.kmixdeck.sdPlugin")};
         for (const QString &d : QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation)) candidates << d + QStringLiteral("/kmixdeck/streamdeck/me.kmixdeck.sdPlugin");
@@ -909,8 +909,8 @@ struct Cli {
         const QString home = QDir::homePath();
         QStringList targets{QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/opendeck/plugins")};
         if (QFileInfo::exists(home + QStringLiteral("/.var/app/me.amankhanna.opendeck"))) targets << home + QStringLiteral("/.var/app/me.amankhanna.opendeck/config/opendeck/plugins");
-        if (sub == "path") { if (!nurLesen(2)) return Usage; out << src << "\n"; return Ok; }
-        if (sub == "install") {
+        if (unterbefehl == "path") { if (!nurLesen(2)) return Usage; out << src << "\n"; return Ok; }
+        if (unterbefehl == "install") {
             for (const QString &t : targets) {
                 QDir().mkpath(t);
                 const QString link = t + QStringLiteral("/me.kmixdeck.sdPlugin");
@@ -920,29 +920,29 @@ struct Cli {
             }
             out << "restart OpenDeck, then add 'kmixdeck' actions from its action list\n"; return Ok;
         }
-        if (sub == "uninstall") { for (const QString &t : targets) { const QString link = t + QStringLiteral("/me.kmixdeck.sdPlugin"); if (QFile::remove(link)) out << "removed " << link << "\n"; } return Ok; }
+        if (unterbefehl == "uninstall") { for (const QString &t : targets) { const QString link = t + QStringLiteral("/me.kmixdeck.sdPlugin"); if (QFile::remove(link)) out << "removed " << link << "\n"; } return Ok; }
         return fail(Usage, "streamdeck install|uninstall|path");
     }
     int cmdSetup() {   // UX-3: kmixdeck setup [--plan|--apply]  — the first-run wizard's brain, on the command line
         const bool apply = a.size() > 1 && a[1] == "--apply";
         const QDBusReply<QString> r = mixer.call(apply ? "FirstRunApply" : "FirstRunPlan");
         if (!r.isValid()) return fail(Rejected, r.error().message());
-        const QJsonObject o = QJsonDocument::fromJson(r.value().toUtf8()).object();
+        const QJsonObject plan = QJsonDocument::fromJson(r.value().toUtf8()).object();
         if (g_json) { out << r.value() << "\n"; return Ok; }
         if (!apply) {
-            out << (o.value("firstRun").toBool() ? "first run: no layout on disk yet\n" : "layout exists (setup would only fill gaps)\n");
-            const QString sink = o.value("defaultSink").toString(), src = o.value("defaultSource").toString();
-            out << "default output: " << (sink.isEmpty() ? QStringLiteral("(none)") : sink + "  " + o.value("sinkDescription").toString()) << (o.value("sinkKnown").toBool() || sink.isEmpty() ? "" : "  [not seen yet]") << "\n";
-            out << "default input:  " << (src.isEmpty() ? QStringLiteral("(none)") : src + "  " + o.value("sourceDescription").toString()) << (o.value("sourceKnown").toBool() || src.isEmpty() ? "" : "  [not seen yet]") << "\n";
+            out << (plan.value("firstRun").toBool() ? "first run: no layout on disk yet\n" : "layout exists (setup would only fill gaps)\n");
+            const QString sink = plan.value("defaultSink").toString(), src = plan.value("defaultSource").toString();
+            out << "default output: " << (sink.isEmpty() ? QStringLiteral("(none)") : sink + "  " + plan.value("sinkDescription").toString()) << (plan.value("sinkKnown").toBool() || sink.isEmpty() ? "" : "  [not seen yet]") << "\n";
+            out << "default input:  " << (src.isEmpty() ? QStringLiteral("(none)") : src + "  " + plan.value("sourceDescription").toString()) << (plan.value("sourceKnown").toBool() || src.isEmpty() ? "" : "  [not seen yet]") << "\n";
             out << "would: Monitor -> default output, listen on it, Voice <- default input\n";
-            for (const auto &av : o.value("apps").toArray()) { const auto ap = av.toObject(); out << "  app " << ap.value("name").toString() << (ap.value("assigned").toBool() ? "  (already on " : "  -> ") << ap.value("channel").toString() << (ap.value("assigned").toBool() ? ")" : "") << "\n"; }
+            for (const auto &av : plan.value("apps").toArray()) { const auto ap = av.toObject(); out << "  app " << ap.value("name").toString() << (ap.value("assigned").toBool() ? "  (already on " : "  -> ") << ap.value("channel").toString() << (ap.value("assigned").toBool() ? ")" : "") << "\n"; }
             out << "run `kmixdeck setup --apply` to do it\n";
             return Ok;
         }
-        if (o.contains("monitorOutput")) out << "Monitor mix -> " << o.value("monitorOutput").toString() << "\n";
-        if (o.contains("listeningDevice")) out << "listening on " << o.value("listeningDevice").toString() << "\n";
-        if (o.contains("voiceInput")) out << "Voice <- " << o.value("voiceInput").toString() << "\n";
-        for (const auto &av : o.value("apps").toArray()) { const auto ap = av.toObject(); out << "app " << ap.value("name").toString() << " -> " << ap.value("channel").toString() << "\n"; }
+        if (plan.contains("monitorOutput")) out << "Monitor mix -> " << plan.value("monitorOutput").toString() << "\n";
+        if (plan.contains("listeningDevice")) out << "listening on " << plan.value("listeningDevice").toString() << "\n";
+        if (plan.contains("voiceInput")) out << "Voice <- " << plan.value("voiceInput").toString() << "\n";
+        for (const auto &av : plan.value("apps").toArray()) { const auto ap = av.toObject(); out << "app " << ap.value("name").toString() << " -> " << ap.value("channel").toString() << "\n"; }
         return Ok;
     }
     int cmdExport() {   // CT-7: kmixdeck export [file]  — stdout when no file
@@ -965,8 +965,8 @@ struct Cli {
         if (!need(2)) return Usage;
         QDBusInterface mx(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
         if (!mx.isValid()) return fail(NoService, mx.lastError().message());
-        const QString sub = a[1];
-        if (sub == QLatin1String("list")) {
+        const QString unterbefehl = a[1];
+        if (unterbefehl == QLatin1String("list")) {
             const QStringList names = mx.property("Scenes").toStringList();
             if (g_json) { QJsonArray arr; for (const auto &n : names) arr.append(n); out << QJsonDocument(arr).toJson(QJsonDocument::Compact) << "\n"; }
             else for (const auto &n : names) out << n << "\n";
@@ -975,7 +975,7 @@ struct Cli {
         }
         if (!need(3)) return Usage;
         const QString name = a[2];
-        if (sub == QLatin1String("save")) {
+        if (unterbefehl == QLatin1String("save")) {
             const QDBusMessage r = mx.call(QStringLiteral("SaveScene"), name);
             if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
             // The re-read stays on purpose: SaveScene now reports its own failures (2026-09-19), but this also
@@ -983,20 +983,20 @@ struct Cli {
             if (!mx.property("Scenes").toStringList().contains(name)) return fail(Rejected, QStringLiteral("daemon did not store scene '%1' (see its log)").arg(name));
             return Ok;
         }
-        if (sub == QLatin1String("recall")) {
+        if (unterbefehl == QLatin1String("recall")) {
             // Exclusive by default (qpwgraph's Activated/Exclusive pair): a mix the scene does not mention goes
             // back to unity, so the same scene always sounds the same. --add leaves the rest where it is.
             const bool exclusive = !a.contains(QStringLiteral("--add"));
             const QDBusMessage r = mx.call(QStringLiteral("RecallScene"), name, exclusive);
             return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
         }
-        if (sub == QLatin1String("delete")) {
+        if (unterbefehl == QLatin1String("delete")) {
             const QDBusMessage r = mx.call(QStringLiteral("DeleteScene"), name);
             if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
             if (mx.property("Scenes").toStringList().contains(name)) return fail(NotFound, QStringLiteral("no scene '%1'").arg(name));
             return Ok;
         }
-        return fail(Usage, QStringLiteral("scene: expected save|recall|list|delete, got '%1'").arg(sub));
+        return fail(Usage, QStringLiteral("scene: expected save|recall|list|delete, got '%1'").arg(unterbefehl));
     }
     int cmdUndo() {
         const QString what = unwrap(o.mixer.value("UndoDescription")).toString();
@@ -1082,10 +1082,10 @@ struct Cli {
             return printPath(QDBusReply<QDBusObjectPath>(mixer.call(board ? "AddSoundboard" : (ch ? "AddChannel" : "AddMix"), rest.first())));
         }
         if (sub == "default" && ch) {   // channel default [<slug>|none]
-            if (a.size() < 3) { const QString p = unwrap(o.mixer.value("DefaultChannel")).toString(); out << (p == "/" ? QStringLiteral("none") : p.section(QLatin1Char('/'), -1)) << "\n"; return Ok; }
+            if (a.size() < 3) { const QString pfad = unwrap(o.mixer.value("DefaultChannel")).toString(); out << (pfad == "/" ? QStringLiteral("none") : pfad.section(QLatin1Char('/'), -1)) << "\n"; return Ok; }
             if (a[2] != "none" && !objs.contains(pathOf(a[2]))) return fail(NotFound, QStringLiteral("no channel '%1'").arg(a[2]));
-            const QDBusObjectPath p(a[2] == "none" ? QStringLiteral("/") : pathOf(a[2]));
-            return setProp(QString::fromLatin1(ROOT), "org.kmixdeck1.Mixer", "DefaultChannel", QVariant::fromValue(p), &e) ? Ok : fail(Rejected, e);
+            const QDBusObjectPath pfad(a[2] == "none" ? QStringLiteral("/") : pathOf(a[2]));
+            return setProp(QString::fromLatin1(ROOT), "org.kmixdeck1.Mixer", "DefaultChannel", QVariant::fromValue(pfad), &e) ? Ok : fail(Rejected, e);
         }
         if (sub == "groups" && cmd == "channel") {   // CH-8: every group with its members
             if (!nurLesen(2, "group <slug> <name>")) return Usage;
@@ -1299,11 +1299,11 @@ struct Cli {
             double schwelle = j.value(QStringLiteral("threshold")).toDouble(-40.0);
             double anstieg = j.value(QStringLiteral("attack")).toDouble(10.0);
             double abfall = j.value(QStringLiteral("release")).toDouble(200.0);
-            for (const auto &p : {std::pair<QString, double *>{QStringLiteral("--depth"), &tiefe},
+            for (const auto &paar : {std::pair<QString, double *>{QStringLiteral("--depth"), &tiefe},
                                   {QStringLiteral("--threshold"), &schwelle},
                                   {QStringLiteral("--attack"), &anstieg},
                                   {QStringLiteral("--release"), &abfall}})
-                if (const int rc = flagWert(p.first, p.second); rc != Ok) return rc;
+                if (const int rc = flagWert(paar.first, paar.second); rc != Ok) return rc;
             j.insert(QStringLiteral("depth"), tiefe);
             j.insert(QStringLiteral("threshold"), schwelle);
             j.insert(QStringLiteral("attack"), anstieg);
@@ -1455,8 +1455,8 @@ struct Cli {
             if (!need(5)) return Usage;
             if (a[4] != "none" && !o.mixes.contains(QStringLiteral("%1/mix/%2").arg(ROOT, a[4]))) return fail(NotFound, QStringLiteral("no mix '%1'").arg(a[4]));
             if (a[4] == a[3]) return fail(Usage, "a cell cannot follow its own mix");
-            const QDBusObjectPath p(a[4] == "none" ? QStringLiteral("/") : QStringLiteral("%1/mix/%2").arg(ROOT, a[4]));
-            return setProp(path, "org.kmixdeck1.Cell", "Follows", QVariant::fromValue(p), &e) ? Ok : fail(Rejected, e);
+            const QDBusObjectPath pfad(a[4] == "none" ? QStringLiteral("/") : QStringLiteral("%1/mix/%2").arg(ROOT, a[4]));
+            return setProp(path, "org.kmixdeck1.Cell", "Follows", QVariant::fromValue(pfad), &e) ? Ok : fail(Rejected, e);
         }
         return fail(Usage, "unknown subcommand '" + sub + "'");
     }
@@ -1529,8 +1529,8 @@ struct Cli {
     }
     int cmdLevels() {   // live peaks, 25 Hz; Ctrl-C to stop. --json: one object per tick. --once: a single tick, then exit.
         QDBusInterface lv(BUS, ROOT, "org.kmixdeck1.Levels", QDBusConnection::sessionBus());
-        QDBusReply<void> sub = lv.call("Subscribe");
-        if (!sub.isValid()) return fail(NoService, sub.error().message());
+        QDBusReply<void> abo = lv.call("Subscribe");
+        if (!abo.isValid()) return fail(NoService, abo.error().message());
         const bool once = a.contains(QStringLiteral("--once"));
         g_once = once;
         auto *w = new Watcher; w->setParent(&app);
@@ -1544,8 +1544,8 @@ struct Cli {
     }
     int cmdLoudness() {   // UX-18: live LUFS for every mix that has the meter on. --once: one reading, then exit.
         QDBusInterface lv(BUS, ROOT, "org.kmixdeck1.Levels", QDBusConnection::sessionBus());
-        QDBusReply<void> sub = lv.call("Subscribe");
-        if (!sub.isValid()) return fail(NoService, sub.error().message());
+        QDBusReply<void> abo = lv.call("Subscribe");
+        if (!abo.isValid()) return fail(NoService, abo.error().message());
         const bool once = a.contains(QStringLiteral("--once"));
         auto *w = new Watcher; w->setParent(&app);
         QDBusConnection::sessionBus().connect(BUS, ROOT, "org.kmixdeck1.Levels", "Loudness", w, SLOT(loudnessSig(QDBusMessage)));
