@@ -45,6 +45,10 @@ never solved independent per-mix levels ([#72](https://codeberg.org/sonusmix/son
   looks ([ADR 0006](docs/adr/0006-level-meters-daemon-peaks.md)).
 - **Kill every kmixdeck process, audio keeps flowing.** The graph is plain PipeWire objects from a config the service
   renders; PipeWire builds it at login on its own. The service is only the control plane.
+- **Edit the config while it runs.** `layout.json` is watched, not just read at startup: an edit by hand, by config
+  management or by a synced copy from another machine is applied in about half a second — the graph reconciles and every
+  frontend redraws. A half-written or corrupt file is refused and the running layout stays up, and an edit is never
+  overwritten by a save the daemon happens to make at the same moment.
 - **One service, N frontends.** Window, tray, web UI, CLI and Stream Deck speak the same D-Bus contract; a change in one is
   in all the others within a frame. A feature counts as done only when every frontend has it
   ([ADR 0010](docs/adr/0010-one-backend-n-frontends.md)) — and a machine-checked requirements table enforces that.
