@@ -28,7 +28,13 @@ for line in sot.splitlines():
     m = re.match(r"\| ([A-Z]{2}-\d+[a-z]?) \|", line)
     if not m or "✅" not in line: continue
     rid = m.group(1)
-    refs = re.findall(r"test_[a-z0-9_]+", line)
+    # A row may also name a whole suite (`tests/integration/test_shortcuts.py`). That is a file, not a
+    # function: it counts as a reference when the file exists, and its name is not checked as a test_ function.
+    # Found 2026-09-22 when CT-1 turned ✅ — before, the audit never looked at its 🔶 row.
+    file_refs = re.findall(r"tests/integration/(test_[a-z0-9_]+)\.py", line)
+    for f in file_refs:
+        if not (root / "tests/integration" / f"{f}.py").exists(): missing.append((rid, f"tests/integration/{f}.py"))
+    refs = [r for r in re.findall(r"test_[a-z0-9_]+", line) if r not in file_refs]
     unit_refs = re.findall(r"tests/unit/([a-z0-9_]+\.cpp)", line)
     # ctest-Tests ohne test_-Praefix: add_test(NAME doku-groff …), cl9-hilfe-gegen-code,
     # cl2-hilfe-ohne-daemon. Sie sind genauso registriert wie die test_-Dateien, heissen
