@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kmixdeck\n"
 "Report-Msgid-Bugs-To: https://github.com/TensorRaya/kmixdeck/issues\n"
-"POT-Creation-Date: 2026-09-21 23:59+0200\n"
+"POT-Creation-Date: 2026-09-22 08:29+0200\n"
 "PO-Revision-Date: 2026-09-17 14:00+0200\n"
 "Last-Translator: Raya Elena Solano\n"
 "Language-Team: German\n"
@@ -130,19 +130,19 @@ msgstr "%1 stumm"
 msgid "%1 unmuted"
 msgstr "%1 hörbar"
 
-#: src/frontend/mixerclient.cpp:288
+#: src/frontend/mixerclient.cpp:298
 #, kde-format
 msgctxt "@label ref bound to the left side only"
 msgid " → L"
 msgstr " → L"
 
-#: src/frontend/mixerclient.cpp:289
+#: src/frontend/mixerclient.cpp:299
 #, kde-format
 msgctxt "@label ref bound to the right side only"
 msgid " → R"
 msgstr " → R"
 
-#: src/frontend/mixerclient.cpp:313
+#: src/frontend/mixerclient.cpp:323
 #, kde-format
 msgid ""
 "Connect a source to a channel, a channel to a mix, or a mix to an output."
@@ -150,34 +150,34 @@ msgstr ""
 "Eine Quelle mit einem Kanal verbinden, einen Kanal mit einem Mix oder einen "
 "Mix mit einem Ausgang."
 
-#: src/frontend/mixerclient.cpp:328
+#: src/frontend/mixerclient.cpp:338
 #, kde-format
 msgid "The capture device of a mix is always connected."
 msgstr "Das Aufnahmegerät eines Mixes ist immer verbunden."
 
-#: src/frontend/mixerclient.cpp:329
+#: src/frontend/mixerclient.cpp:339
 #, kde-format
 msgid "A device feeds a channel, not a mix — add a channel first."
 msgstr "Ein Gerät speist einen Kanal, keinen Mix — zuerst einen Kanal anlegen."
 
-#: src/frontend/mixerclient.cpp:330
+#: src/frontend/mixerclient.cpp:340
 #, kde-format
 msgid "These two cannot be wired."
 msgstr "Diese beiden lassen sich nicht verbinden."
 
-#: src/frontend/mixerclient.cpp:389
+#: src/frontend/mixerclient.cpp:399
 #, kde-format
 msgctxt "@label stereo row"
 msgid "1 (L)"
 msgstr "1 (L)"
 
-#: src/frontend/mixerclient.cpp:389
+#: src/frontend/mixerclient.cpp:399
 #, kde-format
 msgctxt "@label stereo row"
 msgid "2 (R)"
 msgstr "2 (R)"
 
-#: src/frontend/mixerclient.cpp:448 src/qml/RoutingPage.qml:161
+#: src/frontend/mixerclient.cpp:458 src/qml/RoutingPage.qml:161
 #, kde-format
 msgid "Capture: %1"
 msgstr "Aufnahme: %1"
@@ -911,47 +911,52 @@ msgid_plural "Recall scenes (%1)"
 msgstr[0] "Szene aufrufen (%1)"
 msgstr[1] "Szenen aufrufen (%1)"
 
-#: src/qml/Main.qml:95
+#: src/qml/Main.qml:100
+#, kde-format
+msgid "Soundboard…"
+msgstr "Soundboard …"
+
+#: src/qml/Main.qml:107
 #, kde-format
 msgid "Export settings…"
 msgstr "Einstellungen exportieren …"
 
-#: src/qml/Main.qml:101
+#: src/qml/Main.qml:113
 #, kde-format
 msgid "Import settings…"
 msgstr "Einstellungen importieren …"
 
-#: src/qml/Main.qml:107
+#: src/qml/Main.qml:119
 #, kde-format
 msgid "About kmixdeck"
 msgstr "Über kmixdeck"
 
-#: src/qml/Main.qml:303
+#: src/qml/Main.qml:315
 #, kde-format
 msgid "Output ports for %1"
 msgstr "Ausgänge für %1"
 
-#: src/qml/Main.qml:303
+#: src/qml/Main.qml:315
 #, kde-format
 msgid "Input ports for %1"
 msgstr "Eingänge für %1"
 
-#: src/qml/Main.qml:329
+#: src/qml/Main.qml:341
 #, kde-format
 msgid "Removed %1"
 msgstr "%1 entfernt"
 
-#: src/qml/Main.qml:329
+#: src/qml/Main.qml:341
 #, kde-format
 msgid "Undo"
 msgstr "Rückgängig"
 
-#: src/qml/Main.qml:356
+#: src/qml/Main.qml:368
 #, kde-format
 msgid "Hidden devices"
 msgstr "Ausgeblendete Geräte"
 
-#: src/qml/Main.qml:361
+#: src/qml/Main.qml:373
 #, kde-format
 msgid ""
 "These devices are left out of the pickers. Routing that uses them is "
@@ -960,67 +965,67 @@ msgstr ""
 "Diese Geräte fehlen in den Auswahllisten. Routing, das sie benutzt, bleibt "
 "unberührt."
 
-#: src/qml/Main.qml:368
+#: src/qml/Main.qml:380
 #, kde-format
 msgid " (not connected)"
 msgstr " (nicht verbunden)"
 
-#: src/qml/Main.qml:369
+#: src/qml/Main.qml:381
 #, kde-format
 msgid "Show again"
 msgstr "Wieder zeigen"
 
-#: src/qml/Main.qml:379
+#: src/qml/Main.qml:391
 #, kde-format
 msgid "Export kmixdeck settings"
 msgstr "kmixdeck-Einstellungen exportieren"
 
-#: src/qml/Main.qml:381
+#: src/qml/Main.qml:393
 #, kde-format
 msgid "kmixdeck settings (*.kmixdeck.json)"
 msgstr "kmixdeck-Einstellungen (*.kmixdeck.json)"
 
-#: src/qml/Main.qml:381
+#: src/qml/Main.qml:393
 #, kde-format
 msgid "JSON (*.json)"
 msgstr "JSON (*.json)"
 
-#: src/qml/Main.qml:388
+#: src/qml/Main.qml:400
 #, kde-format
 msgid "Import kmixdeck settings"
 msgstr "kmixdeck-Einstellungen importieren"
 
-#: src/qml/Main.qml:390
+#: src/qml/Main.qml:402
 #, kde-format
 msgid "kmixdeck settings (*.kmixdeck.json *.json)"
 msgstr "kmixdeck-Einstellungen (*.kmixdeck.json *.json)"
 
-#: src/qml/Main.qml:395
+#: src/qml/Main.qml:407
 #, kde-format
 msgid "Settings exported to %1"
 msgstr "Einstellungen nach %1 geschrieben"
 
-#: src/qml/Main.qml:395
+#: src/qml/Main.qml:407
 #, kde-format
 msgid "Export failed: %1"
 msgstr "Export fehlgeschlagen: %1"
 
-#: src/qml/Main.qml:399
+#: src/qml/Main.qml:411
 #, kde-format
 msgid "Settings imported from %1"
 msgstr "Einstellungen aus %1 geladen"
 
-#: src/qml/Main.qml:399
+#: src/qml/Main.qml:411
 #, kde-format
 msgid "Import failed: %1"
 msgstr "Import fehlgeschlagen: %1"
 
-#: src/qml/Main.qml:436
+#: src/qml/Main.qml:448
 #, kde-format
 msgid "New channel group"
 msgstr "Neue Kanalgruppe"
 
-#: src/qml/Main.qml:437
+#: src/qml/Main.qml:449
 #, kde-format
 msgid ""
 "Channels in one group move together: trim as one dB step for all, mute "
@@ -1029,17 +1034,17 @@ msgstr ""
 "Kanäle einer Gruppe bewegen sich gemeinsam: Trim als ein dB-Schritt für "
 "alle, Stumm gespiegelt."
 
-#: src/qml/Main.qml:439
+#: src/qml/Main.qml:451
 #, kde-format
 msgid "e.g. Music & Game"
 msgstr "z. B. Musik & Game"
 
-#: src/qml/Main.qml:513
+#: src/qml/Main.qml:554
 #, kde-format
 msgid "The kmixdeck service (kmixdeckd) is not running."
 msgstr "Der kmixdeck-Dienst (kmixdeckd) läuft nicht."
 
-#: src/qml/Main.qml:514
+#: src/qml/Main.qml:555
 #, kde-format
 msgid "kmixdeckd has no connection to PipeWire."
 msgstr "kmixdeckd hat keine Verbindung zu PipeWire."
@@ -1313,7 +1318,7 @@ msgstr "%1 (stumm)"
 #: src/qml/PatchBayPage.qml:302
 #, kde-format
 msgid "No mix is routed to this device — drag a wire from a mix to it."
-msgstr ""
+msgstr "Auf dieses Gerät ist kein Mix verdrahtet — zieh ein Kabel von einem Mix darauf."
 "Kein Mix liegt auf diesem Gerät — ein Kabel von einem Mix hierher ziehen."
 
 #: src/qml/PatchBayPage.qml:345
@@ -1416,7 +1421,7 @@ msgstr "%1 — belegt von %2"
 #: src/qml/PortPicker.qml:93
 #, kde-format
 msgid "%1 — free. One port = mono (both sides), two = stereo (first is left)."
-msgstr ""
+msgstr "%1 — frei. Ein Port = mono (beide Seiten), zwei = stereo (der erste ist links)."
 "%1 — frei. Ein Port = mono (beide Seiten), zwei = stereo (erster ist links)."
 
 #: src/qml/PortPicker.qml:105
@@ -1583,7 +1588,7 @@ msgstr "rechts"
 #: src/qml/RoutingPage.qml:229
 #, kde-format
 msgid "Only the %1 side of the mix into this port (click again: whole mix)"
-msgstr ""
+msgstr "Nur die %1 Seite des Mixes auf diesen Port (nochmal klicken: ganzer Mix)"
 "Nur die Seite %1 des Mixes in diesen Port (nochmal klicken: ganzer Mix)"
 
 #: src/qml/RoutingPage.qml:230
@@ -1621,6 +1626,90 @@ msgid "Saved scene: %2"
 msgid_plural "Saved scenes: %2"
 msgstr[0] "Gespeicherte Szene: %2"
 msgstr[1] "Gespeicherte Szenen: %2"
+
+#: src/qml/SoundboardPanel.qml:20
+#, kde-format
+msgid "Soundboard"
+msgstr "Soundboard"
+
+#: src/qml/SoundboardPanel.qml:47
+#, kde-format
+msgid "Add sample…"
+msgstr "Sample hinzufügen …"
+
+#: src/qml/SoundboardPanel.qml:53
+#, kde-format
+msgid "Stop all"
+msgstr "Alle stoppen"
+
+#: src/qml/SoundboardPanel.qml:62
+#, kde-format
+msgid "Choose an audio file"
+msgstr "Audiodatei auswählen"
+
+#: src/qml/SoundboardPanel.qml:63
+#, kde-format
+msgid "Audio (*.wav *.flac *.ogg *.oga *.opus *.mp3)"
+msgstr "Audio (*.wav *.flac *.ogg *.oga *.opus *.mp3)"
+
+#: src/qml/SoundboardPanel.qml:63
+#, kde-format
+msgid "All files (*)"
+msgstr "Alle Dateien (*)"
+
+#: src/qml/SoundboardPanel.qml:68
+#, kde-format
+msgid "The daemon refused the file."
+msgstr "Der Dienst hat die Datei abgelehnt."
+
+#: src/qml/SoundboardPanel.qml:83
+#, kde-format
+msgid "No soundboard yet"
+msgstr "Noch kein Soundboard"
+
+#: src/qml/SoundboardPanel.qml:84
+#, kde-format
+msgid ""
+"A soundboard is a channel that plays files, with a fader in every mix like "
+"any other channel."
+msgstr ""
+"Ein Soundboard ist ein Kanal, der Dateien abspielt — mit einem Regler in "
+"jedem Mix wie jeder andere Kanal."
+
+#: src/qml/SoundboardPanel.qml:86
+#, kde-format
+msgid "Create soundboard"
+msgstr "Soundboard anlegen"
+
+#: src/qml/SoundboardPanel.qml:88
+#, kde-format
+msgid "Board"
+msgstr "Board"
+
+#: src/qml/SoundboardPanel.qml:96
+#, kde-format
+msgid "Board:"
+msgstr "Board:"
+
+#: src/qml/SoundboardPanel.qml:121
+#, kde-format
+msgid "No samples on this board yet — “Add sample…” takes a file from disk."
+msgstr "Noch keine Samples auf diesem Board — „Sample hinzufügen …“ holt eine Datei von der Platte."
+
+#: src/qml/SoundboardPanel.qml:153
+#, kde-format
+msgid " — %1 s"
+msgstr " — %1 s"
+
+#: src/qml/SoundboardPanel.qml:174
+#, kde-format
+msgid "Gain for this sample only"
+msgstr "Pegel nur für dieses Sample"
+
+#: src/qml/SoundboardPanel.qml:180
+#, kde-format
+msgid "Remove this sample"
+msgstr "Dieses Sample entfernen"
 
 #: src/qml/TrayOverview.qml:48
 #, kde-format
@@ -1686,7 +1775,24 @@ msgstr[1] "Szenen"
 msgid "Recall a saved scene: %1"
 msgstr "Gespeicherte Szene aufrufen: %1"
 
-#: src/qml/TrayOverview.qml:169
+#: src/qml/TrayOverview.qml:176
+#, kde-format
+msgid "Sample"
+msgid_plural "Samples"
+msgstr[0] "Sample"
+msgstr[1] "Samples"
+
+#: src/qml/TrayOverview.qml:178
+#, kde-format
+msgid "Play a sample without opening the mixer"
+msgstr "Ein Sample abspielen, ohne den Mixer zu öffnen"
+
+#: src/qml/TrayOverview.qml:188
+#, kde-format
+msgid "%1 (playing)"
+msgstr "%1 (spielt)"
+
+#: src/qml/TrayOverview.qml:201
 #, kde-format
 msgid "Open mixer"
 msgstr "Mixer öffnen"

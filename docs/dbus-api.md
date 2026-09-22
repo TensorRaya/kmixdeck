@@ -18,7 +18,7 @@ The root object at `/org/kmixdeck1`. Everything else hangs below it; `GetManaged
 ### Properties
 | Name | Type | Access | Meaning |
 |---|---|---|---|
-| `Version` | string | read | Service version, e.g. `0.3.0`. Constant for the life of the process. |
+| `Version` | string | read | Service version, e.g. `0.1.1`. Constant for the life of the process. |
 | `Connected` | bool | read | True while a PipeWire connection is alive. `false` means the daemon is waiting for PipeWire — the layout is intact and re-applies itself. |
 | `LastError` | string | read | Last graph-level failure the daemon could not repair on its own — an edge module that did not load (open-files limit hit, bad arguments). Empty when everything the layout asks for exists. Frontends show it as a banner; `kmixdeck status` prints it. |
 | `OutputDevices` | dict<string,string> | read | Hardware sinks a mix may play to: `node.name` → human description. Unplugged devices stay in here with their last description. |
@@ -30,6 +30,7 @@ The root object at `/org/kmixdeck1`. Everything else hangs below it; `GetManaged
 | `UndoDescription` | string | read | What the next `Undo` would restore, as a human string (`channel “Music”`). Empty when the undo stack is empty (CH-9). |
 | `FxTypes` | string | read | Built-in effect catalog as JSON: `[{type,label,description,params:[{key,label,unit,min,max,def}]}]` (FX-4). |
 | `FxPresets` | string | read | One-click effect chains as JSON `{name: chain}`. A preset is a starting point — edit the chain afterwards (FX-4). |
+| `Scenes` | string[] | read | Every stored scene name, alphabetical. A scene is a named snapshot of the MIX STATE (cell levels and mutes, per-mix level/mute/FX-bypass) — deliberately not the channel/mix set and not the wiring, so a scene stays applicable after a rename or a repatch. |
 | `FirstRun` | bool | read | True while no layout has ever been saved — the moment a first-run assistant should offer `FirstRunPlan`. |
 | `DefaultSink` | string | read | `node.name` of the PipeWire default output. Read-only view for frontends that show what the system picks. |
 | `DefaultSource` | string | read | `node.name` of the PipeWire default input. |
@@ -42,6 +43,9 @@ The root object at `/org/kmixdeck1`. Everything else hangs below it; `GetManaged
 |---|---|---|
 | `SetDeviceHidden` | (node: string, hidden: bool) | Hide a device from the pickers, or show it again. Returns nothing; an empty `node` is a no-op. |
 | `Undo` | () | Restore the last removed channel or mix with its whole state: links, inputs, outputs, fader levels and mutes (CH-9). Repeated calls walk back through the stack. |
+| `SaveScene` | (name: string) | Stores the current mix state under `name`, overwriting a scene of that name. The channel/mix set is not part of it. |
+| `RecallScene` | (name: string, exclusive: bool) | Applies the scene in a single graph pass, undoable like any other change. `exclusive` also resets everything the scene does NOT mention to unity/unmuted, so a forgotten fader from the last show cannot bleed into this one; without it the scene is a patch on top of the current state. |
+| `DeleteScene` | (name: string) | Forgets that scene. Unknown names are an error, so a typo in a Stream Deck button does not look like success. |
 | `Export` | () → json: string | Write layout and levels to `path` as one JSON document (atomic write). Returns the path written. |
 | `FirstRunPlan` | () → json: string | Detect hardware and propose channels/mixes as JSON — nothing is changed yet. Returns the plan for a preview. |
 | `FirstRunApply` | () → json: string | Apply a plan from `FirstRunPlan` (or an empty string for the automatic plan). Returns a summary of what was created. |
@@ -50,6 +54,14 @@ The root object at `/org/kmixdeck1`. Everything else hangs below it; `GetManaged
 | `MoveChannel` | (path: object path, index: int32) | Move a channel to `index` in `ChannelOrder`. |
 | `MoveMix` | (path: object path, index: int32) | Move a mix to `index` in `MixOrder`. |
 | `AddChannel` | (name: string) → path: object path | Create a channel (input group) and return its object path. The slug is derived from `name`. |
+| `AddSoundboard` | (name: string) → path: object path | Creates a soundboard channel and returns its object path. A soundboard is a normal channel (fader per mix, FX chain, pan) that additionally accepts samples; `Channel.Kind` reports `soundboard`. The kind is opt-in and cannot be turned on for an existing channel — a sample path has to exist from the start. |
+| `PlaySample` | (name: string) | Plays that sample, searching every board for the name — what a Stream Deck or Home Assistant button calls when it knows nothing about channels. Several samples can sound at once and the same one can overlap itself. Unknown names are an error. |
+| `PlaySampleOn` | (channel: string, name: string) | Plays the sample of that specific board. Use this over `PlaySample` when two boards share a name. |
+| `StopSample` | (name: string) | Stops that sample; an empty name stops everything that is sounding. Stopping is announced to every client, so a pad cannot keep looking like it plays. |
+| `Samples` | () → samples: `aa{sv}` | Every registered sample of every board, each as a dict with `channel`, `name`, `path`, `gain`, `length` (seconds) and `sounding`. Changes are announced with `PropertiesChanged`, so a pad never has to poll to learn that a sample stopped. |
+| `AddSample` | (channel: string, path: string, name: string) → sample: string | Registers `path` on that soundboard under `name` (empty name = the file's basename) and returns the name actually used. The file is DECODED here, so an unreadable or unsupported one is refused at registration instead of producing a silent button later. wav, flac, ogg and mp3 are supported. |
+| `RemoveSample` | (channel: string, name: string) | Unregisters it. A voice still sounding is stopped first. |
+| `SetSampleGain` | (channel: string, name: string, gain: double) | Per-sample trim, linear 0…4, so a quiet jingle can be lifted without moving the channel fader. Applies to voices already sounding. |
 | `AddMix` | (name: string) → path: object path | Create a mix and return its object path. Starts with no outputs — connect one or it stays silent. |
 | `DuplicateMix` | (source: object path, name: string) → path: object path | Copy a mix (name, icon, colour, outputs, faders) under a new name; returns the new path. |
 | `AddVirtualDevice` | (name: string, inputs: int32, outputs: int32) → node: string | Create a named block of `in` inputs + `out` outputs other software can use as a sound card; returns the node name. |
@@ -57,6 +69,11 @@ The root object at `/org/kmixdeck1`. Everything else hangs below it; `GetManaged
 | `RemoveChannel` | (path: object path) | Remove a channel and everything hanging on it. Undoable via `Undo` (CH-9). |
 | `RemoveMix` | (path: object path) | Remove a mix. Undoable via `Undo` (CH-9). |
 | `Save` | () | Persist the layout to the service config now. Not required — every mutation saves itself — but cheap, and what a `Save` button calls. |
+
+### Signals
+| Name | Signature | Meaning |
+|---|---|---|
+| `SceneRecalled` | (name: string) | A scene was applied — by any frontend. Carries its name so a UI can show what is active without diffing the whole layout. |
 
 ## `org.kmixdeck1.Channel`
 One row of the mixer: an input group at `/org/kmixdeck1/channel/<slug>`. Channels take hardware inputs and feed mixes; the per-mix level lives on the Cell.
@@ -77,6 +94,9 @@ One row of the mixer: an input group at `/org/kmixdeck1/channel/<slug>`. Channel
 | `InputPresent` | bool | read | False while `InputDevice` is set but the device is unplugged: grey the row out, keep the value (DV-9). |
 | `Inputs` | string[] | read | Every wire of this channel as `<ref>` strings, in order. |
 | `FxChain` | string | read | Effect chain as JSON: `{effects:[{type,label,params,bypass}]}`. Empty object = no effects. |
+| `Ducking` | string | read | The channel's ducking configuration as JSON, or empty when it does not duck. Read-only here — write it with `SetDucking`, which can refuse. |
+| `DuckReduction` | double | read | How many dB this channel is being attenuated by ducking RIGHT NOW: 0 while nothing triggers, negative while it does. A UI shows this live; it is not a setting. |
+| `Kind` | string | read | What kind of channel this is: `channel` for a normal one, `soundboard` for one that accepts samples. Frontends need it to decide whether to offer sample controls at all. |
 
 ### Methods
 | Name | Signature | Meaning |
@@ -89,9 +109,7 @@ One row of the mixer: an input group at `/org/kmixdeck1/channel/<slug>`. Channel
 | `ToggleMute` | () | Atomic mute flip — what a hotkey or a Stream Deck key calls, no read-modify-write race. |
 | `SetFx` | (chainJson: string) → accepted: bool | Replace the whole chain. Validates first; errors come back as a D-Bus error instead of a silent half-state. `{}` clears. |
 | `SetFxControl` | (control: string, value: double) → accepted: bool | Live-tweak one control without rebuilding the chain. Key is the full control name from the chain JSON, e.g. `gate:Threshold (dB)`. |
-| `Ducking` | string | read | FX-9 config as JSON: `{duckedBy, depth, threshold, attack, release}`. `""` or `{}` = off (the default). |
-| `DuckReduction` | double | read | How much is coming off **right now**, in dB. `0` while the trigger is quiet. |
-| `SetDucking` | (duckingJson: string) → accepted: bool | Set the whole config; validates first (self-ducking, ranges, unknown trigger) and a refusal comes back as a D-Bus error. `{}` or `{"duckedBy":""}` switches it off. A **method**, not a property write — see the note below. |
+| `SetDucking` | (duckingJson: string) → accepted: bool | Configures ducking from a JSON object (trigger channel, threshold, reduction, attack/release) and answers whether it was accepted. A method rather than a property write, because a refusal has a reason that has to reach the user. |
 
 ## `org.kmixdeck1.Mix`
 One column of the mixer: an output group at `/org/kmixdeck1/mix/<slug>`. A mix sums its cells and plays to one or more hardware outputs.
@@ -188,15 +206,3 @@ Meter data for `/org/kmixdeck1/levels`. One shared set of meter streams feeds ev
 |---|---|---|
 | `Peaks` | (peaks: dict<string,double>) | One tick: bus key → peak level linear 0…1. Keys: `channel/<s>`, `mix/<s>`, `cell/<c>/<m>` (post-fader), `in/<s>`, `out/<m>` (post master), `app/<id>`; `rms/` and `clip/` prefixes carry the CH-7 companions. |
 | `Loudness` | (loudness: `a{sad}`) | UX-18: EBU R128 for every mix whose `Loudness` property is on — mix slug → `[M, S, I, TP]`: momentary (400 ms), short-term (3 s) and gated integrated loudness in LUFS, plus true peak in dBTP. Same tick rate as `Peaks`. The analyser runs continuously while the flag is set (its windows need seconds of audio), not only while somebody listens. |
-
-
-## Why a write is a method, never a property write
-
-`Volume` and friends are `access="read"` plus a `Set…` method, and that is not decoration. A Qt property
-setter reached over D-Bus has `calledFromDBus() == false`, so `sendErrorReply()` inside it does nothing —
-worse, calling it there crashed the daemon (measured with `busctl set-property … Trim d 5.0`). A refusal
-written into the log only is invisible to the caller: the client sees **success** and shows the value it just
-asked for. That is what `rejectProperty()` does, and why every writable thing on this bus is a method whose
-return value and D-Bus error the caller can actually see. Measured again 2026-09-21 while adding `SetDucking`:
-as a property write, `duck set game --by game` (self-ducking) came back `rc=0` from both our CLI and `busctl`,
-while the daemon log said "refused". As a method it is `rc=1` with the reason on stderr.

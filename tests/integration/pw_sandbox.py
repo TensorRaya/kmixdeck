@@ -270,6 +270,25 @@ class PwDaemon:
 
     # ---- ADR 0009 port-level helpers (fake multichannel devices: a sink's ports are playback_<POS>/monitor_<POS>,
     # a source's ports are capture_<POS>)
+    def sink_of(self, stream_node: str) -> str:
+        """Which node a stream's output_FL is actually LINKED to — the ground truth for "does it go through X".
+
+        A level reading cannot answer that when two paths meet at the same node: for a channel the fx chain sits
+        IN FRONT of the plain sink (kmixdeck.sample → kmixdeck.fx.<slug> → .out → kmixdeck.channel.<slug>), so the
+        sink level is post-chain no matter which of the two the stream entered. Measured 2026-09-22 — that is why
+        two earlier versions of the CT-8 fx test stayed green with the fix reverted. Returns "" when unlinked.
+        """
+        out = subprocess.run(["pw-link", "-l"], env=self.env, capture_output=True, text=True)
+        if out.returncode != 0:
+            raise AssertionError(f"pw-link -l failed ({out.returncode}): {out.stderr.strip()}")
+        aktuell = None
+        for zeile in out.stdout.splitlines():
+            if not zeile.startswith(" "):
+                aktuell = zeile.strip(); continue
+            if aktuell == f"{stream_node}:output_FL" and "|->" in zeile:
+                return zeile.split("|->", 1)[1].strip().rsplit(":", 1)[0]
+        return ""
+
     def play_into_port(self, node: str, port: str) -> subprocess.Popen:
         """Left channel of the tone → exactly ONE port (`<node>:<port>`, e.g. fake.ui24r:playback_AUX2).
 

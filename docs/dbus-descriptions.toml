@@ -43,6 +43,23 @@ RemoveChannel = "Remove a channel and everything hanging on it. Undoable via `Un
 RemoveMix = "Remove a mix. Undoable via `Undo` (CH-9)."
 Save = "Persist the layout to the service config now. Not required — every mutation saves itself — but cheap, and what a `Save` button calls."
 
+# CT-9 scenes
+Scenes = "Every stored scene name, alphabetical. A scene is a named snapshot of the MIX STATE (cell levels and mutes, per-mix level/mute/FX-bypass) — deliberately not the channel/mix set and not the wiring, so a scene stays applicable after a rename or a repatch."
+SaveScene = "Stores the current mix state under `name`, overwriting a scene of that name. The channel/mix set is not part of it."
+RecallScene = "Applies the scene in a single graph pass, undoable like any other change. `exclusive` also resets everything the scene does NOT mention to unity/unmuted, so a forgotten fader from the last show cannot bleed into this one; without it the scene is a patch on top of the current state."
+DeleteScene = "Forgets that scene. Unknown names are an error, so a typo in a Stream Deck button does not look like success."
+SceneRecalled = "A scene was applied — by any frontend. Carries its name so a UI can show what is active without diffing the whole layout."
+
+# CT-8 soundboard
+AddSoundboard = "Creates a soundboard channel and returns its object path. A soundboard is a normal channel (fader per mix, FX chain, pan) that additionally accepts samples; `Channel.Kind` reports `soundboard`. The kind is opt-in and cannot be turned on for an existing channel — a sample path has to exist from the start."
+Samples = "Every registered sample of every board, each as a dict with `channel`, `name`, `path`, `gain`, `length` (seconds) and `sounding`. Changes are announced with `PropertiesChanged`, so a pad never has to poll to learn that a sample stopped."
+AddSample = "Registers `path` on that soundboard under `name` (empty name = the file's basename) and returns the name actually used. The file is DECODED here, so an unreadable or unsupported one is refused at registration instead of producing a silent button later. wav, flac, ogg and mp3 are supported."
+RemoveSample = "Unregisters it. A voice still sounding is stopped first."
+PlaySample = "Plays that sample, searching every board for the name — what a Stream Deck or Home Assistant button calls when it knows nothing about channels. Several samples can sound at once and the same one can overlap itself. Unknown names are an error."
+PlaySampleOn = "Plays the sample of that specific board. Use this over `PlaySample` when two boards share a name."
+StopSample = "Stops that sample; an empty name stops everything that is sounding. Stopping is announced to every client, so a pad cannot keep looking like it plays."
+SetSampleGain = "Per-sample trim, linear 0…4, so a quiet jingle can be lifted without moving the channel fader. Applies to voices already sounding."
+
 [Channel]
 _intro = "One row of the mixer: an input group at `/org/kmixdeck1/channel/<slug>`. Channels take hardware inputs and feed mixes; the per-mix level lives on the Cell."
 Slug = "Lower-case ASCII id used in paths and node names. Derived from the name, stable after rename."
@@ -66,6 +83,14 @@ FxChain = "Effect chain as JSON: `{effects:[{type,label,params,bypass}]}`. Empty
 ToggleMute = "Atomic mute flip — what a hotkey or a Stream Deck key calls, no read-modify-write race."
 SetFx = "Replace the whole chain. Validates first; errors come back as a D-Bus error instead of a silent half-state. `{}` clears."
 SetFxControl = "Live-tweak one control without rebuilding the chain. Key is the full control name from the chain JSON, e.g. `gate:Threshold (dB)`."
+
+# FX-9 ducking
+Ducking = "The channel's ducking configuration as JSON, or empty when it does not duck. Read-only here — write it with `SetDucking`, which can refuse."
+DuckReduction = "How many dB this channel is being attenuated by ducking RIGHT NOW: 0 while nothing triggers, negative while it does. A UI shows this live; it is not a setting."
+SetDucking = "Configures ducking from a JSON object (trigger channel, threshold, reduction, attack/release) and answers whether it was accepted. A method rather than a property write, because a refusal has a reason that has to reach the user."
+
+# CT-8
+Kind = "What kind of channel this is: `channel` for a normal one, `soundboard` for one that accepts samples. Frontends need it to decide whether to offer sample controls at all."
 
 [Mix]
 _intro = "One column of the mixer: an output group at `/org/kmixdeck1/mix/<slug>`. A mix sums its cells and plays to one or more hardware outputs."

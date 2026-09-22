@@ -51,6 +51,13 @@ set_tests_properties(gate-label-vollstaendig PROPERTIES LABELS "fast")
 add_test(NAME sot-audit COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/sot-audit.py)
 set_tests_properties(sot-audit PROPERTIES LABELS "fast")
 
+# RQ-3: 100 % des D-Bus-Vertrags hat eine Beschreibung (tools/dbus-doc.py, exit 1 + Liste sonst).
+# Das Werkzeug gab es, aber niemand rief es auf — gemessen 2026-09-22 waren 17 von 121 Mitgliedern
+# undokumentiert (CT-8 8, CT-9 5, FX-9 4), und zwar seit Monaten still. Ein Werkzeug, das kein Test
+# startet, ist keine Absicherung.
+add_test(NAME dbus-doc-vollstaendig COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/dbus-doc.py)
+set_tests_properties(dbus-doc-vollstaendig PROPERTIES LABELS "fast")
+
 # CL-1: docs/kmixdeck.md is the ONE source for the man page, --help and docs/cli.md. These two tests keep it that
 # way: `pruefen` rejects invented section names and any deviation from the man-pages(7) order, and groff -z parses
 # the generated roff. Without the groff test, typography (—, →, Ü) silently drops out of the rendered page: 20 such
@@ -107,8 +114,16 @@ if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMP
     # beseitigt, nur den Gate-Lauf verlangsamt: Symptom-Doktern mit Rechnung.
     #
     # Die echte Sanierung dieser Runde steckt in integration/conftest.py (PR_SET_PDEATHSIG gegen
-    # Sandbox-Leichen, die 8,5 h ueberlebten und die Grundlast dauerhaft auf 9-10 hielten). Der Restfehler in
-    # test_ports.py ist damit NICHT erklaert und bleibt offen — er gehoert diagnostiziert, nicht wegserialisiert.
+    # Sandbox-Leichen, die 8,5 h ueberlebten und die Grundlast dauerhaft auf 9-10 hielten).
+    #
+    # 2026-09-22 nachgemessen und damit geschlossen: test_ports.py ist KEIN Produktfehler, sondern reine
+    # Ueberlastung. Im Gate (ctest -j, neun Audio-Suiten gleichzeitig) fiel die Suite nach 19,32 s; allein
+    # gestartet bei Grundlast 1,51 laufen alle 20 Tests gruen in 348 s. Der Unterschied ist Faktor 18 in der
+    # Laufzeit — die Suite kam im Gate gar nicht bis zu ihrer ersten Messung. Auch der zweite Gate-Rotlauf
+    # dieser Runde (integration-service_cli, 21 von 44 rot mit `no session bus` und `pw-dump rc=255`) war
+    # dasselbe Muster: er lief versehentlich parallel zum Gate. Konsequenz, keine Konfigaenderung: ein
+    # Audio-Ergebnis zaehlt nur, wenn NICHTS anderes gleichzeitig einen PipeWire-Graphen haelt. Wer eine
+    # Audio-Suite einzeln prueft, prueft vorher `pgrep -af gate.sh` und `/proc/loadavg`.
     foreach(suite service_cli audio_graph lifecycle routing fx presentation ports frontends_sync streamdeck web)
         add_test(NAME integration-${suite}
             COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_${suite}.py

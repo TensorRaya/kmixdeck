@@ -23,16 +23,28 @@ def window(stack, *probes, open_page=None):
     return kde(stack, *sum((["--probe", p] for p in probes), []), open_page=open_page)
 
 
-def browser(stack, *probes):
-    """The web UI's answer to the same question: 'probe.attr.path' → string, via headless Chrome against the bridge."""
+def browser(stack, *probes, view=None):
+    """The web UI's answer to the same question: 'probe.attr.path' → string, via headless Chrome against the bridge.
+
+    `view` switches the tab first — the counterpart to window()'s open_page. Without it only the default view is
+    rendered, and a probe for an element on another tab returns "<not found>" (measured 2026-09-22 on the CT-8 pads,
+    which live on the soundboard tab)."""
     from test_web import Web
     from chrome_driver import Chrome, CHROME
     if not CHROME: pytest.skip("no chrome/chromium for the web UI")
     web = Web(stack, token="")
     try:
-        ch = Chrome(web.url)
+        ch = Chrome(web.url + (f"#{view}" if view else ""))
         try:
             ch.wait("window.kmixdeck && window.kmixdeck.state.connected && document.querySelector('[data-probe]')", 15); time.sleep(0.6)
+            if view:
+                # The URL hash is read once at startup; switching later happens through a tab CLICK (the app has no
+                # hashchange listener, measured 2026-09-22). Click it, and wait for the tab to actually be selected —
+                # the tab for an opt-in view is hidden until its state arrives.
+                sel = json.dumps(f'[data-view="{view}"]')
+                ch.wait(f"!!document.querySelector({sel})", 10)
+                ch.eval(f"document.querySelector({sel}).click()", False)
+                time.sleep(0.4)
             out = {}
             for p in probes:
                 name, attr = p.split(".", 1)
@@ -52,25 +64,29 @@ CORE = [
      lambda s: abs(next(m for m in s.cli("status", json_out=True)["mixes"] if m["Slug"] == "stream")["Volume"] - 10 ** (-6 / 20)) < 0.01,
      ["mixFader/stream.value"], lambda g: abs(float(g["mixFader/stream.value"]) - _cubic(-6)) < 0.02,
      ["trayMixVolume/stream.value"], lambda g: abs(float(g["trayMixVolume/stream.value"]) - _cubic(-6)) < 0.02,
-     ["mixFader/stream.dataset.value"], lambda g: abs(float(g["mixFader/stream.dataset.value"]) - 10 ** (-6 / 20)) < 0.02),
+     ["mixFader/stream.dataset.value"], lambda g: abs(float(g["mixFader/stream.dataset.value"]) - 10 ** (-6 / 20)) < 0.02,
+     lambda s: s.cli("mix", "volume", "stream", "0dB")),   # undo: a -6 dB master shifts every later level measurement
     ("MX-10 mix mute",
      lambda s: s.cli("mix", "mute", "stream", "on"),
      lambda s: next(m for m in s.cli("status", json_out=True)["mixes"] if m["Slug"] == "stream")["Muted"] is True,
      ["mixHeaderTitle/stream.text"], lambda g: "muted" in g["mixHeaderTitle/stream.text"].lower(),
      ["trayMixMute/stream.checked"], lambda g: g["trayMixMute/stream.checked"] == "true",
-     ["mixHeader/stream.className", "mixMute/stream.ariaPressed"], lambda g: "muted" in g["mixHeader/stream.className"] and g["mixMute/stream.ariaPressed"] == "true"),
+     ["mixHeader/stream.className", "mixMute/stream.ariaPressed"], lambda g: "muted" in g["mixHeader/stream.className"] and g["mixMute/stream.ariaPressed"] == "true",
+     lambda s: s.cli("mix", "mute", "stream", "off")),   # undo: a muted stream makes every later level measurement -inf
     ("CH-7 channel mute",
      lambda s: s.cli("channel", "mute", "voice", "on"),
      lambda s: next(c for c in s.cli("status", json_out=True)["channels"] if c["Slug"] == "voice")["Muted"] is True,
      ["channelMute/voice.checked"], lambda g: g["channelMute/voice.checked"] == "true",
      ["trayChannelMute/voice.checked"], lambda g: g["trayChannelMute/voice.checked"] == "true",
-     ["channelMute/voice.ariaPressed"], lambda g: g["channelMute/voice.ariaPressed"] == "true"),
+     ["channelMute/voice.ariaPressed"], lambda g: g["channelMute/voice.ariaPressed"] == "true",
+     lambda s: s.cli("channel", "mute", "voice", "off")),   # undo: a muted voice silences later mix measurements
     ("CH-7 channel trim",
      lambda s: s.cli("channel", "trim", "game", "-12dB"),
      lambda s: abs(next(c for c in s.cli("status", json_out=True)["channels"] if c["Slug"] == "game")["Trim"] - 10 ** (-12 / 20)) < 0.01,
      ["channelTrim/game.value", "channelTrimText/game.text"], lambda g: abs(float(g["channelTrim/game.value"]) - _cubic(-12)) < 0.02 and g["channelTrimText/game.text"].startswith("-12"),
      ["trayChannelTrim/game.value"], lambda g: abs(float(g["trayChannelTrim/game.value"]) - _cubic(-12)) < 0.02,
-     ["channelHeader/game.dataset.trim"], lambda g: abs(float(g["channelHeader/game.dataset.trim"]) - 10 ** (-12 / 20)) < 0.02),
+     ["channelHeader/game.dataset.trim"], lambda g: abs(float(g["channelHeader/game.dataset.trim"]) - 10 ** (-12 / 20)) < 0.02,
+     lambda s: s.cli("channel", "trim", "game", "0dB")),   # undo: a -12 dB trim shifts later level measurements
     ("UX-2 listening device",
      lambda s: (make_fake_sink(s, "fake.ears", "My Ears"), time.sleep(0.5), s.cli("listen", "fake.ears")),
      lambda s: s.cli("listen").stdout.strip().split()[0] == "fake.ears",
@@ -102,6 +118,29 @@ CORE = [
      lambda g: g["traySceneRecall.visible"] == "true" and "Scene" in g["traySceneRecall.text"],
      ["scenePick.dataset.count", "scenePick.hidden", "sceneSave.hidden"],
      lambda g: g["scenePick.dataset.count"] == "1" and g["scenePick.hidden"] == "false" and g["sceneSave.hidden"] == "false"),
+    ("CT-8 a sample is playable in every frontend",
+     # Rule 1: the change goes in through the CLI. The opt-in rule is part of the assertion — every surface hides
+     # its soundboard control until a board with samples exists, so adding one is what makes them appear.
+     # The stack fixture is module-scoped, so another test in this file may already have created the board and the
+     # sample — `check=False` makes the setup idempotent instead of failing on rc=4 "already exists".
+     lambda s: (s.cli("channel", "add", "--soundboard", "Board", check=False),
+                s.cli("sample", "add", "board", str(_sample_wav(s)), "--name", "jingle", check=False),
+                s.cli("sample", "play", "jingle"), time.sleep(1.0)),
+     lambda s: s.cli("sample", "list", "board", json_out=True)[0]["sounding"] is True,
+     # The window proof is the WAY IN: the action a user without a shell can click. It was missing entirely —
+     # nothing called soundboardPanelOpen() except main.cpp, so the panel existed but was unreachable from the
+     # running window (measured 2026-09-22). The panel's own contents are proven in
+     # test_soundboard.py::test_ct8_all_three_frontends_expose_the_soundboard, which pushes it via --open.
+     ["soundboardAction.visible", "soundboardAction.text"],
+     lambda g: g["soundboardAction.visible"] == "true" and "Soundboard" in g["soundboardAction.text"],
+     ["traySampleFire.visible", "traySampleFire.text"],
+     lambda g: g["traySampleFire.visible"] == "true" and "Sample" in g["traySampleFire.text"],
+     ["view:soundboard", "samplePad:board:jingle.className", "board:board.hidden"],
+     lambda g: "sounding" in g["samplePad:board:jingle.className"] and g["board:board.hidden"] == "false",
+     # undo: the sample is a 120 s tone and the board is a real channel feeding every mix at 1.0 — left running it
+     # adds roughly +5 dB to any later level measurement (measured 2026-09-22: it broke test_ct7_export_import…,
+     # which expected the music channel −9 dB under the stream mix and read it 4.6 dB ABOVE).
+     lambda s: (s.cli("sample", "stop", "jingle", check=False), s.cli("channel", "remove", "board", check=False))),
     ("DV-11 unplugged device is visible as such",
      lambda s: (make_fake_sink(s, "fake.gone", "Gone Sink"), time.sleep(0.5), s.cli("mix", "output-add", "monitor", "fake.gone"), time.sleep(0.5),
                 __import__("test_service_cli").destroy_node(s, "fake.gone"), time.sleep(0.8)),
@@ -114,15 +153,27 @@ CORE = [
 
 @pytest.mark.parametrize("row", CORE, ids=[r[0] for r in CORE])
 def test_core_feature_reaches_cli_window_and_tray(stack, row):
-    name, setup, cli_ok, wprobes, wcheck, tprobes, tcheck, bprobes, bcheck = row
+    name, setup, cli_ok, wprobes, wcheck, tprobes, tcheck, bprobes, bcheck = row[:9]
     setup(stack); time.sleep(0.4)
-    assert cli_ok(stack), f"{name}: CLI/bus does not show the change (rule 1 broken)"
-    g = window(stack, *wprobes)
-    assert wcheck(g), f"{name}: KDE window does not show it: {g}"
-    g = tray(stack, *tprobes)
-    assert tcheck(g), f"{name}: tray does not show it: {g}"
-    g = browser(stack, *bprobes)
-    assert bcheck(g), f"{name}: web UI does not show it (AR-8/AR-9): {g}"
+    try:
+        assert cli_ok(stack), f"{name}: CLI/bus does not show the change (rule 1 broken)"
+        g = window(stack, *wprobes)
+        assert wcheck(g), f"{name}: KDE window does not show it: {g}"
+        g = tray(stack, *tprobes)
+        assert tcheck(g), f"{name}: tray does not show it: {g}"
+        # A probe may live on a tab that is not the default one (CT-8's pads sit on the Soundboard tab). Rather than
+        # widening every row by a field only one of them needs, the row names the view by prefixing a probe with
+        # "view:<name>" — the browser helper is told to switch there first.
+        ansicht = next((p.split(":", 1)[1] for p in bprobes if p.startswith("view:")), None)
+        g = browser(stack, *[p for p in bprobes if not p.startswith("view:")], view=ansicht)
+        assert bcheck(g), f"{name}: web UI does not show it (AR-8/AR-9): {g}"
+    finally:
+        # The `stack` fixture is MODULE-scoped: whatever a row switches on stays on for every test after it.
+        # Measured 2026-09-22: "MX-10 mix mute" left `stream` muted, so test_ct7_export_import… exported a muted
+        # mix and then measured -inf dB where it expected -33 dB — red since at least 2026-09-21 and blamed on
+        # CT-7, which is green on its own. A row that changes state names its own undo as a 10th field.
+        if len(row) > 9 and row[9] is not None:
+            row[9](stack); time.sleep(0.3)
 
 
 def test_ct9_recall_from_the_window_and_the_tray_actually_moves_the_faders(stack):
@@ -277,7 +328,12 @@ def test_ct7_export_import_round_trip_cli_and_window_and_garbage_is_refused(stac
             lvl_mx = wait_level(lambda: stack.pw.level_at("kmixdeck.mix.stream"), lambda v: v > -60, tries=6)
             master = next(m for m in stack.cli("status", json_out=True)["mixes"] if m["Slug"] == "stream")["Volume"]   # cubic
             expect = -9 + 20 * math.log10(master) if master > 0 else -90               # cell fader + whatever master the export carried (Mix.Volume is linear)
-            assert abs((lvl_mx - lvl_ch) - expect) < 3, f"channel {lvl_ch:.1f} dB, stream mix {lvl_mx:.1f} dB, expected {expect:.1f} dB apart — the imported levels are not in effect"
+            if abs((lvl_mx - lvl_ch) - expect) >= 3:   # name WHAT is feeding the mix, not just the number: a stray unmuted channel or a leftover tone is the usual cause
+                _st = stack.cli("status", json_out=True)
+                _ch = [(c["Slug"], c["Muted"], round(c["Trim"], 3)) for c in _st["channels"]]
+                _ce = [(c["Path"].rsplit("/", 2)[-2], round(c["Volume"], 3), c["Muted"]) for c in _st["cells"] if c["Path"].endswith("/stream")]
+                raise AssertionError(f"channel {lvl_ch:.1f} dB, stream mix {lvl_mx:.1f} dB, expected {expect:.1f} dB apart — the imported levels are not in effect\n"
+                                     f"  master={master:.4f} channels={_ch}\n  cells in stream={_ce}")
             assert stack.pw.level_at("kmixdeck.mix.monitor") < -55, "music/monitor was exported muted — it must be muted after the import too"
         finally:
             tone.kill(); tone.wait(); stack.cli("channel", "mute", "voice", "off"); stack.cli("channel", "mute", "game", "off")
@@ -493,6 +549,17 @@ def test_ux3_first_run_wizard_wires_defaults_from_cli_and_window():
         _ux3_body(stack, prop_of(stack), make_fake_sink, make_fake_source, start_fake_app)
     finally:
         stack.close(); pw.close()
+
+
+def _sample_wav(stack):
+    """The sandbox's own 120 s tone — long enough to still be sounding on the LAST surface.
+
+    Measured 2026-09-22: probing the window takes 6.1 s, the tray 6.3 s and the browser 3.4 s, 15.7 s in total,
+    because each one starts its own process. A 12 s file was silent by the time Chrome rendered the pad, and the
+    row then failed on the web stage only — which reads like a web bug and is not one.
+    """
+    return stack.pw.tone()
+
 
 
 def prop_of(stack):
@@ -745,3 +812,55 @@ def test_fx9_badge_says_who_ducks_and_how_much_in_all_three_frontends(stack):
             f"nicht abgesenkter Kanal traegt ein Abzeichen: {g2}")
     finally:
         stack.cli("duck", "clear", "game")
+
+def test_ct8_soundboard_is_the_same_in_all_three_frontends(stack):
+    """CT-8 (core → this file is required, see the header): one sample, three frontends, one state.
+
+    Each frontend is asked the SAME question — is the pad there and does it say "playing" — and the answer has to
+    match the daemon. The KDE side is probed through the real window (`--open soundboard --probe`), which is what
+    catches a panel that compiles but never loads: FxPanel shipped broken for months because nothing ever opened it.
+    """
+    # The stack fixture is module-scoped, so the board may already exist from the CT-8 row in CORE — reuse it.
+    # A SECOND board is not an option: the panel shows one board at a time (it picks the first, Main.qml:516), so
+    # probing a pad on a second board finds nothing. Isolation therefore runs over the sample NAME, and the list
+    # assertion below checks that this name is present rather than that it is alone.
+    vorhanden = [c["Slug"] for c in stack.cli("status", json_out=True)["channels"] if c.get("Kind") == "soundboard"]
+    slug = vorhanden[0] if vorhanden else stack.cli("channel", "add", "--soundboard", "Board", json_out=True)["slug"]
+    wav = stack.pw.tone()
+    stack.cli("sample", "add", slug, str(wav), "--name", "solo", check=False)
+    try:
+        # (1) CLI
+        zeilen = stack.cli("--json", "sample", "list", slug, json_out=True)
+        meine = [z for z in zeilen if z["name"] == "solo"]
+        assert len(meine) == 1, zeilen
+        assert meine[0]["sounding"] is False
+
+        # (2) KDE window: the panel must actually LOAD and show this pad
+        w = window(stack, "soundboardPanel.visible", f"samplePad/{slug}:solo.text",
+                   f"samplePad/{slug}:solo.highlighted", open_page="soundboard")
+        assert w[f"samplePad/{slug}:solo.text"] == "solo", w
+        assert w["soundboardPanel.visible"] == "true", w
+        assert w[f"samplePad/{slug}:solo.highlighted"] == "false", "the pad looked like it was playing before play"
+
+        # (3) web UI
+        b = browser(stack, f"samplePad:{slug}:solo.textContent", view="soundboard")
+        assert "solo" in b[f"samplePad:{slug}:solo.textContent"], b
+
+        # now play it and ask all three again — one state, three views
+        stack.cli("sample", "play", "solo")
+        wait_for(lambda: stack.cli("--json", "sample", "list", slug, json_out=True)[0]["sounding"] is True,
+                 timeout=8.0, what="the CLI to see the sample sounding")
+        # `highlighted`, not the label: --probe returns one line per probe, so a label with a newline in it comes
+        # back truncated (measured 2026-09-22 — the probe showed just "solo" for a pad that read "solo\n▶ playing").
+        w2 = window(stack, f"samplePad/{slug}:solo.highlighted", open_page="soundboard")
+        assert w2[f"samplePad/{slug}:solo.highlighted"] == "true", w2
+        b2 = browser(stack, f"samplePad:{slug}:solo.className", view="soundboard")
+        assert "sounding" in b2[f"samplePad:{slug}:solo.className"], b2
+    finally:
+        # Stop THIS sample, not every sample: `sample stop ""` is stop-all and the stack is shared with the CORE
+        # row, which has its own solo sounding. Then drop the board so the list assertions above stay true if
+        # this test is ever run twice against one daemon.
+        # Stop and unregister only MY sample: the board is shared with the CT-8 row in CORE, and `sample stop ""`
+        # would be stop-all. Removing the sample keeps the shared board usable for whoever runs next.
+        stack.cli("sample", "stop", "solo", check=False)
+        stack.cli("sample", "remove", slug, "solo", check=False)

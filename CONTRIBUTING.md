@@ -138,3 +138,58 @@ Rules for such tests:
 - Measured device facts: `docs/devices/`
 - Daemon: `src/mixer.*`, `src/daemon/`, `src/pipewire/`; CLI: `src/cli/`; KDE UI: `src/frontend/`, `src/qml/`
 - Tests: `tests/integration/` (sandboxed PipeWire + WirePlumber + private D-Bus per suite)
+
+- **Ein Pegel beweist keinen Signalweg, wenn beide Wege am selben Knoten enden.** Fuer Kanaele
+  sitzt die FX-Kette VOR dem Plain-Sink (`kmixdeck.sample -> kmixdeck.fx.<slug> -> .out ->
+  kmixdeck.channel.<slug>`, gemessen mit `pw-link -l`). Ein Pegel am Kanal-Sink ist deshalb in
+  jedem Fall post-chain — er kann nicht unterscheiden, ob eine Quelle die Kette durchlaufen oder
+  umgangen hat. Drei Fassungen des CT-8-FX-Tests waren gruen, obwohl der Fix zurueckgedreht war.
+  Was trennt: die echte Verlinkung pruefen (`pw_sandbox.sink_of(stream)`). Merksatz: bei "laeuft X
+  durch Y" erst fragen, ob die Messstelle die beiden Faelle ueberhaupt auseinanderhalten KANN.
+- **Gegenprobe pro Teilfix, nicht pro Feature.** Ein Test, der zwei Fixes gleichzeitig absichern
+  soll, kann von einem der beiden gruen gehalten werden. Bei CT-8 einzeln zurueckgedreht: Zielwahl
+  raus => rot, Neustart raus => rot. Erst damit ist bewiesen, dass beide Teile abgesichert sind.
+- **Bauen VOR dem Messen, Zeitstempel belegen.** `stat -c '%y' build/bin/kmixdeckd` gegen die
+  geaenderte Quelle. Eine Gegenprobe, die das alte Binary testet, ist wertlos — und faellt nicht
+  auf, weil sie plausibel gruen ist.
+- **Ein Audio-Ergebnis neben einem laufenden Gate ist keine Messung.** Am
+  2026-09-22 habe ich `test_service_cli.py` gestartet, waehrend `gate.sh` lief:
+  21 von 44 rot mit `kmixdeck: no session bus` und `pw-dump rc=255`. Kein
+  Produktfehler, sondern zwei PipeWire-Graphen auf vier Kernen —
+  `gate.sh` warnt genau davor, und ich habe die Warnung selbst ausgeloest und
+  dann ignoriert. Dasselbe Muster erklaert `integration-ports`: im Gate rot nach
+  19,32 s, allein bei Grundlast 1,51 **20/20 gruen in 348 s** (Faktor 18). Vor
+  jeder Audio-Suite: `pgrep -af gate.sh` und `/proc/loadavg` lesen. Ein Rotlauf
+  unter Fremdlast wird nicht diskutiert, er wird wiederholt.
+- **Der rote Test ist selten der schuldige Test.** `test_ct7_export_import…` war
+  seit mindestens 2026-09-21 im Verbund rot und allein gruen. Es waren ZWEI
+  Verursacher hintereinander, und das ist der eigentliche Lehrsatz: nach dem
+  ersten Fix war der Test noch rot, nur an einer spaeteren Stelle.
+  (1) Die Core-Zeile „MX-10 mix mute" liess `stream` stumm — die modulweite
+  `stack`-Fixture traegt das neun Tests weiter, CT-7 exportierte einen stummen
+  Mix und misst `-inf dB` statt `-33 dB`. (2) Die CT-8-Zeile liess ein
+  120-s-Sample auf einem Board-Kanal laufen, der mit 1,0 in jeden Mix speist —
+  CT-7 las den Mix **+4,6 dB ueber** dem Kanal statt −9 dB darunter.
+  Einzelproben fanden (2) nicht: mit nur einer Nachbarzeile war CT-7 jedes Mal
+  gruen, erst alle neun zusammen zeigten es. Wenn Einzelproben gruen sind und
+  der Verbund rot, ist die Ursache die SUMME — dann misst man im Fehlerfall den
+  Zustand, statt weiter Paare zu bilden: der Assert nennt jetzt Kanaele, Mutes
+  und Zellen, und `board` stand sofort in der Liste. Nie das Timeout hochdrehen,
+  das verdeckt nur die Diagnose. Jede CORE-Zeile, die Zustand setzt, nennt ihr
+  Undo als 10. Tabellenfeld (vier Zeilen brauchten es).
+- **`msgmerge`-Rateschaetzungen sind Falschaussagen, keine Uebersetzungen.** Ein
+  neuer String erbt per Fuzzy-Match die Uebersetzung eines aehnlich geschriebenen
+  alten. Gemessen 2026-09-22: `Add sample…` → „Mix hinzufügen …", `Choose an audio
+  file` → „Bild auswählen", `Remove this sample` → „Kanal entfernen". Alle drei
+  haetten im UI etwas Falsches behauptet, und `msgfmt` zaehlt sie als
+  **uebersetzt** — nur `--statistics` nennt sie separat als `fuzzy`. Nach jedem
+  `tools/extract-messages.sh` jede Fuzzy-Marke einzeln lesen und die Zeile neu
+  schreiben, nie die Marke allein entfernen. Die Marke heisst uebrigens
+  `#, fuzzy, kde-format`, nicht `#, fuzzy` — ein Filter auf die kurze Form
+  trifft nichts.
+- **Eine berechnete Property beweist kein Signal.** `Mixer.Samples` wird bei jedem Lesen neu
+  gebildet, also ist Pollen immer korrekt — auch wenn der Daemon schweigt. Die Clients pollen aber
+  nicht, sie rendern aus `PropertiesChanged`. Ein Test, der die Property abfragt, war gruen, obwohl
+  `Sampler::stop()` kein `finished()` feuerte und jedes Pad ewig "playing" zeigte (2026-09-22).
+  Was trennt: `busctl --user monitor --match "...member='PropertiesChanged',path='/org/kmixdeck1'"`
+  mitschneiden und auf die Ansage pruefen — so wie ein Client es sieht.
