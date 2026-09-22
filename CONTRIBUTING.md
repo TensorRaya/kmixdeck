@@ -36,6 +36,19 @@ Rules for such tests:
   genuinely broken tests (dv25, dv28) that had been hiding behind nonsense messages. If the predicate does
   not hold, raise and name what was last seen; never hand the caller a value nobody waited for. `waiting.py`
   is the reference.
+- **Check the return code of every command you fire at the graph.** `pw-link` exits 255 with "failed to link
+  ports: No such file or directory" when the target port does not exist *yet*, and two helpers threw that away:
+  `play_into_port` and `play_into` slept a fixed 0.6 s and called `subprocess.run(..., capture_output=True)`
+  without looking at the result. Measured 2026-09-22: the node `pw-play` is in the graph within 0.6 s but its
+  port `output_FL` frequently is not — 3 of 4 attempts failed silently, perfect correlation between "port
+  absent", "rc=255" and "-inf dB". That made dv28 red in 4 of 5 runs (2 of 5 even before that day's changes)
+  and it looked like a broken 32×32 audio path for months. A swallowed return code is the same bug as a
+  waiting helper that returns an unconfirmed value: infrastructure noise arrives dressed as a product bug.
+- **A node in the graph does not mean its PORTS are there.** Same lesson one level down, and it bit twice on
+  2026-09-22: `wait_node` returned for a 32×32 device whose ports were still being registered, so `dv30c` asked
+  the daemon for `AUX1` and got "has no port 'AUX1' — name it as PipeWire does ()" with an EMPTY port list. Use
+  `wait_ports(name, count)` whenever the next step addresses a port; of 20 tests in `test_ports.py` exactly one
+  did that before. `pw-play` has the same two-step: node first, `output_FL` later.
 - **Count the MEASUREMENT, not the sleep, when you size a level wait.** Each `wait_level` attempt records
   ~1.5 s, so `tries=6` is ~11.4 s of waiting and `tries=20` is 38 s — enough to push `integration-ports`
   past its 600 s ctest limit (done on 2026-09-20, by me, while "fixing" a timeout that was not one). And
@@ -82,6 +95,29 @@ Rules for such tests:
   This includes "isolated" A/B comparisons: on 2026-09-21 I ran three suites "alone" while a full gate was
   running next to them (load 8.3–11.0). Both sides were oversubscribed, so the green proved nothing. Before any
   A/B: check `cat /proc/loadavg` against `nproc` and record both in the log.
+- **Never rebuild while a gate is running — and you no longer have to remember it.** Use `tools/gate.sh`
+  (holds an exclusive lock on `build/.gate.lock`, checks load, runs ruff + ctest, names its log) and
+  `tools/bau.sh` instead of `cmake --build` (refuses with exit 3 while that lock is held; `--force` if you
+  knowingly invalidate the run). A second `gate.sh` is refused too — two gates oversubscribe dbus/pipewire and
+  both results become worthless. Why the locks exist: the binary under test is a shared resource. On
+  2026-09-22 `vollgate4` came back "2 of 23 failed" — five named failures, all in the last two suites — while
+  I had rebuilt five times during its run, twice with a deliberately sabotaged binary for a counter-check.
+  That gate proved nothing about the code and cost 17 minutes. Same class of mistake as running two suites
+  side by side: the measurement was contaminated by my own hands. While a gate runs: read, write docs, think.
+- **A green "can it be set" test is not proof that a feature works.** FX-9 ducking shipped with tests in all
+  three frontends — CLI, browser, KDE dialog, plus a badge test and triple parity. Every one of them checked
+  that the four values can be SET and read back. None of them listened. The ducker read the channel monitor,
+  applied its gain and played into `kmixdeck.null`, beside the audible path: the daemon reported −18 dB while
+  the mix moved 0.06 dB (specs/fx9-ducking.md, 2026-09-22). **For anything that claims to change the sound,
+  one test must measure the sound** — `pw.level_at()` before/after, plus the return to the old level. Two
+  traps when you write one: (a) both test tones are the same 1 kHz sine, so the trigger must be routed OUT of
+  the mix you measure (`cell set <trigger> <mix> 0`) or phase addition gives you anything from −inf to +6 dB;
+  (b) a release needs ~1.5 s, because a silent channel first has to drop out of the meter map.
+- **When a live factor multiplies a stored value, the echo must be divided back out.** `applyChannelGain()`
+  writes `stored × pan × duck` to PipeWire, and `onNode()` stored that echo as the new truth — so the next
+  tick ducked the already-ducked value and the fader crawled towards silence over a stream (measured: 0.1166
+  after release, below the ducked 0.1259). Pan had the same hole forever; it only never showed because pan
+  changes rarely and a ducker writes 25×/s.
 - **A red run says nothing about your code until you know what ran next to it.** On 2026-09-21
   `test_service_cli.py` went **22 failed / 22 passed**, and every message was `kmixdeck: no session bus` or
   `pw-dump … exit status 255` — not one about the feature under test. My first explanation was memory

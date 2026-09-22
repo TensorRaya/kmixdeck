@@ -86,6 +86,36 @@ class PwDaemon:
         assert n is not None, f"node {name} not found"
         return n["id"]
 
+    def wait_ports(self, name: str, count: int, timeout: float = 30.0) -> float:
+        """Wait until the node has at least `count` ports — not merely until the node EXISTS.
+
+        🔴 Same class of trap as wait_props() (B6): a node is announced before its ports are registered.
+        For a 2-in/2-out device both arrive within a few ms, so `wait_node()` looked sufficient for a year.
+        On a 32x32 desk under load it is not: measured 2026-09-22, dv30c did `channel input d1 …:AUX1`
+        right after wait_node() and the daemon answered `has no port 'AUX1' — name it as PipeWire does ()`
+        — an EMPTY port list, i.e. the ports had simply not shown up yet. That one real failure took three
+        more tests with it through the teardown gap, so the gate read "5 failed" for one missing wait.
+        """
+        t0 = time.time()
+        nid = None
+        while time.time() - t0 < timeout:
+            if nid is None:
+                n = self.node(name)
+                if n is None:
+                    time.sleep(0.05); continue
+                nid = n["id"]
+            if self._port_count(nid) >= count: return time.time() - t0
+            time.sleep(0.05)
+        habe = self._port_count(nid) if nid is not None else 0
+        raise AssertionError(
+            f"node {name} never registered {count} ports within {timeout}s: has {habe}\n")
+
+    def _port_count(self, nid: int) -> int:
+        """Ports of `nid`, both directions — used by wait_ports()."""
+        return sum(1 for o in self.dump()
+                   if o.get("type") == "PipeWire:Interface:Port"
+                   and o.get("info", {}).get("props", {}).get("node.id") == nid)
+
     def wait_node(self, name: str, timeout: float = 5.0) -> dict:
         t0 = time.time()
         while time.time() - t0 < timeout:
@@ -166,24 +196,105 @@ class PwDaemon:
                             "sine=frequency=1000:sample_rate=48000", "-t", "120", "-ac", "2", "-af", "volume=24dB", "-c:a", "pcm_f32le", str(p)], check=True)
         return p
 
+    def _pw_play_node(self, vorher: set[int]) -> int:
+        """Id of the pw-play node that appeared since `vorher` was taken.
+
+        Linking by the node NAME is wrong as soon as a second tone plays: every pw-play process is
+        called "pw-play", `pw-link pw-play:output_FL` picks whichever one it finds first, and the
+        second tone is never linked while the first ends up in two channels at once. Measured
+        2026-09-22: node 214 (the first tone) carried links into game AND voice, node 220 none —
+        the mix was 6 dB hot and never came back down, which looked exactly like a broken ducker.
+        The node id is the only unambiguous handle; pw-play carries no pid property in this sandbox
+        (checked: the only hints are application.name and object.serial), so the caller snapshots
+        the ids before starting the tone and we take the one that is new.
+        """
+        for _ in range(40):
+            jetzt = {o["id"] for o in self.dump()
+                     if o.get("type") == "PipeWire:Interface:Node"
+                     and o.get("info", {}).get("props", {}).get("node.name") == "pw-play"}
+            neu = jetzt - vorher
+            if neu:
+                return sorted(neu)[-1]
+            time.sleep(0.1)
+        raise AssertionError("no new pw-play node appeared — did the tone fail to start?")
+
+    def _out_ports(self, nid: int) -> dict[str, str]:
+        ports = {}
+        for o in self.dump():
+            if o.get("type") != "PipeWire:Interface:Port":
+                continue
+            props = o.get("info", {}).get("props", {})
+            if props.get("node.id") == nid and props.get("port.direction") == "out":
+                pos = props.get("audio.channel") or props.get("port.name", "").replace("output_", "")
+                ports[pos] = str(o["id"])
+        return ports
+
     def play_into(self, sink: str, wav: Path | None = None) -> subprocess.Popen:
-        """Play the test tone into `sink` with explicit port links (autoconnect off — deterministic)."""
+        """Play the test tone into `sink` with explicit port links (autoconnect off — deterministic).
+
+        🔴 Retries the link and CHECKS the result (2026-09-22), like _record() already did. The old version slept
+        a fixed 0.6 s and dropped pw-link's return value; measured on play_into_port that same day, the node is
+        registered before its PORTS are, pw-link then fails with rc=255 and the test sees silence it cannot
+        explain. Same bug class as wait_ports/wait_props/wait_level — see CONTRIBUTING."""
+        vorher = {o["id"] for o in self.dump()
+                  if o.get("type") == "PipeWire:Interface:Node"
+                  and o.get("info", {}).get("props", {}).get("node.name") == "pw-play"}
         p = subprocess.Popen(["pw-play", "-P", "{ node.autoconnect = false }", str(wav or self.tone())],
                              env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(0.6)
+        knoten = None
+        t0 = time.time()
+        while time.time() - t0 < 10.0:   # node first…
+            try:
+                knoten = self._pw_play_node(vorher)
+            except AssertionError:
+                time.sleep(0.05); continue
+            if {"FL", "FR"} <= set(self._out_ports(knoten)):   # …then its ports: the node appears first
+                break
+            time.sleep(0.05)
+        else:
+            p.kill(); p.wait()
+            raise AssertionError(f"pw-play never published FL+FR within 10s (ports: {sorted(self._out_ports(knoten)) if knoten else 'no node'})")
+        ports = self._out_ports(knoten)
         for ch in ("FL", "FR"):
-            subprocess.run(["pw-link", f"pw-play:output_{ch}", f"{sink}:playback_{ch}"], env=self.env, capture_output=True)
+            quelle = ports[ch]
+            r = None
+            for _versuch in range(40):
+                r = subprocess.run(["pw-link", quelle, f"{sink}:playback_{ch}"], env=self.env, capture_output=True, text=True)
+                if r.returncode == 0 or "exists" in (r.stderr + r.stdout): break
+                time.sleep(0.1)
+            else:
+                p.kill(); p.wait()
+                raise AssertionError(f"pw-link {quelle} -> {sink}:playback_{ch} never succeeded: {r.stderr.strip() if r else '(no attempt)'}")
         time.sleep(0.5)
         return p
 
     # ---- ADR 0009 port-level helpers (fake multichannel devices: a sink's ports are playback_<POS>/monitor_<POS>,
     # a source's ports are capture_<POS>)
     def play_into_port(self, node: str, port: str) -> subprocess.Popen:
-        """Left channel of the tone → exactly ONE port (`<node>:<port>`, e.g. fake.ui24r:playback_AUX2)."""
+        """Left channel of the tone → exactly ONE port (`<node>:<port>`, e.g. fake.ui24r:playback_AUX2).
+
+        🔴 Waits for pw-play's OWN port and CHECKS that pw-link succeeded (2026-09-22). Before that this slept a
+        fixed 0.6 s and threw the result of pw-link away. MEASURED: the node `pw-play` is in the graph within
+        0.6 s but its port output_FL often is not, pw-link then exits 255 "failed to link ports: No such file or
+        directory", and the test measured -inf dB and blamed the product. Perfect correlation over 4 runs:
+        port absent → rc=255 → silence. That is what made dv28 flaky (2/5 red on HEAD, not caused by any change
+        of mine) — same bug class as wait_ports/wait_props, and the same lesson as the swallowed-error helpers
+        in CONTRIBUTING: an unchecked return value turns an infrastructure hiccup into a fake product bug."""
         p = subprocess.Popen(["pw-play", "-P", "{ node.autoconnect = false }", str(self.tone())],
                              env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(0.6)
-        subprocess.run(["pw-link", "pw-play:output_FL", f"{node}:{port}"], env=self.env, capture_output=True)
+        quelle = "pw-play:output_FL"
+        t0 = time.time()
+        while time.time() - t0 < 10.0:
+            if quelle in subprocess.run(["pw-link", "-o"], env=self.env, capture_output=True, text=True).stdout:
+                break
+            time.sleep(0.05)
+        else:
+            p.kill(); p.wait()
+            raise AssertionError(f"pw-play never published {quelle} within 10s — no tone to link")
+        r = subprocess.run(["pw-link", quelle, f"{node}:{port}"], env=self.env, capture_output=True, text=True)
+        if r.returncode != 0:
+            p.kill(); p.wait()
+            raise AssertionError(f"pw-link {quelle} -> {node}:{port} failed (rc={r.returncode}): {r.stderr.strip()}")
         time.sleep(0.5)
         return p
 
