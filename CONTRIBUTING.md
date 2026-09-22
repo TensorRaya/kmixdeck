@@ -91,6 +91,10 @@ Rules for such tests:
   check `pgrep -a kmixdeckd` when you are done.
 - **Run the whole suite before you push:** `cd build && ctest --output-on-failure` must be 10/10. Isolated green
   is not green — three of today's daemon bugs only showed under full-suite load.
+- **A test that skips itself is not a green test.** `integration-shortcuts` (CT-1) needs `Xvfb`, `xdotool` and
+  the real `kglobalacceld` (Debian/Ubuntu: `apt install xvfb xdotool kglobalacceld`; the binary lands in
+  `/usr/lib/<triplet>/libexec/`, not on `$PATH`). Without them the file skips and the run still says "passed" —
+  so after a fresh checkout check `ctest -R shortcuts -V` once and look for `3 passed`, not `3 skipped`.
 - **Do not build or run daemons in the tree while ctest runs.** Half of today's red runs were self-inflicted.
   This includes "isolated" A/B comparisons: on 2026-09-21 I ran three suites "alone" while a full gate was
   running next to them (load 8.3–11.0). Both sides were oversubscribed, so the green proved nothing. Before any

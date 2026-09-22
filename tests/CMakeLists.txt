@@ -48,6 +48,13 @@ add_test(NAME gate-label-vollstaendig COMMAND ${CMAKE_COMMAND}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/pruefe-label.cmake)
 set_tests_properties(gate-label-vollstaendig PROPERTIES LABELS "fast")
 
+# Schwester zum Label-Test: der prueft, dass jeder REGISTRIERTE Test in ein Gate faellt —
+# dieser, dass jede Testdatei ueberhaupt registriert IST. Beides zusammen schliesst die
+# Luecke "Datei existiert, ist gruen, laeuft aber in keinem Gate" (soundboard, 2026-09-22).
+add_test(NAME suiten-vollstaendig
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/pruefe-suiten.py ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(suiten-vollstaendig PROPERTIES LABELS "fast")
+
 add_test(NAME sot-audit COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/sot-audit.py)
 set_tests_properties(sot-audit PROPERTIES LABELS "fast")
 
@@ -124,12 +131,32 @@ if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMP
     # dasselbe Muster: er lief versehentlich parallel zum Gate. Konsequenz, keine Konfigaenderung: ein
     # Audio-Ergebnis zaehlt nur, wenn NICHTS anderes gleichzeitig einen PipeWire-Graphen haelt. Wer eine
     # Audio-Suite einzeln prueft, prueft vorher `pgrep -af gate.sh` und `/proc/loadavg`.
-    foreach(suite service_cli audio_graph lifecycle routing fx presentation ports frontends_sync streamdeck web)
+    # 🔴 Wer hier eine Suite vergisst, bekommt ein gruenes Gate ueber Tests, die nie liefen.
+    # Am 2026-09-22 fehlte `soundboard` in dieser Liste: 10 CT-8-Tests, committet und als
+    # fertig gemeldet, im Vollgate-Log 0 Treffer. Gefunden nur durch Abgleich `ls test_*.py`
+    # gegen `ctest -N`. Genau das prueft jetzt der fast-Test `suiten-vollstaendig`.
+    foreach(suite service_cli audio_graph lifecycle routing fx presentation ports frontends_sync soundboard streamdeck web)
         add_test(NAME integration-${suite}
             COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_${suite}.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
         set_tests_properties(integration-${suite} PROPERTIES TIMEOUT 600 LABELS "integration")
     endforeach()
+
+    # CT-1 braucht zusaetzlich einen X-Server, XTEST und den echten Plasma-Shortcut-Daemon.
+    # Die Suite drueckt eine Taste per XTEST (auf X-Protokollebene nicht von Hardware
+    # unterscheidbar, xev meldet `synthetic NO`) und prueft am PipeWire-Knoten, dass gemutet
+    # wurde — also die Kette X -> kglobalacceld -> kmixdeck-kde -> kmixdeckd. Fehlt eines der
+    # Werkzeuge, ueberspringt sich die Datei selbst; darum hier nur der Pfad, keine Bedingung.
+    find_program(XVFB_EXECUTABLE Xvfb)
+    find_program(XDOTOOL_EXECUTABLE xdotool)
+    if(XVFB_EXECUTABLE AND XDOTOOL_EXECUTABLE)
+        add_test(NAME integration-shortcuts
+            COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_shortcuts.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
+        set_tests_properties(integration-shortcuts PROPERTIES TIMEOUT 600 LABELS "integration")
+    else()
+        message(STATUS "CT-1 shortcut test disabled (need Xvfb and xdotool)")
+    endif()
 else()
     message(STATUS "Integration tests disabled (need pytest, pipewire, wireplumber, ffmpeg)")
 endif()
