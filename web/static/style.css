@@ -200,3 +200,23 @@ header .icon-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
 .channel-header button.source { background: none; border: 0; padding: 0; color: var(--fg-dim); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .channel-header button.source:hover { color: var(--fg); text-decoration: underline dotted; }
 .popover .hint { color: var(--fg-dim); font-size: 11px; margin: 6px 0 0; }
+
+/* ---- CT-8 soundboard -------------------------------------------------------------------------------------
+   Pads are deliberately large: this is the one panel you hit under time pressure, mid-sentence, sometimes on a
+   phone. --handle (44px) is the project's minimum touch size, a pad is well above it. A sounding pad is green
+   AND labelled, never colour alone — the same rule the mute buttons follow. */
+.board { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin: 10px; padding: 10px; }
+.board > header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.board > header h2 { margin: 0; font-size: 1.05rem; flex: 1; }
+.pads { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.sample-cell { display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; gap: 4px 6px; align-items: center; }
+.sample-pad { grid-column: 1 / -1; min-height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+              gap: 2px; font-weight: 600; text-align: center; overflow-wrap: anywhere; }
+.sample-pad.sounding { background: var(--green); color: #0d2a18; border-color: var(--green); }
+.sample-pad.sounding::after { content: "▶ playing"; font-size: 0.72rem; font-weight: 500; }
+.sample-len { font-size: 0.72rem; font-weight: 400; color: var(--muted); }
+.sample-pad.sounding .sample-len { color: #0d2a18; }
+.sample-gain { width: 100%; }
+.sample-del { min-height: 28px; padding: 2px 8px; color: var(--muted); }
+.sample-del:hover { color: var(--red); border-color: var(--red); }
+.board .hint { color: var(--muted); font-size: 0.85rem; }

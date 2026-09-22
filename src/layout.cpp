@@ -72,6 +72,22 @@ DeviceRef DeviceRef::fromJson(const QJsonObject &o) {
     return r;
 }
 
+QJsonObject LayoutSample::toJson() const {
+    QJsonObject o{{QStringLiteral("name"), name}, {QStringLiteral("path"), path}};
+    if (length > 0.0) o.insert(QStringLiteral("length"), length);
+    if (gain != 1.0) o.insert(QStringLiteral("gain"), gain);
+    return o;
+}
+LayoutSample LayoutSample::fromJson(const QJsonObject &o) {
+    LayoutSample s;
+    s.name = o.value(QStringLiteral("name")).toString();
+    s.path = o.value(QStringLiteral("path")).toString();
+    s.length = o.value(QStringLiteral("length")).toDouble(0.0);
+    // Clamped, not trusted: a hand-edited layout with gain 1e9 would blow the mix out on the next button press.
+    s.gain = std::clamp(o.value(QStringLiteral("gain")).toDouble(1.0), 0.0, 4.0);
+    return s;
+}
+
 QJsonArray fxChainArray(const fx::Chain &c) { QJsonArray a; for (const auto &e : c.effects) a.append(e.toJson()); return a; }
 
 QJsonObject Layout::toJson() const {
@@ -89,6 +105,10 @@ QJsonObject Layout::toJson() const {
             o.insert(QStringLiteral("duckThreshold"), c.duckThreshold);
         }
         if (!c.fx.effects.isEmpty() || !c.fx.enabled) o.insert(QStringLiteral("fx"), QJsonObject{{QStringLiteral("enabled"), c.fx.enabled}, {QStringLiteral("chain"), fxChainArray(c.fx)}});
+        // CT-8: a plain channel writes neither key, so an existing layout stays byte-identical and a v2 file
+        // written by a build without the soundboard still loads here.
+        if (!c.kind.isEmpty()) o.insert(QStringLiteral("kind"), c.kind);
+        if (!c.samples.isEmpty()) { QJsonArray sa; for (const auto &s : c.samples) sa.append(s.toJson()); o.insert(QStringLiteral("samples"), sa); }
         ch.append(o);
     }
     for (const auto &m : mixes) {
@@ -116,6 +136,16 @@ QJsonObject Layout::toJson() const {
 Layout Layout::fromJson(const QJsonObject &o) {
     Layout l;
     auto readFx = [](const QJsonObject &j) { fx::Chain c; if (j.contains(QStringLiteral("fx"))) c = fx::Chain::fromJson(j.value(QStringLiteral("fx")).toObject()); return c; };
+    // CT-8: samples of a soundboard channel. Entries without a name or path are dropped — a nameless sample
+    // could never be triggered and would just sit in the UI as a dead button.
+    auto readSamples = [](const QJsonObject &j) {
+        QVector<LayoutSample> v;
+        for (const auto &e : j.value(QStringLiteral("samples")).toArray()) {
+            const auto s = LayoutSample::fromJson(e.toObject());
+            if (!s.name.isEmpty() && !s.path.isEmpty()) v.push_back(s);
+        }
+        return v;
+    };
     if (o.contains(QStringLiteral("defaultChannel"))) l.defaultChannel = o.value(QStringLiteral("defaultChannel")).toString();
     l.listeningDevice = o.value(QStringLiteral("listeningDevice")).toString();
     for (const auto &v : o.value(QStringLiteral("knownApps")).toArray()) l.knownApps << v.toString();
@@ -130,7 +160,12 @@ Layout Layout::fromJson(const QJsonObject &o) {
                                         std::clamp(c.value(QStringLiteral("duckDepth")).toDouble(-12.0), -60.0, 0.0),
                                         std::clamp(c.value(QStringLiteral("duckAttack")).toDouble(10.0), 2.0, 400.0),
                                         std::clamp(c.value(QStringLiteral("duckRelease")).toDouble(300.0), 2.0, 800.0),
-                                        std::clamp(c.value(QStringLiteral("duckThreshold")).toDouble(-40.0), -60.0, 0.0)}); }
+                                        std::clamp(c.value(QStringLiteral("duckThreshold")).toDouble(-40.0), -60.0, 0.0),
+                                        // CT-8: kind + samples come LAST, matching the struct order. Only "soundboard"
+                                        // is accepted as a kind — an unknown one from a newer file reads as a normal
+                                        // channel instead of creating something the daemon cannot reconcile.
+                                        c.value(QStringLiteral("kind")).toString() == QLatin1String("soundboard") ? QStringLiteral("soundboard") : QString(),
+                                        readSamples(c)}); }
     for (const auto &v : o.value(QStringLiteral("mixes")).toArray()) {
         const auto m = v.toObject(); LayoutMix lm;
         lm.slug = m.value(QStringLiteral("slug")).toString(); lm.name = m.value(QStringLiteral("name")).toString(); lm.icon = m.value(QStringLiteral("icon")).toString();

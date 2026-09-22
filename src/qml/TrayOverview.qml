@@ -165,6 +165,38 @@ Kirigami.AbstractApplicationWindow {
                         }
                     }
                 }
+                // CT-8: fire a sample from the tray. Same reason as the scene recall above — a jingle is
+                // needed mid-stream, and opening the window to click a pad is too slow. Opt-in rule
+                // (owner 2026-09-18): absent until a soundboard with samples exists. Stop is in the same
+                // menu, because a 10 s bed has to be cancellable from where it was started.
+                QQC2.ToolButton {
+                    objectName: "traySampleFire"
+                    visible: Mixer.allSamples.length > 0
+                    icon.name: "media-playback-start"
+                    text: i18np("Sample", "Samples", Mixer.allSamples.length)
+                    display: QQC2.AbstractButton.TextBesideIcon
+                    QQC2.ToolTip.text: i18n("Play a sample without opening the mixer"); QQC2.ToolTip.visible: hovered
+                    onClicked: sampleMenu.popup()
+                    QQC2.Menu {
+                        id: sampleMenu
+                        objectName: "traySampleMenu"
+                        Instantiator {
+                            model: Mixer.allSamples
+                            delegate: QQC2.MenuItem {
+                                required property var modelData
+                                objectName: "traySampleItem/" + modelData.channel + ":" + modelData.name
+                                text: modelData.sounding ? i18n("%1 (playing)", modelData.name) : modelData.name
+                                icon.name: modelData.sounding ? "media-playback-stop" : "media-playback-start"
+                                onTriggered: {
+                                    if (modelData.sounding) Mixer.stopSample(modelData.name)
+                                    else Mixer.playSample(modelData.channel, modelData.name)
+                                }
+                            }
+                            onObjectAdded: (index, object) => sampleMenu.insertItem(index, object)
+                            onObjectRemoved: (index, object) => sampleMenu.removeItem(object)
+                        }
+                    }
+                }
                 Item { Layout.fillWidth: true }
                 QQC2.Button { objectName: "trayOpenWindow"; icon.name: "view-fullscreen"; text: i18n("Open mixer"); onClicked: { pop.close(); applicationWindow().raiseFromTray() } }
             }

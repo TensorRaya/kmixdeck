@@ -127,7 +127,14 @@ QVariantMap ChannelObject::properties() const {
             // FX-9: this map is what GetManagedObjects and InterfacesAdded carry, i.e. everything a client sees
             // without asking property by property. Leaving Ducking out here made the web UI's state show
             // `undefined` while the bus had the value all along (measured 2026-09-21).
-            {QStringLiteral("Ducking"), duckingJson()}, {QStringLiteral("DuckReduction"), duckReduction()}};
+            {QStringLiteral("Ducking"), duckingJson()}, {QStringLiteral("DuckReduction"), duckReduction()},
+            {QStringLiteral("Kind"), kind()}};   // CT-8: same lesson as Ducking above — a UI that filters on
+                                                 // Kind sees nothing if it is missing from THIS map.
+}
+
+QString ChannelObject::kind() const {   // CT-8
+    const auto *c = m_mixer->layout().channel(m_slug);
+    return c ? c->kind : QString();
 }
 
 // ---- Mix
@@ -497,6 +504,53 @@ QDBusObjectPath MixerAdaptor::AddChannel(const QString &name) {
     if (slug.isEmpty()) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), err); return QDBusObjectPath(QStringLiteral("/")); }
     return QDBusObjectPath(Service::channelPath(slug));
 }
+QDBusObjectPath MixerAdaptor::AddSoundboard(const QString &name) {   // CT-8
+    QString err; const QString slug = m_mixer->addSoundboard(name, &err);
+    if (slug.isEmpty()) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), err); return QDBusObjectPath(QStringLiteral("/")); }
+    return QDBusObjectPath(Service::channelPath(slug));
+}
+// CT-8. Every refusal becomes a real bus error, not a silent no-op: a soundboard button that reports success
+// while nothing sounds is the failure mode this feature must not have.
+void MixerAdaptor::PlaySample(const QString &name) {
+    QString err;
+    if (!m_mixer->playSample(name, QString(), &err))
+        static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), err);
+}
+void MixerAdaptor::PlaySampleOn(const QString &channel, const QString &name) {
+    QString err;
+    if (!m_mixer->playSample(name, channel, &err))
+        static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), err);
+}
+void MixerAdaptor::StopSample(const QString &name) { m_mixer->stopSample(name); }
+SampleList MixerAdaptor::Samples() {
+    SampleList out;
+    for (const QString &ch : m_mixer->soundboardSlugs()) {
+        const auto doc = QJsonDocument::fromJson(m_mixer->samplesJson(ch).toUtf8());
+        for (const auto &v : doc.array()) {
+            const auto o = v.toObject();
+            out.append(QVariantMap{{QStringLiteral("name"), o.value(QStringLiteral("name")).toString()},
+                                   {QStringLiteral("path"), o.value(QStringLiteral("path")).toString()},
+                                   {QStringLiteral("length"), o.value(QStringLiteral("length")).toDouble()},
+                                   {QStringLiteral("gain"), o.value(QStringLiteral("gain")).toDouble()},
+                                   {QStringLiteral("channel"), ch},
+                                   {QStringLiteral("sounding"), o.value(QStringLiteral("sounding")).toBool()}});
+        }
+    }
+    return out;
+}
+QString MixerAdaptor::AddSample(const QString &channel, const QString &path, const QString &name) {
+    QString err; const QString slug = m_mixer->addSample(channel, path, name, &err);
+    if (slug.isEmpty()) static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), err);
+    return slug;
+}
+void MixerAdaptor::RemoveSample(const QString &channel, const QString &name) {
+    if (!m_mixer->removeSample(channel, name))
+        static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no sample '%1' on '%2'").arg(name, channel));
+}
+void MixerAdaptor::SetSampleGain(const QString &channel, const QString &name, double gain) {
+    if (!m_mixer->setSampleGain(channel, name, gain))
+        static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("no sample '%1' on '%2'").arg(name, channel));
+}
 QDBusObjectPath MixerAdaptor::AddMix(const QString &name) {
     QString err; const QString slug = m_mixer->addMix(name, &err);
     if (slug.isEmpty()) { static_cast<RootObject *>(parent())->replyError(QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), err); return QDBusObjectPath(QStringLiteral("/")); }
@@ -547,6 +601,7 @@ Service::Service(QObject *parent) : QObject(parent) {
     qDBusRegisterMetaType<ManagedObjects>();
     qDBusRegisterMetaType<StringMap>();
     qDBusRegisterMetaType<PortMap>();
+    qDBusRegisterMetaType<SampleList>();   // CT-8: aa{sv} for Mixer.Samples
     connect(&m_mixer, &Mixer::layoutChanged, this, &Service::syncObjects);
     connect(&m_mixer, &Mixer::connectedChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("Connected"), m_mixer.connected()}});
@@ -564,6 +619,12 @@ Service::Service(QObject *parent) : QObject(parent) {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->outputDevices() : StringMap{})},
                                                                                                    {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->devicePorts() : PortMap{})}});
     });
+    // CT-8: the registry lives in the layout, so registering/removing/re-gaining a sample arrives as
+    // layoutChanged — not as sampleStateChanged, which only reports start/stop. Both have to announce the
+    // property or the browser shows a stale board.
+    connect(&m_mixer, &Mixer::layoutChanged, this, [this] {
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("Samples"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->Samples() : SampleList{})}});
+    });
     connect(&m_mixer, &Mixer::layoutChanged, this, [this] {   // UX-9: order is part of the layout
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()}});
     });
@@ -574,6 +635,12 @@ Service::Service(QObject *parent) : QObject(parent) {
     // and move their faders on the second (the fader values arrive through the usual per-cell notifications).
     connect(&m_mixer, &Mixer::scenesChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("Scenes"), m_mixer.scenes()}});
+    });
+    // CT-8: the web UI never polls, it reacts to PropertiesChanged (client.js). So every change to the sample
+    // registry AND every start/stop has to be announced here, otherwise a board drawn in the browser would show
+    // a sample as idle while it is audibly playing.
+    connect(&m_mixer, &Mixer::sampleStateChanged, this, [this](const QString &, const QString &, bool) {
+        emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("Samples"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->Samples() : SampleList{})}});
     });
     connect(&m_mixer, &Mixer::sceneRecalled, this, [this](const QString &name) {
         if (m_mixerAdaptor) Q_EMIT m_mixerAdaptor->SceneRecalled(name);
@@ -650,6 +717,7 @@ ManagedObjects Service::managedObjects() const {
          {QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor->outputDevices())}, {QStringLiteral("InputDevices"), QVariant::fromValue(m_mixerAdaptor->inputDevices())},
          {QStringLiteral("DevicePorts"), QVariant::fromValue(m_mixerAdaptor->devicePorts())}, {QStringLiteral("VirtualDevices"), m_mixerAdaptor->virtualDevices()}, {QStringLiteral("HiddenDevices"), m_mixerAdaptor->hiddenDevices()}, {QStringLiteral("FirstRun"), m_mixerAdaptor->firstRun()}, {QStringLiteral("DefaultSink"), m_mixerAdaptor->defaultSink()}, {QStringLiteral("DefaultSource"), m_mixerAdaptor->defaultSource()},
          {QStringLiteral("DefaultChannel"), QVariant::fromValue(m_mixerAdaptor->defaultChannel())}, {QStringLiteral("ListeningDevice"), m_mixer.listeningDevice()}, {QStringLiteral("UndoDescription"), m_mixerAdaptor->undoDescription()}, {QStringLiteral("Scenes"), m_mixerAdaptor->scenes()}, {QStringLiteral("ChannelOrder"), m_mixer.channelSlugs()}, {QStringLiteral("MixOrder"), m_mixer.mixSlugs()},
+         {QStringLiteral("Samples"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->Samples() : SampleList{})},   // CT-8
          {QStringLiteral("FxTypes"), m_mixerAdaptor->fxTypes()}, {QStringLiteral("FxPresets"), m_mixerAdaptor->fxPresets()}}}});
     for (auto it = m_objects.cbegin(); it != m_objects.cend(); ++it)
         out.insert(QDBusObjectPath(it.key()), InterfaceMap{{it.value()->interfaceName(), it.value()->properties()}});

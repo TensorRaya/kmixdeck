@@ -91,6 +91,55 @@
       <arg name="name" type="s" direction="in"/>
       <arg name="path" type="o" direction="out"/>
     </method>
+    <!-- CT-8: create a soundboard channel. Own method, not a flag on AddChannel — the kind is opt-in, so no
+         existing client can create one by accident. -->
+    <method name="AddSoundboard">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="path" type="o" direction="out"/>
+    </method>
+    <!-- CT-8: play a registered sample by name, searching every soundboard channel. Errors out if the name is
+         unknown, so a Stream Deck / Home Assistant button cannot silently do nothing. -->
+    <method name="PlaySample">
+      <arg name="name" type="s" direction="in"/>
+    </method>
+    <!-- Explicit form when the caller knows which board the sample lives on. -->
+    <method name="PlaySampleOn">
+      <arg name="channel" type="s" direction="in"/>
+      <arg name="name" type="s" direction="in"/>
+    </method>
+    <!-- Stop sounding voices of a sample; empty name stops everything. -->
+    <method name="StopSample">
+      <arg name="name" type="s" direction="in"/>
+    </method>
+    <!-- Every registered sample across all soundboards: name, path, length (s), gain (linear), channel, sounding.
+         Deliberately two doors to the same data (see MixerAdaptor): the PROPERTY carries PropertiesChanged, which
+         is what the web UI and the tray build their view from — measured 2026-09-22, as a method-only contract the
+         frontends kept showing "playing" after a manual stop because nothing told them. The METHOD stays for the
+         CLI and for scripts that ask once and exit. AR-2 checks the shipped XML against the live object, so both
+         have to be listed here. -->
+    <property name="Samples" type="aa{sv}" access="read">
+      <annotation name="org.qtproject.QtDBus.QtTypeName" value="SampleList"/>
+    </property>
+    <method name="Samples">
+      <arg name="samples" type="aa{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="SampleList"/>
+    </method>
+    <!-- Register a file. Empty name = derived from the file name. Refuses an unreadable/undecodable file. -->
+    <method name="AddSample">
+      <arg name="channel" type="s" direction="in"/>
+      <arg name="path" type="s" direction="in"/>
+      <arg name="name" type="s" direction="in"/>
+      <arg name="sample" type="s" direction="out"/>
+    </method>
+    <method name="RemoveSample">
+      <arg name="channel" type="s" direction="in"/>
+      <arg name="name" type="s" direction="in"/>
+    </method>
+    <method name="SetSampleGain">
+      <arg name="channel" type="s" direction="in"/>
+      <arg name="name" type="s" direction="in"/>
+      <arg name="gain" type="d" direction="in"/>
+    </method>
     <method name="AddMix">
       <arg name="name" type="s" direction="in"/>
       <arg name="path" type="o" direction="out"/>

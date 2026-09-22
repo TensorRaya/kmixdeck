@@ -161,8 +161,14 @@ int main(int argc, char *argv[])
             }
             else fprintf(stderr, "kmixdeck: --open duck needs duck/<slug>, got '%s'\n", qPrintable(open));
         }
+        // CT-8: Soundboard — kein Slug, die Seite waehlt das erste Board selbst und bietet einen Umschalter,
+        // wenn es mehrere gibt.
+        else if (open == QLatin1String("soundboard")) {
+            if (!QMetaObject::invokeMethod(win, "soundboardPanelOpen"))
+                fprintf(stderr, "kmixdeck: --open soundboard: soundboardPanelOpen() not invokable on the root window\n");
+        }
         // Ein unbekanntes Ziel MUSS auffallen, statt lautlos zu verschwinden.
-        else fprintf(stderr, "kmixdeck: --open: unknown target '%s' (apps|routing|patchbay|channel-ports|fx/channel|mix/<slug>|duck/<slug>)\n",
+        else fprintf(stderr, "kmixdeck: --open: unknown target '%s' (apps|routing|patchbay|channel-ports|fx/channel|mix/<slug>|duck/<slug>|soundboard)\n",
                      qPrintable(open));
     };
 

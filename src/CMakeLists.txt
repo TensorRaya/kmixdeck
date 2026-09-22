@@ -6,9 +6,10 @@ add_library(kmixdeck_core STATIC
     fx.cpp fx.h
     pipewire/graph.cpp pipewire/graph.h
     pipewire/meters.cpp pipewire/meters.h
+    pipewire/sampler.cpp pipewire/sampler.h
 )
 target_include_directories(kmixdeck_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(kmixdeck_core PUBLIC Qt6::Core PkgConfig::PipeWire PkgConfig::EBUR128)
+target_link_libraries(kmixdeck_core PUBLIC Qt6::Core PkgConfig::PipeWire PkgConfig::EBUR128 PkgConfig::FFMPEG)
 target_compile_options(kmixdeck_core PRIVATE -Wall -Wextra)
 
 # --- kmixdeckd: the service (ADR 0005). Only binary that links libpipewire.
@@ -85,6 +86,7 @@ ecm_add_qml_module(kmixdeck-kde
         qml/IconDialog.qml
         qml/FxPanel.qml
         qml/DuckPanel.qml
+        qml/SoundboardPanel.qml   # CT-8
         qml/Fader.qml
         qml/LevelMeter.qml
         qml/TrayOverview.qml

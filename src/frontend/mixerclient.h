@@ -44,6 +44,13 @@ class MixerClient : public QObject {
     Q_PROPERTY(QString listeningDevice READ listeningDevice WRITE setListeningDevice NOTIFY listeningDeviceChanged)   // UX-2, node.name or ""
     Q_PROPERTY(QString undoDescription READ undoDescription NOTIFY undoChanged)   // CH-9
     Q_PROPERTY(QStringList scenes READ scenes NOTIFY scenesChanged)   // CT-9: named snapshots, empty until the user saves one
+    // CT-8: the tray binds to this, so it has to be a NOTIFYing property — samples() as a plain function call is
+    // evaluated once and never again (measured 2026-09-22: the tray button kept its first label while a sample
+    // started and stopped). Same shape as `scenes` right above.
+    Q_PROPERTY(QVariantList allSamples READ samples NOTIFY samplesChanged)
+    // CT-8: the window's "Soundboard…" action binds to this. A Q_INVOKABLE would be evaluated once and then never
+    // react to a board being added or removed (same trap as allSamples above).
+    Q_PROPERTY(QStringList soundboardSlugs READ soundboardSlugs NOTIFY layoutChanged)
 public:
     explicit MixerClient(QObject *parent = nullptr);
 
@@ -214,6 +221,19 @@ public:
     Q_INVOKABLE QVariantMap ducking(const QString &slug) const;
     Q_INVOKABLE bool        setDucking(const QString &slug, const QVariantMap &cfg);
     Q_INVOKABLE double      duckReduction(const QString &slug) const;
+
+    // CT-8 soundboard. samples()/isSoundboard() read cached properties (Mixer.Samples, Channel.Kind), the rest
+    // call methods and block — same reason as setDucking above: a refusal has to reach the user, and a
+    // fire-and-forget call would leave a broken file looking registered.
+    Q_INVOKABLE QVariantList samples(const QString &channel = QString()) const;
+    Q_INVOKABLE bool         isSoundboard(const QString &slug) const;
+    QStringList              soundboardSlugs() const;
+    Q_INVOKABLE QString      addSoundboard(const QString &name);
+    Q_INVOKABLE QString      addSample(const QString &channel, const QString &path, const QString &name = QString());
+    Q_INVOKABLE bool         removeSample(const QString &channel, const QString &name);
+    Q_INVOKABLE bool         playSample(const QString &channel, const QString &name);
+    Q_INVOKABLE bool         stopSample(const QString &name = QString());
+    Q_INVOKABLE bool         setSampleGain(const QString &channel, const QString &name, double gain);
     Q_INVOKABLE void    setFxChain(const QString &kind, const QString &slug, const QString &chainJson);
     Q_INVOKABLE void    setFxControl(const QString &kind, const QString &slug, const QString &control, double value);
     Q_INVOKABLE QVariantList fxTypes() const { return m_fxTypes; }
@@ -239,6 +259,7 @@ Q_SIGNALS:
     void metersEnabledChanged();
     void peaksChanged();                                        // once per tick
     void lastErrorChanged();
+    void samplesChanged();   // CT-8
     void hiddenDevicesChanged();
     void firstRunChanged();
     void defaultDevicesChanged();
@@ -272,6 +293,7 @@ private:
     QHash<QString, double> m_peaks;
     QStringList m_channelOrder, m_mixOrder;
     QString m_lastError;
+    QVariantList m_samples;   // CT-8: Mixer.Samples cache, rows of {channel,name,path,length,gain,sounding}
     QStringList m_hiddenDevices;
     bool m_firstRun = false; QString m_defaultSink, m_defaultSource;
 };

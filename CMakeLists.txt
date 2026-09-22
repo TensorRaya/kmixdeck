@@ -51,6 +51,13 @@ pkg_check_modules(PipeWire REQUIRED IMPORTED_TARGET libpipewire-0.3>=1.0)
 # UX-18: EBU R128 loudness (libebur128). Required, not optional: a loudness meter that silently is not there
 # is worse than a build error — the streamer would trust an empty reading.
 pkg_check_modules(EBUR128 REQUIRED IMPORTED_TARGET libebur128>=1.2)
+# CT-8 (soundboard): sample decoding via ffmpeg. Required for the same reason as libebur128 — a soundboard
+# that silently cannot read mp3 is worse than a build error. Chosen over libsndfile (not installed, and no
+# mp3/ogg without extras), Qt6Multimedia (would drag QtGui into the headless daemon, AR-2) and the
+# vorbisfile+mpg123+opusfile trio (three dependencies instead of one). libswresample also brings the rate
+# conversion we need anyway: a sample's rate is whatever the file has, the graph's is whatever the session
+# negotiated. See specs/ct8-soundboard.md.
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat>=60 libavcodec>=60 libswresample>=4 libavutil>=58)
 
 # UX-5: catalogs in po/<lang>/kmixdeck.po → <KDE_INSTALL_LOCALEDIR>/kmixdeck/<lang>/LC_MESSAGES/kmixdeck.mo
 ki18n_install(po)

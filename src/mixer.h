@@ -15,6 +15,7 @@
 #include <functional>
 #include "pipewire/graph.h"
 #include "pipewire/meters.h"
+#include "pipewire/sampler.h"
 #include "layout.h"
 
 namespace kmixdeck {
@@ -257,9 +258,40 @@ public:
     Q_INVOKABLE void stopAudition();
     Q_INVOKABLE QString auditionTarget() const;   // "" when nothing is auditioned
 
+    /// CT-8 soundboard. All of these refuse politely on a channel that is not of kind "soundboard" — the
+    /// requirement makes the kind opt-in, so a normal channel must never grow sample behaviour by accident.
+    ///
+    /// Samples run through the channel's sink, which means the channel's FX chain and every per-mix fader
+    /// apply exactly as they do to a microphone: a "mic only" mix simply has the soundboard's cell muted.
+    /// Playback happens in the daemon (pw::Sampler, a pw_stream), never by spawning a player.
+    Q_INVOKABLE QStringList soundboardSlugs() const;
+    QString fxTarget(const QString &slug) const;
+    void    restartSoundingSamples(const QString &slug, int triesLeft = 40);   // CT-8: voices cannot be retargeted, so replay them   // CT-8/ADR 0008: fx entry when a chain is active, else the plain sink
+    /// Registered samples of a channel as JSON: [{name, path, length, gain, sounding}]. Empty for a
+    /// non-soundboard channel. `sounding` is live from the Sampler, not stored.
+    Q_INVOKABLE QString samplesJson(const QString &channel) const;
+    /// Register a file. `name` empty → derived from the file name. Probes the file first and REFUSES an
+    /// unreadable one: a soundboard button that does nothing is worse than an error at registration.
+    /// Returns the sample's name, or empty with *error set.
+    QString addSample(const QString &channel, const QString &path, const QString &name = {}, QString *error = nullptr);
+    Q_INVOKABLE bool removeSample(const QString &channel, const QString &name);
+    /// Linear 0…4. Returns false if the sample does not exist.
+    Q_INVOKABLE bool setSampleGain(const QString &channel, const QString &name, double gain);
+    /// Play a registered sample. `channel` empty → search every soundboard channel for the name, which is what
+    /// makes `Mixer.PlaySample(name)` from the requirement work without the caller knowing the channel.
+    /// Returns the voice id, 0 with *error set.
+    quint32 playSample(const QString &name, const QString &channel = {}, QString *error = nullptr);
+    /// Stop voices of `name` (empty = every sounding voice). Returns how many were stopped.
+    Q_INVOKABLE int stopSample(const QString &name = {});
+    /// Names currently sounding, one entry per voice.
+    Q_INVOKABLE QStringList soundingSamples() const;
+
     /// Layout edits (MX-1: any number of mixes; CH-2: any number of channels).
     /// Returns the new slug, or empty with *error set (empty slug, duplicate). Never invents a name.
     QString addChannel(const QString &displayName, QString *error = nullptr);
+    /// CT-8: same, but creates a channel of kind "soundboard". Separate method rather than a defaulted
+    /// argument so the opt-in is visible at every call site — no code path can create one by accident.
+    QString addSoundboard(const QString &displayName, QString *error = nullptr);
     QString addMix(const QString &displayName, QString *error = nullptr);
     Q_INVOKABLE void removeChannel(const QString &slug);
     Q_INVOKABLE void removeMix(const QString &slug);
@@ -304,6 +336,9 @@ Q_SIGNALS:
     void layoutChanged();
     void cellChanged(const QString &ch, const QString &mix);
     void channelChanged(const QString &slug);
+    /// CT-8: a sample started or stopped sounding. Carries the channel so a UI can refresh one board instead
+    /// of everything, and `sounding` so it does not have to ask back on every event.
+    void sampleStateChanged(const QString &channel, const QString &name, bool sounding);
     void mixChanged(const QString &slug);
     void appAdded(uint32_t id);
     void appChanged(uint32_t id);
@@ -330,6 +365,7 @@ private:
 
     pw::Graph m_graph;
     pw::Meters m_meters{&m_graph};
+    pw::Sampler m_sampler{&m_graph};   // CT-8: sample playback inside the daemon
     bool m_connected = false;
     QVector<Channel> m_channels;
     QVector<Mix> m_mixes;

@@ -18,6 +18,12 @@
 
 namespace kmixdeck::daemon {
 
+/// CT-8: one row per registered sample for Mixer.Samples. QVariantList would marshal as `av` (array of
+/// variants) while the shipped XML promises `aa{sv}` — measured with busctl, the wire really said
+/// {"type":"av",...} and the CLI then decoded garbage out of correct daemon data. QList<QVariantMap> is the
+/// type that actually produces aa{sv}, the shape every D-Bus client expects for "rows with named fields".
+using SampleList = QList<QVariantMap>;
+
 constexpr const char *kBusName = "org.kmixdeck1";
 constexpr const char *kRootPath = "/org/kmixdeck1";
 
@@ -93,11 +99,15 @@ class ChannelObject : public ExportedObject {
     // ducking), read from the graph, not from the layout.
     Q_PROPERTY(QString Ducking READ duckingJson WRITE setDuckingJson)
     Q_PROPERTY(double DuckReduction READ duckReduction)
+    // CT-8: "" for a normal channel, "soundboard" for a sample player. CONSTANT because the kind is decided when
+    // the channel is created — it never changes later, which keeps the opt-in check in every UI a plain compare.
+    Q_PROPERTY(QString Kind READ kind CONSTANT)
 public:
     ChannelObject(Mixer *mixer, const QString &slug, QObject *parent);
     QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.Channel"); }
     QVariantMap properties() const override;
     QString slug() const { return m_slug; }
+    QString kind() const;   // CT-8
     QString name() const; void setName(const QString &);
     QString icon() const; void setIcon(const QString &i);
     QString group() const; void setGroup(const QString &g);
@@ -273,6 +283,10 @@ class MixerAdaptor : public QDBusAbstractAdaptor {
     Q_PROPERTY(QStringList MixOrder READ mixOrder)
     Q_PROPERTY(QString FxTypes READ fxTypes CONSTANT)          // FX-4: built-in catalog as JSON [{type,label,params:[…]}]
     Q_PROPERTY(QString FxPresets READ fxPresets CONSTANT)      // FX-4: name → chain JSON
+    // CT-8: the soundboard as a property, because the web UI builds its view from snapshot+PropertiesChanged and
+    // never polls methods (client.js: state.root comes from GetAll). The identically named METHOD stays for the
+    // CLI and scripts — same data, two doors.
+    Q_PROPERTY(SampleList Samples READ Samples)
 public:
     MixerAdaptor(Mixer *mixer, QObject *parent);
     QString version() const;
@@ -316,6 +330,22 @@ public Q_SLOTS:
     void MoveChannel(const QDBusObjectPath &path, int index);   // UX-9
     void MoveMix(const QDBusObjectPath &path, int index);
     QDBusObjectPath AddChannel(const QString &name);
+    /// CT-8: creates a channel of kind "soundboard". Its own method, not a flag on AddChannel, so the opt-in
+    /// is explicit on the bus too — an existing client cannot conjure a soundboard by passing a stray argument.
+    QDBusObjectPath AddSoundboard(const QString &name);
+    /// CT-8 sample control. PlaySample/StopSample/Samples are named exactly as the requirement spells them.
+    /// PlaySample takes the sample name alone (Home Assistant and a Stream Deck button know a name, not a
+    /// channel) and searches every soundboard; PlaySampleOn is the explicit form.
+    void PlaySample(const QString &name);
+    void PlaySampleOn(const QString &channel, const QString &name);
+    /// Stops voices of `name`; an empty name stops everything that is sounding.
+    void StopSample(const QString &name);
+    /// a{sv} per sample: name, path, length (s), gain (linear), channel, sounding.
+    SampleList Samples();
+    /// Registers a file on a soundboard channel. Returns the sample's name; refuses an unreadable file.
+    QString AddSample(const QString &channel, const QString &path, const QString &name);
+    void RemoveSample(const QString &channel, const QString &name);
+    void SetSampleGain(const QString &channel, const QString &name, double gain);
     QDBusObjectPath AddMix(const QString &name);
     QString AddVirtualDevice(const QString &name, int inputs, int outputs);   // DV-23 → node.name of the input side
     void RemoveVirtualDevice(const QString &slugOrNode);
@@ -331,6 +361,7 @@ Q_SIGNALS:
 private:
     Mixer *m_mixer;
 };
+
 
 /// The service: owns Mixer (the only PipeWire client) and keeps the bus objects in sync with it.
 class Service : public QObject {
@@ -359,3 +390,6 @@ private:
 };
 
 } // namespace kmixdeck::daemon
+
+// Qt requires this at global scope, outside the namespace.
+Q_DECLARE_METATYPE(kmixdeck::daemon::SampleList)

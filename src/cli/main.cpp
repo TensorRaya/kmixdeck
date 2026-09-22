@@ -93,6 +93,7 @@ const char *codeName(Exit code) {
 constexpr const char *KOMMANDO_NAMEN[] = {
     "status", "tree", "patch", "loudness", "streamdeck", "setup", "export", "import", "undo", "scene",
     "devices", "channel", "mix", "fx", "duck", "cell", "app", "listen", "audition", "levels", "watch",
+    "sample",   // CT-8 soundboard
     "complete",   // CL-7: kein Alltagskommando, aber `help complete` und die Doku-Pruefung brauchen den Namen
 };
 
@@ -843,7 +844,9 @@ struct Cli {
     }
     int printPath(const QDBusReply<QDBusObjectPath> &r) {
         if (!r.isValid()) return fail(Rejected, r.error().message());
-        if (g_json) out << QJsonDocument(QJsonObject{{"path", r.value().path()}}).toJson(QJsonDocument::Compact); else out << r.value().path() << "\n"; return Ok; }
+        // `slug` is additive next to `path`: scripts (and the CT-8 tests) want the name they can pass to other
+        // subcommands without slicing the object path themselves.
+        if (g_json) out << QJsonDocument(QJsonObject{{"path", r.value().path()}, {"slug", r.value().path().section(QLatin1Char('/'), -1)}}).toJson(QJsonDocument::Compact); else out << r.value().path() << "\n"; return Ok; }
     int list(const QMap<QString, QVariantMap> &m) {
         if (g_json) { QJsonArray arr; for (auto it = m.cbegin(); it != m.cend(); ++it) { auto v = it.value(); v["Path"] = it.key(); arr.append(QJsonObject::fromVariantMap(v)); } out << QJsonDocument(arr).toJson(); }
         else for (auto it = m.cbegin(); it != m.cend(); ++it) out << QStringLiteral("%1  %2\n").arg(it.value().value("Slug").toString(), -16).arg(it.value().value("Name").toString());
@@ -1069,7 +1072,15 @@ struct Cli {
         const bool ch = cmd == "channel"; const auto &objs = ch ? o.channels : o.mixes; const QString iface = ch ? "org.kmixdeck1.Channel" : "org.kmixdeck1.Mix";
         auto pathOf = [&](const QString &slug) { return QStringLiteral("%1/%2/%3").arg(ROOT, ch ? "channel" : "mix", slug); };
         if (sub == "list") return list(objs);
-        if (sub == "add") { if (!need(3)) return Usage; return printPath(QDBusReply<QDBusObjectPath>(mixer.call(ch ? "AddChannel" : "AddMix", a[2]))); }
+        if (sub == "add") {
+            // CT-8: `channel add --soundboard <name>` creates a sample player instead of an input group. The flag
+            // may stand before or after the name — a user types it either way, and refusing one of them is just
+            // rudeness. Order-insensitive parsing beats a Usage error here.
+            QStringList rest = a.mid(2);
+            const bool board = ch && rest.removeAll(QStringLiteral("--soundboard")) > 0;
+            if (rest.isEmpty()) return fail(Usage, board ? "channel add --soundboard <name>" : "add <name>");
+            return printPath(QDBusReply<QDBusObjectPath>(mixer.call(board ? "AddSoundboard" : (ch ? "AddChannel" : "AddMix"), rest.first())));
+        }
         if (sub == "default" && ch) {   // channel default [<slug>|none]
             if (a.size() < 3) { const QString p = unwrap(o.mixer.value("DefaultChannel")).toString(); out << (p == "/" ? QStringLiteral("none") : p.section(QLatin1Char('/'), -1)) << "\n"; return Ok; }
             if (a[2] != "none" && !objs.contains(pathOf(a[2]))) return fail(NotFound, QStringLiteral("no channel '%1'").arg(a[2]));
@@ -1354,6 +1365,85 @@ struct Cli {
         }
         return fail(Usage, "unknown fx subcommand '" + sub + "'");
     }
+    int cmdSample() {   // CT-8 soundboard
+        // sample list [<channel>] | sample add <channel> <file> [--name <n>] | sample remove <channel> <name>
+        // sample gain <channel> <name> <linear> | sample play <name> [<channel>] | sample stop [<name>]
+        auto samples = [&]() -> QVariantList {
+            const QDBusMessage r = mixer.call(QStringLiteral("Samples"));
+            if (r.type() == QDBusMessage::ErrorMessage) return {};
+            // aa{sv}: the daemon declares SampleList (QList<QVariantMap>), so qdbus_cast demarshals it in one
+            // step. Verified against the wire, not assumed — an earlier QVariantList return marshalled as `av`
+            // and this list came out as `[{'': None}]` while the daemon held the right data all along.
+            QVariantList outv;
+            for (const QVariantMap &m : qdbus_cast<QList<QVariantMap>>(r.arguments().value(0).value<QDBusArgument>()))
+                outv.append(plain(m));
+            return outv;
+        };
+        if (sub == "list") {
+            QVariantList all = samples();
+            const QString only = a.size() > 2 ? a[2] : QString();
+            QJsonArray arr;
+            for (const auto &v : all) {
+                const QVariantMap m = v.toMap();
+                if (!only.isEmpty() && m.value(QStringLiteral("channel")).toString() != only) continue;
+                arr.append(QJsonObject::fromVariantMap(m));
+            }
+            if (g_json) { out << QJsonDocument(arr).toJson(QJsonDocument::Compact) << "\n"; return Ok; }
+            if (arr.isEmpty()) { out << "no samples\n"; return Ok; }
+            for (const auto &v : arr) {
+                const auto m = v.toObject();
+                out << QStringLiteral("%1  %2  %3 s%4  %5\n")
+                           .arg(m.value(QStringLiteral("channel")).toString(), -12)
+                           .arg(m.value(QStringLiteral("name")).toString(), -18)
+                           .arg(m.value(QStringLiteral("length")).toDouble(), 0, 'f', 2)
+                           .arg(m.value(QStringLiteral("sounding")).toBool() ? QStringLiteral("  ▶ sounding") : QString())
+                           .arg(m.value(QStringLiteral("path")).toString());
+            }
+            return Ok;
+        }
+        if (sub == "play") {
+            if (!need(3)) return Usage;
+            // With a channel given use the explicit form; without it the daemon searches every soundboard, which
+            // is what a Stream Deck button does. Either way a refusal comes back as a bus error, never silence.
+            const QDBusMessage r = a.size() > 3 ? mixer.call(QStringLiteral("PlaySampleOn"), a[3], a[2])
+                                                : mixer.call(QStringLiteral("PlaySample"), a[2]);
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        if (sub == "stop") {
+            const QDBusMessage r = mixer.call(QStringLiteral("StopSample"), a.size() > 2 ? a[2] : QString());
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        if (sub == "add") {
+            if (!need(4)) return Usage;
+            QStringList rest = a.mid(4);
+            QString name;
+            const int at = rest.indexOf(QStringLiteral("--name"));
+            if (at >= 0) { if (at + 1 >= rest.size()) return fail(Usage, "--name needs a value"); name = rest.at(at + 1); }
+            // Absolute path: the daemon is a different process with a different working directory, so a relative
+            // path would resolve against ITS cwd and register a file the user never meant.
+            const QString file = QFileInfo(a[3]).absoluteFilePath();
+            const QDBusMessage r = mixer.call(QStringLiteral("AddSample"), a[2], file, name);
+            if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
+            const QString slug = r.arguments().value(0).toString();
+            if (g_json) out << QJsonDocument(QJsonObject{{"name", slug}, {"channel", a[2]}, {"path", file}}).toJson(QJsonDocument::Compact) << "\n";
+            else out << slug << "\n";
+            return Ok;
+        }
+        if (sub == "remove") {
+            if (!need(4)) return Usage;
+            const QDBusMessage r = mixer.call(QStringLiteral("RemoveSample"), a[2], a[3]);
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        if (sub == "gain") {
+            if (!need(5)) return Usage;
+            bool ok = false;
+            const double g = a[4].toDouble(&ok);
+            if (!ok) return fail(Usage, QStringLiteral("bad gain '%1' (linear, 0…4)").arg(a[4]));
+            const QDBusMessage r = mixer.call(QStringLiteral("SetSampleGain"), a[2], a[3], g);
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        return fail(Usage, "unknown subcommand '" + sub + "'");
+    }
     int cmdCell() {
         if (!need(4)) return Usage;
         const QString path = cellPath(a[2], a[3]);
@@ -1494,6 +1584,7 @@ struct Cli {
             {QStringLiteral("mix"), &Cli::cmdChannelMix},
             {QStringLiteral("fx"), &Cli::cmdFx},
             {QStringLiteral("duck"), &Cli::cmdDuck},
+            {QStringLiteral("sample"), &Cli::cmdSample},   // CT-8
             {QStringLiteral("cell"), &Cli::cmdCell},
             {QStringLiteral("app"), &Cli::cmdApp},
             {QStringLiteral("listen"), &Cli::cmdListen},

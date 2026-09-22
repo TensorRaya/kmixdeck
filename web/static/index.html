@@ -16,6 +16,8 @@
     <button role="tab" data-view="mixer" aria-selected="true">Mixer</button>
     <button role="tab" data-view="apps">Apps</button>
     <button role="tab" data-view="patchbay">Routing</button>
+    <!-- CT-8: opt-in like the scene picker above — the tab appears only once a soundboard channel exists. -->
+    <button role="tab" data-view="soundboard" hidden>Soundboard</button>
   </nav>
   <div id="hearing" data-probe="hearingBar" title="What am I hearing right now"></div>
   <button id="undo" data-probe="undoAction" hidden></button>

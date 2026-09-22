@@ -7,9 +7,10 @@ import * as Apps from "./apps.js";
 import * as Patchbay from "./patchbay.js";
 import * as Fx from "./fx.js";
 import * as Duck from "./duck.js";
+import * as Soundboard from "./soundboard.js";
 import { el, toast, button } from "./widgets.js";
 
-const VIEWS = { mixer: Mixer, apps: Apps, patchbay: Patchbay };
+const VIEWS = { mixer: Mixer, apps: Apps, patchbay: Patchbay, soundboard: Soundboard };   // CT-8
 let view = location.hash.replace("#", "") in VIEWS ? location.hash.slice(1) : "mixer";
 const main = document.getElementById("view");
 
@@ -31,8 +32,24 @@ function render() {
       main.replaceChildren(el("div", { class: "empty disconnected", probe: "disconnected" },
         el("h2", {}, "kmixdeck is not running"), el("p", {}, "The bridge is up, but the daemon is not on the bus. Start kmixdeck on the desk machine and this page picks it up by itself.")));
     } else VIEWS[view].render(main);
-    hearing(); undo(); scenes();
+    hearing(); undo(); scenes(); boardTab();   // CT-8
   });
+}
+
+// CT-8: the Soundboard tab is opt-in — hidden until a soundboard channel exists, like the scene picker. And if
+// the last board is deleted while that tab is open, fall back to the mixer instead of showing an empty page.
+function boardTab() {
+  const tab = document.querySelector('[data-view="soundboard"]');
+  if (!tab) return;
+  const da = Soundboard.hasBoard();
+  tab.hidden = !da;
+  // Only fall back once the daemon's state has actually ARRIVED. The first render happens before the first
+  // PropertiesChanged, so hasBoard() is false then for every page load — falling back on that threw anyone who
+  // opened #soundboard directly (or bookmarked it) straight back to the mixer. Measured 2026-09-22: location.hash
+  // read "#mixer" one frame after loading "#soundboard".
+  if (!da && view === "soundboard" && C.state.connected && Object.keys(C.state.objects).length) {
+    view = "mixer"; location.hash = "mixer"; render();
+  }
 }
 
 // UX-2 "what am I hearing" — device + the mixes that reach it (same data the tray shows)

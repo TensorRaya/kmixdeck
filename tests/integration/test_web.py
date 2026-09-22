@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from test_service_cli import Stack, start_fake_app, stack, make_fake_sink, make_fake_source  # noqa: E402,F401 — the fixture
 from chrome_driver import Chrome, CHROME, NO_CHROME  # noqa: E402
+from test_ports import wait_level  # noqa: E402 — CT-8 checks that a clicked pad is really audible
 
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE = ROOT / "web" / "kmixdeck-web"
@@ -602,3 +603,51 @@ def test_fx9_badge_in_the_channel_row(stack):
             assert ch.eval(_q("channelDuckBadge/voice")) is None, "nicht abgesenkter Kanal traegt ein Abzeichen"
     finally:
         web.close(); stack.cli("duck", "clear", "game")
+
+@pytest.mark.skipif(not CHROME, reason=NO_CHROME)
+def test_ct8_web_ui_plays_a_sample_and_shows_it_sounding(stack):
+    """CT-8 in the browser (rule 2: the web UI is tested, not just shipped). A real click on a pad must make
+    real audio, flip the pad to "sounding", and the CLI must agree — same state, three frontends.
+
+    The tab itself is opt-in: it must be ABSENT before a soundboard exists and appear once one does, without a
+    reload (the requirements' opt-in rule for everything added after v0.2)."""
+    slug = None
+    web = Web(stack, token="")
+    try:
+        with Chrome(web.url, size=(1280, 800)) as ch:
+            ch.wait("window.kmixdeck && window.kmixdeck.state.connected", 15)
+            # opt-in: no board yet → no tab at all
+            assert ch.eval("!!document.querySelector('[data-view=\"soundboard\"]:not([hidden])')") is False, \
+                "the soundboard tab was visible before any soundboard channel existed"
+
+            slug = stack.cli("channel", "add", "--soundboard", "Board", json_out=True)["slug"]
+            wav = Path(stack.pw.tone())          # the sandbox tone, a real decodable file
+            stack.cli("sample", "add", slug, str(wav), "--name", "jingle")
+            stack.cli("cell", "set", slug, "stream", "0dB")
+            # the tab appears by itself — the daemon's PropertiesChanged drives it, no reload
+            ch.wait("!!document.querySelector('[data-view=\"soundboard\"]:not([hidden])')", 10)
+
+            # Click the tab like a user does. The app switches views through selectView() on a tab click and does
+            # NOT listen for hashchange (measured 2026-09-22), so faking the event leaves the mixer on screen.
+            ch.eval("document.querySelector('[data-view=\"soundboard\"]').click()", False)
+            ch.wait(_q(f"samplePad:{slug}:jingle"), 10)
+            assert ch.eval(_q(f"samplePad:{slug}:jingle") + ".classList.contains('sounding')") is False
+
+            _click(ch, f"samplePad:{slug}:jingle")
+            # (a) the pad reflects the daemon's state ...
+            ch.wait(_q(f"samplePad:{slug}:jingle") + ".classList.contains('sounding')", 10)
+            # (b) ... the CLI sees the same thing ...
+            assert wait_for(lambda: stack.cli("--json", "sample", "list", slug, json_out=True)[0]["sounding"] is True, 8.0), \
+                "the CLI never saw the sample sounding after the web pad was clicked"
+            # (c) ... and it is actually AUDIBLE. A pad that lights up without sound is the bug this catches.
+            pegel = wait_level(lambda: stack.pw.level_at(f"kmixdeck.channel.{slug}"), lambda v: v > -50,
+                               what="the sample clicked in the browser")
+            assert pegel > -50, f"the pad lit up but nothing sounded ({pegel:.2f} dB)"
+
+            # clicking again stops it — one control for both directions
+            _click(ch, f"samplePad:{slug}:jingle")
+            ch.wait("!" + _q(f"samplePad:{slug}:jingle") + ".classList.contains('sounding')", 10)
+            assert wait_for(lambda: stack.cli("--json", "sample", "list", slug, json_out=True)[0]["sounding"] is False, 8.0)
+    finally:
+        if slug: stack.cli("sample", "stop", "")
+        web.close()

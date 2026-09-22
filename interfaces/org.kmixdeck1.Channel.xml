@@ -75,6 +75,8 @@
     <property name="Ducking" type="s" access="read"/>
     <!-- how much is being taken off RIGHT NOW, in dB (0 = not ducking at the moment) -->
     <property name="DuckReduction" type="d" access="read"/>
+    <!-- CT-8: "" for a normal channel, "soundboard" for a sample player. Decided at creation, never changes. -->
+    <property name="Kind" type="s" access="read"/>
     <!-- set the whole config; validates first (self-ducking, ranges, unknown trigger) and a refusal comes
          back as a D-Bus error. A METHOD, not a property write: a rejected property write cannot answer
          (calledFromDBus() is false in the setter), so it would look accepted — see rejectProperty. -->

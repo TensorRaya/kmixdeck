@@ -90,6 +90,18 @@ Kirigami.ApplicationWindow {
                 icon.name: "view-presentation"
                 visible: Mixer.scenes.length > 0
             },
+            Kirigami.Action {   // CT-8: the soundboard panel
+                // Without this the panel was reachable ONLY through `kmixdeck --open soundboard` from a shell —
+                // there was no way into it from the running window (measured 2026-09-22: nothing called
+                // soundboardPanelOpen() except main.cpp). Opt-in rule (owner 2026-09-18): absent until a
+                // soundboard channel exists, like "Recall scene" above. No children here — see the warning on
+                // recallSceneAction: a non-Action child breaks the whole QML load.
+                objectName: "soundboardAction"
+                text: i18n("Soundboard…")
+                icon.name: "media-playback-start"
+                visible: Mixer.soundboardSlugs.length > 0
+                onTriggered: applicationWindow().soundboardPanelOpen()
+            },
             Kirigami.Action {   // CT-7
                 objectName: "exportAction"
                 text: i18n("Export settings…")
@@ -500,6 +512,35 @@ Kirigami.ApplicationWindow {
     Component {
         id: duckPanelComp
         DuckPanel {}
+    }
+    // CT-8: the soundboard. One page for every board, so no slug is needed — it picks the first board itself and
+    // offers a picker when there is more than one. Same push-verification as duckPanelOpen above: pushDialogLayer
+    // swallows a non-Page silently, and the parent change is the only signal that works on desktop AND mobile.
+    function soundboardPanelOpen() {
+        const page = soundboardPanelComp.createObject(this, {})
+        if (!page) {
+            console.warn("soundboardPanelOpen: SoundboardPanel konnte nicht erzeugt werden:", soundboardPanelComp.errorString())
+            return "<SoundboardPanel: " + soundboardPanelComp.errorString() + ">"
+        }
+        const elternVorher = page.parent
+        root.pageStack.pushDialogLayer(page)
+        if (page.parent === elternVorher) {
+            console.warn("soundboardPanelOpen: pushDialogLayer hat nichts gepusht — ist die Wurzel von SoundboardPanel.qml eine Page?")
+            soundboardPushedAnker.text = "no"
+            return "<SoundboardPanel: pushDialogLayer refused the page>"
+        }
+        soundboardPushedAnker.text = "yes"
+        return ""
+    }
+    Item {
+        id: soundboardPushedAnker
+        objectName: "soundboardPanelPushed"
+        property string text: "no"
+        width: 0; height: 0
+    }
+    Component {
+        id: soundboardPanelComp
+        SoundboardPanel {}
     }
     function addDialogOpen(kind) { addDialog.open(kind) }
     // review hook (--open channel-ports): open the dialog with the first multi-port device expanded and two ports picked

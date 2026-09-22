@@ -387,6 +387,61 @@ its own. `--by` is required the first time and refuses a channel ducking itself.
 `duck clear <channel>`
 : Stop ducking and remove the ducker from the graph.
 
+## Soundboard
+
+Jingles, stingers and drops on a button (CT-8). A soundboard is a channel like any other — it has
+a fader per mix, an FX chain and a pan — so a sample obeys everything the desk already does: mute
+its cell in the guest mix and the guest simply does not hear it. The daemon plays the file itself,
+so nothing depends on a media player being installed or on which sink is default.
+
+The channel kind is opt-in: no soundboard exists until you create one, and a normal channel
+refuses sample commands.
+
+`channel add --soundboard <name>`
+: Create the board. Everything else (`channel input`, `cell`, `fx`) works on it as usual.
+> kmixdeck channel add --soundboard Board
+
+`sample add <channel> <file> [--name <n>]`
+: Register a file. wav, flac, ogg and mp3 play as they are. Without `--name` the file name
+becomes the name. The file is decoded once at registration and an unreadable one is REFUSED
+here — a button that silently does nothing is worse than an error.
+> kmixdeck sample add board ~/sounds/airhorn.wav
+> kmixdeck sample add board ~/sounds/intro.flac --name intro
+
+`sample list [<channel>]`
+: What is registered, with length and whether it is sounding right now.
+> kmixdeck sample list
+> kmixdeck --json sample list board | jq -r '.[].name'
+
+`sample play <name> [<channel>]`
+: Play it. Without a channel every board is searched, which is what a Stream Deck or Home
+Assistant button uses. Several samples can sound at once, and the same one can overlap itself.
+> kmixdeck sample play airhorn
+
+`sample stop [<name>]`
+: Stop that sample; without a name everything that is sounding stops.
+> kmixdeck sample stop airhorn
+> kmixdeck sample stop
+
+`sample gain <channel> <name> <linear>`
+: Per-sample trim (0…4) so a quiet jingle can be lifted without touching the fader.
+> kmixdeck sample gain board intro 1.5
+
+`sample remove <channel> <name>`
+: Unregister it. A voice still sounding is stopped.
+
+In the KDE app the board lives behind **Soundboard…** in the hamburger menu; the
+entry appears as soon as a board exists and the panel shows one pad per sample,
+highlighted while it sounds. The tray popover has a **Sample** button that fires
+a sample without opening the window — that is the one for a live show. The web UI
+has a **Soundboard** tab with the same pads, reachable at `#soundboard`.
+
+A sample runs through the channel's FX chain, not past it: switch a chain on while
+a sample is playing and the daemon restarts the voice on the chain's input, so what
+you hear matches what the channel says (measured: a −60 dB gate takes a sounding
+sample from −24,27 dB to silence). Stopping by hand is announced to every
+frontend, so a pad never keeps looking like it plays.
+
 ## Scenes
 
 A scene stores the *mix state* — every cell level and mute, plus per-mix level,

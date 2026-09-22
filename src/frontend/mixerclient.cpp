@@ -121,6 +121,16 @@ void MixerClient::absorb(const QString &path, const QString &iface, const QVaria
             for (auto it = d.cbegin(); it != d.cend(); ++it) m_inputDevices.insert(it.key(), it.value());
             Q_EMIT inputDevicesChanged();
         }
+        if (rawProps.contains(QStringLiteral("Samples"))) {   // CT-8
+            // aa{sv} — needs rawProps and qdbus_cast like DevicePorts below, because the demarshalled QVariant
+            // would otherwise stay a QDBusArgument and every field would read empty.
+            QVariant v = rawProps.value(QStringLiteral("Samples"));
+            if (v.userType() == qMetaTypeId<QDBusVariant>()) v = v.value<QDBusVariant>().variant();
+            const QList<QVariantMap> rows = qdbus_cast<QList<QVariantMap>>(v);
+            QVariantList neu;
+            for (const auto &r : rows) neu.append(r);
+            if (neu != m_samples) { m_samples = neu; Q_EMIT samplesChanged(); }
+        }
         if (rawProps.contains(QStringLiteral("DevicePorts"))) {   // ADR 0009 D4
             QVariant v = rawProps.value(QStringLiteral("DevicePorts"));
             if (v.userType() == qMetaTypeId<QDBusVariant>()) v = v.value<QDBusVariant>().variant();
@@ -696,4 +706,68 @@ bool kmixdeck::frontend::MixerClient::setDucking(const QString &slug, const QVar
 bool kmixdeck::frontend::MixerClient::fxEnabled(const QString &kind, const QString &slug) const {
     const QJsonObject o = QJsonDocument::fromJson(fxChain(kind, slug).toUtf8()).object();
     return o.value(QStringLiteral("enabled")).toBool(true) && !o.value(QStringLiteral("chain")).toArray().isEmpty();
+}
+
+// ---- CT-8 soundboard --------------------------------------------------------------------------------------
+// All of these block and return a result, like setDucking above and for the same reason: the panel puts the
+// daemon's refusal on screen. callReportingErrors() is async and returns void — with it, an unreadable file
+// would look registered until the next property update contradicted it.
+namespace {
+QDBusMessage callMixer(const QString &method, const QVariantList &args) {
+    QDBusInterface iface(kmixdeck::frontend::BUS, kmixdeck::frontend::ROOT,
+                         QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
+    return iface.callWithArgumentList(QDBus::Block, method, args);
+}
+}   // namespace
+
+QVariantList kmixdeck::frontend::MixerClient::samples(const QString &channel) const {
+    if (channel.isEmpty()) return m_samples;
+    QVariantList out;
+    for (const QVariant &v : m_samples)
+        if (v.toMap().value(QStringLiteral("channel")).toString() == channel) out.append(v);
+    return out;
+}
+bool kmixdeck::frontend::MixerClient::isSoundboard(const QString &slug) const {
+    return m_channels.value(slug).value(QStringLiteral("Kind")).toString() == QLatin1String("soundboard");
+}
+// CT-8: every soundboard channel in layout order — the window's "Soundboard…" action and the panel's board picker
+// both need the LIST, not a per-slug question, and a binding needs a property (a Q_INVOKABLE is evaluated once).
+QStringList kmixdeck::frontend::MixerClient::soundboardSlugs() const {
+    QStringList out;
+    const QStringList alle = channelSlugs();
+    for (const QString &s : alle) if (isSoundboard(s)) out << s;
+    return out;
+}
+QString kmixdeck::frontend::MixerClient::addSoundboard(const QString &name) {
+    const QDBusMessage r = callMixer(QStringLiteral("AddSoundboard"), {name});
+    if (r.type() == QDBusMessage::ErrorMessage) { m_lastError = r.errorMessage(); Q_EMIT lastErrorChanged(); return {}; }
+    m_lastError.clear();
+    return r.arguments().value(0).value<QDBusObjectPath>().path().section(QLatin1Char('/'), -1);
+}
+QString kmixdeck::frontend::MixerClient::addSample(const QString &channel, const QString &path, const QString &name) {
+    const QDBusMessage r = callMixer(QStringLiteral("AddSample"), {channel, path, name});
+    if (r.type() == QDBusMessage::ErrorMessage) { m_lastError = r.errorMessage(); Q_EMIT lastErrorChanged(); return {}; }
+    m_lastError.clear();
+    return r.arguments().value(0).toString();
+}
+bool kmixdeck::frontend::MixerClient::removeSample(const QString &channel, const QString &name) {
+    const QDBusMessage r = callMixer(QStringLiteral("RemoveSample"), {channel, name});
+    if (r.type() == QDBusMessage::ErrorMessage) { m_lastError = r.errorMessage(); Q_EMIT lastErrorChanged(); return false; }
+    m_lastError.clear(); return true;
+}
+bool kmixdeck::frontend::MixerClient::playSample(const QString &channel, const QString &name) {
+    // PlaySampleOn: the name is unique per board, not globally — a pad must never fire another board's sample.
+    const QDBusMessage r = callMixer(QStringLiteral("PlaySampleOn"), {channel, name});
+    if (r.type() == QDBusMessage::ErrorMessage) { m_lastError = r.errorMessage(); Q_EMIT lastErrorChanged(); return false; }
+    m_lastError.clear(); return true;
+}
+bool kmixdeck::frontend::MixerClient::stopSample(const QString &name) {
+    const QDBusMessage r = callMixer(QStringLiteral("StopSample"), {name});
+    if (r.type() == QDBusMessage::ErrorMessage) { m_lastError = r.errorMessage(); Q_EMIT lastErrorChanged(); return false; }
+    m_lastError.clear(); return true;
+}
+bool kmixdeck::frontend::MixerClient::setSampleGain(const QString &channel, const QString &name, double gain) {
+    const QDBusMessage r = callMixer(QStringLiteral("SetSampleGain"), {channel, name, gain});
+    if (r.type() == QDBusMessage::ErrorMessage) { m_lastError = r.errorMessage(); Q_EMIT lastErrorChanged(); return false; }
+    m_lastError.clear(); return true;
 }

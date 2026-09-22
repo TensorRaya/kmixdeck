@@ -34,6 +34,19 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     // No extra stream: these are the same peaks the levels API already publishes 25x/s.
     connect(&m_meters, &pw::Meters::peaks, this, [this](const QHash<QString, float> &p) { m_lastPeaks = p; tickDucking(); });
 
+    // CT-8: a sample that ran to its end tears itself down in the Sampler's reaper. Forward that as a state
+    // change so a UI can un-highlight the button without polling — the channel is looked up here because the
+    // Sampler deliberately knows nothing about the layout.
+    connect(&m_sampler, &pw::Sampler::finished, this, [this](const QString &name, quint32) {
+        QString channel;
+        for (const auto &c : m_layout.channels) {
+            if (!c.isSoundboard()) continue;
+            for (const auto &s : c.samples) if (s.name == name) { channel = c.slug; break; }
+            if (!channel.isEmpty()) break;
+        }
+        Q_EMIT sampleStateChanged(channel, name, false);
+    });
+
     QObject::connect(&m_graph, &pw::Graph::nodeAdded,   this, &Mixer::onNode);
     QObject::connect(&m_graph, &pw::Graph::nodeChanged, this, &Mixer::onNode);
     QObject::connect(&m_graph, &pw::Graph::nodeRemoved, this, &Mixer::onNodeRemoved);
@@ -480,11 +493,50 @@ void Mixer::applyFx(const QString &slug) {
     }
     // the module's node appears asynchronously — retarget the remembered streams once it is there
     retargetWhenPresent(entry, streams, 40);
+    // CT-8: a sampler voice cannot be retargeted. It is created with node.dont-reconnect + node.dont-fallback
+    // (like the meter streams), and the PipeWire docs are explicit: "The node is initially linked to
+    // target.object ... If the target is removed, the node is destroyed" — moveStream() only rewrites
+    // WirePlumber's target.object metadata, which such a stream ignores. So a sample that is already sounding
+    // when the chain is switched would keep bypassing it (measured 2026-09-22: a gate that must silence it moved
+    // the level from -24.12 to -24.18 dB, i.e. not at all). Restart those voices against the new entry node.
+    restartSoundingSamples(slug);
 }
 // Poll (registry events are what fill m_graph) until `entry` exists, then move the streams onto it.
 // FX-6: an output edge captures Layout::mixExit(), so turning a mix chain on or off changes its source.
 // A loopback cannot be re-pointed at a different capture target (node.target is read at load time), so the
 // edges of THIS mix are dropped and ensureEdgeLoopbacks() recreates them against the new exit node.
+// CT-8: replay every sample that is sounding on this channel, so it enters through the CURRENT entry node
+// (kmixdeck.fx.<slug> with an active chain, the plain sink without one). Position is not preserved — a jingle is
+// 2-8 seconds and restarting it is honest and audible, whereas silently bypassing the chain is not.
+void Mixer::restartSoundingSamples(const QString &slug, int triesLeft) {
+    const auto *c = m_layout.channel(slug);
+    if (!c || !c->isSoundboard()) return;
+    const QStringList klingende = m_sampler.sounding();
+    if (klingende.isEmpty()) return;
+    // The filter-chain module creates its node ASYNCHRONOUSLY, so right after applyFx() the entry does not exist
+    // yet and fxTarget() would still answer "plain sink" — measured 2026-09-22: the restart logged
+    // "into kmixdeck.channel.board" and the gate stayed inaudible. Wait for the node exactly like
+    // retargetWhenPresent() does, then replay.
+    const auto *cc = m_layout.channel(slug);
+    const QString wanted = (cc && cc->fx.isActive()) ? QStringLiteral("kmixdeck.fx.%1").arg(slug) : Names::channelNode(slug);
+    if (wanted != Names::channelNode(slug) && !m_graph.node(wanted)) {
+        if (triesLeft > 0) { QTimer::singleShot(50, this, [this, slug, triesLeft] { restartSoundingSamples(slug, triesLeft - 1); }); return; }
+        qCWarning(lcMixer) << "fx: entry" << wanted << "never appeared; sounding samples keep the plain sink";
+        return;
+    }
+    const QString entry = wanted;
+    for (const auto &name : klingende) {
+        const LayoutSample *s = nullptr;
+        for (const auto &cand : c->samples) if (cand.name == name) { s = &cand; break; }
+        if (!s) continue;   // sounding on a different board
+        m_sampler.stop(name);
+        QString why;
+        if (!m_sampler.play(s->name, s->path, entry, float(s->gain), &why))
+            qCWarning(lcMixer) << "fx: could not restart sample" << name << "on" << entry << ":" << why;
+        else
+            qCInfo(lcMixer) << "fx: restarted sample" << name << "into" << entry << "(chain changed while sounding)";
+    }
+}
 void Mixer::rebuildMixOutputEdges(const QString &slug, int triesLeft) {
     const auto *mx = m_layout.mix(slug);
     if (!mx) return;
@@ -1445,6 +1497,129 @@ bool Mixer::removeVirtualDevice(const QString &slug) {
     return true;
 }
 QStringList Mixer::virtualDeviceSlugs() const { QStringList l; for (const auto &v : m_layout.virtualDevices) l << v.slug; return l; }
+QString Mixer::addSoundboard(const QString &displayName, QString *error) {   // CT-8
+    const QString slug = addChannel(displayName, error);
+    if (slug.isEmpty()) return slug;
+    if (auto *c = m_layout.channel(slug)) c->kind = QStringLiteral("soundboard");
+    saveLayout();
+    Q_EMIT layoutChanged();
+    return slug;
+}
+
+// ---- CT-8 soundboard -----------------------------------------------------------------------------------------
+// A soundboard channel needs NO special treatment in reconcile(): it is an ordinary channel sink, and the
+// Sampler plays into that sink. That is the whole point — FX chain, pan, trim and every per-mix cell apply to
+// a sample exactly as they do to a microphone, without one line of routing code knowing about samples.
+QStringList Mixer::soundboardSlugs() const {
+    QStringList l;
+    for (const auto &c : m_layout.channels) if (c.isSoundboard()) l << c.slug;
+    return l;
+}
+
+QString Mixer::samplesJson(const QString &channel) const {
+    const auto *c = m_layout.channel(channel);
+    if (!c || !c->isSoundboard()) return {};
+    const QStringList live = m_sampler.sounding();
+    QJsonArray a;
+    for (const auto &s : c->samples)
+        a.append(QJsonObject{{QStringLiteral("name"), s.name}, {QStringLiteral("path"), s.path},
+                             {QStringLiteral("length"), s.length}, {QStringLiteral("gain"), s.gain},
+                             {QStringLiteral("sounding"), live.contains(s.name)}});
+    return QString::fromUtf8(QJsonDocument(a).toJson(QJsonDocument::Compact));
+}
+
+QString Mixer::addSample(const QString &channel, const QString &path, const QString &name, QString *error) {
+    auto fail = [&](const QString &why) -> QString { if (error) *error = why; return {}; };
+    auto *c = m_layout.channel(channel);
+    if (!c) return fail(QStringLiteral("no channel '%1'").arg(channel));
+    if (!c->isSoundboard()) return fail(QStringLiteral("channel '%1' is not a soundboard").arg(channel));
+    const QString slug = name.isEmpty() ? Names::slugify(QFileInfo(path).completeBaseName()) : Names::slugify(name);
+    if (slug.isEmpty()) return fail(QStringLiteral("name has no usable characters"));
+    for (const auto &s : c->samples) if (s.name == slug) return fail(QStringLiteral("sample '%1' already exists").arg(slug));
+    // Probe BEFORE storing. A soundboard whose button is silent because the file is a text file, is missing or
+    // needs a codec nobody installed is the worst possible failure mode: it fails live, on air, silently.
+    const auto p = pw::Sampler::probe(path);
+    if (!p.error.isEmpty()) return fail(p.error);
+    LayoutSample s;
+    s.name = slug; s.path = path; s.length = p.length;
+    c->samples.push_back(s);
+    saveLayout();
+    Q_EMIT layoutChanged();
+    qCInfo(lcMixer).noquote() << QStringLiteral("CT-8: registered sample '%1' on %2 (%3 s, %4 Hz, %5 ch)")
+                                    .arg(slug, channel).arg(p.length, 0, 'f', 2).arg(p.rate).arg(p.channels);
+    return slug;
+}
+
+bool Mixer::removeSample(const QString &channel, const QString &name) {
+    auto *c = m_layout.channel(channel);
+    if (!c || !c->isSoundboard()) return false;
+    const auto before = c->samples.size();
+    c->samples.removeIf([&](const LayoutSample &s) { return s.name == name; });
+    if (c->samples.size() == before) return false;
+    m_sampler.stop(name);   // a voice of a sample that no longer exists would play on with nothing to stop it
+    saveLayout();
+    Q_EMIT layoutChanged();
+    return true;
+}
+
+bool Mixer::setSampleGain(const QString &channel, const QString &name, double gain) {
+    auto *c = m_layout.channel(channel);
+    if (!c || !c->isSoundboard()) return false;
+    for (auto &s : c->samples)
+        if (s.name == name) {
+            s.gain = std::clamp(gain, 0.0, 4.0);
+            saveLayout();
+            Q_EMIT layoutChanged();
+            return true;
+        }
+    return false;
+}
+
+// CT-8/ADR 0008: where audio must ENTER a channel. With an active chain that is kmixdeck.fx.<slug>; without one
+// (or before the node exists) it is the plain sink. Used by the sampler so a sample takes the same path as an app.
+QString Mixer::fxTarget(const QString &slug) const {
+    const auto *c = m_layout.channel(slug);
+    if (c && c->fx.isActive()) {
+        const QString entry = QStringLiteral("kmixdeck.fx.%1").arg(slug);
+        if (m_graph.node(entry)) return entry;
+    }
+    return Names::channelNode(slug);
+}
+quint32 Mixer::playSample(const QString &name, const QString &channel, QString *error) {
+    auto fail = [&](const QString &why) -> quint32 { if (error) *error = why; return 0; };
+    // Find the sample. With no channel given, every soundboard is searched — that is what makes the required
+    // `Mixer.PlaySample(name)` usable from Home Assistant or a Stream Deck button, which know a name, not a slug.
+    const LayoutChannel *found = nullptr;
+    const LayoutSample *sample = nullptr;
+    for (const auto &c : m_layout.channels) {
+        if (!c.isSoundboard()) continue;
+        if (!channel.isEmpty() && c.slug != channel) continue;
+        for (const auto &s : c.samples) if (s.name == name) { found = &c; sample = &s; break; }
+        if (sample) break;
+    }
+    if (!sample) {
+        const QStringList boards = soundboardSlugs();
+        if (boards.isEmpty())
+            return fail(QStringLiteral("no soundboard channel exists — add one first (kmixdeck channel add --soundboard <name>)"));
+        return fail(channel.isEmpty() ? QStringLiteral("no sample '%1' on any soundboard (%2)").arg(name, boards.join(QStringLiteral(", ")))
+                                      : QStringLiteral("no sample '%1' on '%2'").arg(name, channel));
+    }
+    QString why;
+    // ADR 0008: a channel WITH an active chain is entered through kmixdeck.fx.<slug> — the plain sink sits BEHIND
+    // the chain. Targeting the plain sink unconditionally made the sample bypass the channel's effects silently
+    // (measured 2026-09-22: -24.18 dB without fx vs -24.15 dB with a -12 dB eq — no audible difference at all),
+    // which contradicts the spec's "samples play through the channel's FX chain". Same rule the app router
+    // follows in slugForSinkId() above.
+    const QString entry = fxTarget(found->slug);
+    const quint32 voice = m_sampler.play(sample->name, sample->path, entry, float(sample->gain), &why);
+    if (!voice) return fail(why);
+    Q_EMIT sampleStateChanged(found->slug, sample->name, true);
+    return voice;
+}
+
+int Mixer::stopSample(const QString &name) { return m_sampler.stop(name); }
+QStringList Mixer::soundingSamples() const { return m_sampler.sounding(); }
+
 QString Mixer::addMix(const QString &displayName, QString *error) {
     const QString slug = Names::slugify(displayName);
     if (slug.isEmpty()) { if (error) *error = QStringLiteral("name has no usable characters"); return {}; }

@@ -61,6 +61,18 @@ struct DeviceRef {
 /// lack; a NEWER file is moved aside and the daemon starts fresh (Layout::load) — never read-as-old and saved back.
 constexpr int kLayoutVersion = 2;
 
+/// CT-8: one registered soundboard sample. `name` is the slug the bus and the CLI address it by, `path` the
+/// file on disk, `length` its duration in seconds as the decoder reported it (0 = unknown/unreadable at
+/// registration time), `gain` a linear per-sample trim so a quiet jingle can be brought up without touching
+/// the channel fader.
+struct LayoutSample {
+    QString name;
+    QString path;
+    double length = 0.0;
+    double gain = 1.0;
+    QJsonObject toJson() const;
+    static LayoutSample fromJson(const QJsonObject &o);
+};
 struct LayoutChannel {
     QString slug, name, icon;
     fx::Chain fx;
@@ -76,6 +88,13 @@ struct LayoutChannel {
     double duckAttack = 10.0;     // ms
     double duckRelease = 300.0;   // ms
     double duckThreshold = -40.0; // dBFS the trigger channel must exceed before ducking starts
+    // CT-8: a channel of kind "soundboard" plays registered samples into the graph on demand. Empty (= "input",
+    // the normal channel) by default, because the requirement makes the kind opt-in: no soundboard exists until
+    // the user adds one. 🔴 New fields belong at the END of this struct — Layout::fromJson builds channels with
+    // a POSITIONAL braced initialiser, so inserting one in the middle silently shifts every value after it.
+    QString kind;                 // "" / "input" = normal channel, "soundboard" = CT-8
+    QVector<LayoutSample> samples;// CT-8: registered samples, only ever non-empty on a soundboard channel
+    bool isSoundboard() const { return kind == QLatin1String("soundboard"); }
     static LayoutChannel make(const QString &slug, const QString &name, const QString &icon = {}) { LayoutChannel c; c.slug = slug; c.name = name; c.icon = icon; return c; }
 };
 /// A physical input feeding a channel (mic, capture card, BT headset mic) — ADR 0007 D2.
