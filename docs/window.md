@@ -37,6 +37,13 @@ in 1280 px; columns share the width instead of scrolling.
 
 **Undo** (Ctrl+Z, or the toolbar arrow) restores the last removed channel or mix with its cells, outputs and FX.
 
+**Loudness (EBU R128).** Switch it on per mix in the column's ⋮ menu → *Loudness meter (EBU R128)*. The column header then
+reads **M** (momentary, 400 ms) · **S** (short-term, 3 s) · **I** (integrated, since the meter was switched on), all in LUFS,
+and the mix meter grows a dashed **target line**. *Loudness target…* in the same menu offers −14 LUFS (streaming), −16, −18,
+−23 (EBU R128 broadcast) and −9; the default is **−14**. `−70` means silence, not a reading. The integrated value is
+cumulative — it keeps its number after the audio stops, while M and S fall back to `−70`. The *Stream* mix has the meter on
+out of the box, because that is the one mix whose loudness a streamer is judged by.
+
 ## Other pages
 
 **Applications.** Every stream with icon, live level and running state; assign it to one or several channels with chips.
@@ -47,6 +54,11 @@ Where never-seen apps land is the *default channel* (⋮ on a channel → "Defau
 **Patchbay.** Sources → channels → mixes → outputs with wires drawn; drag jack to jack to wire, click a wire for per-wire trim,
 mute and remove. A 32-in/32-out interface (Ui24R class) shows all its ports; each port can be a channel of its own.
 
+**Soundboard.** Pads in a grid, one per sample. *Add sample…* takes a file from disk, *Stop all* silences every playing pad,
+and a board picker switches between boards when you keep more than one. Each pad has its own gain slider and a remove button.
+A pad plays **into the daemon's graph** as a channel of its own, so the sample lands in the stream and in your headphones like
+any other source — not through a second player that only you hear.
+
 **FX** (panel from any FX button). Ordered insert chain per channel or mix: catalog, presets, bypass, live sliders. LADSPA
 effects (noise suppression, gate, compressor) appear when the plugin library is installed; builtin ones always.
 
@@ -56,10 +68,18 @@ effects (noise suppression, gate, compressor) appear when the plugin library is 
 or "empty (apps only)". *Set up defaults…* — the first-run plan again. *Hidden devices…* — devices you have hidden from every
 picker (still routable by name). *Export settings…* / *Import settings…* — backup and restore of layout + every level.
 
+*Save scene…* stores every level and mute under a name. *Recall scene (n)* appears **only once you have saved one** and lists
+them; recall is a single undoable pass. A scene is deliberately independent of the channel set and the wiring, so it still
+fits after a rename or a repatch. *Soundboard…* likewise appears only once a soundboard channel exists. That is the house
+rule for everything added after v0.2: the feature is absent until you switch it on, and the switch is the one control that
+is always visible.
+
 ## Tray
 
 A StatusNotifierItem while the window runs: click for the overview — listening device, how many apps are playing, every mix
-with its level, one-click listen switch. Middle-click mutes the listening mix.
+with its level, one-click listen switch. Middle-click mutes the listening mix. A mix with the loudness meter on also shows
+its integrated value against the target (`−18.3 LUFS / target −14`), coloured green once the target is reached — the
+one-glance answer mid-stream without opening the window.
 
 ## Global shortcuts
 

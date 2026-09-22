@@ -571,8 +571,16 @@ side by side.
 # FILES
 
 
-`~/.config/kmixdeckrc`
-: Layout and levels, written by the daemon.
+`~/.config/kmixdeck/layout.json`
+: Channels, mixes, cells, levels, FX chains, scenes — everything the daemon
+  restores on start. Plain JSON, written atomically on every edit. Edit it while
+  the daemon runs and the change is applied within a second, without a restart:
+  the graph reconciles and every frontend redraws. A file that does not parse is
+  refused and the running layout stays (the daemon says so in its log).
+
+`~/.config/pipewire/pipewire.conf.d/90-kmixdeck.conf`
+: The generated PipeWire fragment. Regenerated from the layout on every edit, so
+  the graph comes back after a reboot even with no kmixdeck process running.
 
 `interfaces/*.xml`
 : The D-Bus interface definitions the `--json` property names come from.

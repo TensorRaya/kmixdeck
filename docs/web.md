@@ -48,6 +48,21 @@ removal.
 **Apps.** Every application stream with its live level and running state; tap a channel chip to assign, tap again to
 remove. Several chips = the app plays into several channels (first = primary).
 
+**Loudness (EBU R128).** Per mix, from the column's ⋮ menu → *Loudness meter*. The header then shows **M** · **S** · **I**
+in LUFS plus the true peak (`TP`), refreshed from the same 25 Hz loop as the meters, and the master meter gets a dashed
+target line. *Loudness target…* asks for a number between −40 and 0 (−14 streaming, −23 EBU R128 broadcast) — the window
+offers a fixed list of five instead, the daemon accepts the same range from both. A reading of `–` means silence
+(below −70); **I** keeps its value after the audio stops, M and S fall back.
+
+**Soundboard.** A tab of pads, one per sample. *+ Sample* adds a file, *Stop all* silences the board, *×* removes a pad.
+A soundboard is itself a channel that plays files, so the samples go through the daemon's graph into the stream and your
+headphones — the tab only exists once such a channel exists.
+
+**Scenes.** The toolbar carries a *scene* picker and a save button. Saving stores every fader, mute, the listening device and
+the FX bypass states under a name; picking one recalls it in a single undoable pass. The picker reads `no scenes` until you
+have saved one. A scene deliberately does not carry the channel/mix set or the wiring, so it still fits after a rename or a
+repatch.
+
 **Patchbay.** Three columns — sources → channels → mixes → outputs — with every wire drawn. Drag from a jack to a jack to
 create a wire; click a wire for per-wire trim, mute and remove. Devices that are unplugged stay in place, greyed.
 
