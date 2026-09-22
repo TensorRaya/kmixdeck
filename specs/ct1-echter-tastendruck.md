@@ -52,8 +52,9 @@ Gemessen mit `xev -root`: 15 Ereignisse, Keycode 75 = F9, state `0xd` =
 Ctrl+Shift+Alt.
 
 **Was damit weiterhin NICHT geprüft ist:** alles unterhalb von X — USB/HID,
-evdev, libinput — und der Wayland-Pfad durch KWin. Deshalb bleibt CT-1 auf 🔶,
-nicht auf ✅. Ein einziger echter Tastendruck des Betreibers schließt die Lücke.
+evdev, libinput — und der Wayland-Pfad durch KWin. Den Wayland-Pfad schließt der
+Abschnitt [Wayland: KWin hält die Taste selbst](#wayland-kwin-hält-die-taste-selbst);
+USB/HID, evdev und libinput bleiben außerhalb jedes automatischen Tests.
 
 ## Befund: kglobalacceld 6.6.5 stürzt in setShortcutKeys ab
 
@@ -114,6 +115,65 @@ Nachweis, dass der Grab wirklich sitzt, statt nur die Datei zu glauben:
 die Datei — und ein Lauf, der „passed" sagt, hat dann nichts geprüft. Deshalb
 steht in CONTRIBUTING.md der einmalige Blick auf `ctest -R shortcuts -V`:
 `3 passed`, nicht `3 skipped`.
+
+## Wayland: KWin hält die Taste selbst
+
+Nachtrag 2026-09-22, abends. CT-1 fordert ausdrücklich Wayland, und dort gibt es
+kein separates kglobalacceld: `kwin_wayland` bringt `libkglobalacceld0` mit und
+übernimmt `org.kde.kglobalaccel` selbst. Gemessen mit `busctl --user list`, die
+PID hinter dem Namen ist die von `kwin_wayland`. Der X11-Test oben prüft also eine
+Komponente, die es in einer Wayland-Sitzung gar nicht gibt.
+
+`tests/integration/test_shortcuts_wayland.py`, ctest-Eintrag
+`integration-shortcuts_wayland`:
+
+    kwin-fake-key  ->  KWin 6.6.6 (org_kde_kwin_fake_input)  ->  Eingabeumleitung
+        ->  Shortcut-Filter  ->  kmixdeck-kde (Wayland-Client)
+        ->  org.kmixdeck1.Channel.ToggleMute  ->  kmixdeckd  ->  PipeWire node mute
+
+KWin läuft privat mit `--virtual` (ohne GPU, ohne Sitzung), liest dasselbe
+`kglobalshortcutsrc` und meldet im Log, was es tut:
+
+    Loading group  "kmixdeck"
+    Registering key "Ctrl+Alt+Shift+F9" for "kmixdeck" : "mute-channel-game"
+    Processed key "Ctrl+Alt+Shift+F9" , current sequence "Ctrl+Alt+Shift+F9" = "mute-channel-game"
+
+Drei Tests, ≈ 10 s, 3 von 3 Läufen grün. Zwei Gegenproben, beide rot, bevor ich
+den Test gezählt habe:
+
+| Sabotage | Ergebnis |
+|---|---|
+| Positivtest drückt F10 statt F9 | rot — `PipeWire mute changing from False did not happen within 5s` |
+| Gegentest drückt F9 statt F10 | rot — `an unassigned key changed the mute state` |
+
+### Drei Wege, die nicht gingen
+
+| Weg | Ergebnis | Warum |
+|---|---|---|
+| `ydotool` über `/dev/uinput` | `rc=0`, keine Wirkung, KWin loggt nichts | `--virtual` hat kein libinput; uinput-Geräte sieht es nie |
+| `wtype` | `Compositor does not support the virtual keyboard protocol` | KWin 6.6 bietet `zwp_virtual_keyboard_v1` nicht an |
+| `fake_input` ohne Freigabe | `compositor offers no org_kde_kwin_fake_input` | KWin zeigt eingeschränkte Schnittstellen nur Clients, deren `.desktop`-Datei sie in `X-KDE-Wayland-Interfaces` nennt |
+
+Den dritten Fall hatte ich in der Sondierung nicht gesehen, weil dort — ohne dass
+es mir auffiel — `KWIN_WAYLAND_NO_PERMISSION_CHECKS=1` gesetzt war. Der Test im
+Repo lief ohne und war 3 von 3 rot, in 4 s. Jetzt setzt ihn der Test für seinen
+privaten Compositor ausdrücklich, mit Begründung im Code; die Sitzung des
+Benutzers berührt das nicht.
+
+`org_kde_kwin_fake_input` ist KWins eigener Weg für synthetische Eingabe. Die Tasten gehen in
+dieselbe Eingabeumleitung wie die einer Tastatur; der Shortcut-Filter kann sie
+nicht unterscheiden. Der Helfer `tests/tools/kwin-fake-key.c` (≈ 60 Zeilen) wird
+aus `plasma-wayland-protocols/fake-input.xml` per `wayland-scanner` gebaut und nie
+installiert.
+
+### Was jetzt noch nicht getestet ist
+
+USB/HID, evdev und libinput — die Kernel- und Treiberschichten **unter** dem
+Compositor. kmixdeck enthält und konfiguriert keine davon; sie gehören zum System,
+nicht zur Software unter Test. Mit KWins `--virtual`-Backend sind sie nicht
+erreichbar, und ein DRM-Backend mit echtem Seat bräuchte eine grafische Sitzung.
+CT-1 steht damit auf ✅: die Anforderung „MUST work on Wayland, via KGlobalAccel"
+ist bis zur Grenze des Compositors bewiesen.
 
 ## Nebenbefund, schwerer als CT-1 selbst: eine Suite lief in keinem Gate
 

@@ -165,6 +165,40 @@ if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMP
     else()
         message(STATUS "CT-1 shortcut test disabled (need Xvfb and xdotool)")
     endif()
+
+    # CT-1 unter Wayland: dieselbe Kette, aber KWin statt X+kglobalacceld. Unter Wayland haelt
+    # kwin_wayland selbst org.kde.kglobalaccel; die Taste kommt ueber KWins eigenes Protokoll fuer
+    # synthetische Eingabe (org_kde_kwin_fake_input) und laeuft durch dieselbe Eingabeumleitung und
+    # denselben Shortcut-Filter wie eine echte Tastatur. Warum nicht ydotool/wtype: KWin --virtual hat
+    # kein libinput (uinput-Tasten kommen nie an), und KWin 6.6 bietet zwp_virtual_keyboard_v1 nicht an —
+    # beides gemessen 2026-09-22. Der Helfer kwin-fake-key wird nur gebaut, nie installiert.
+    find_program(KWIN_WAYLAND_EXECUTABLE kwin_wayland)
+    find_program(WAYLAND_SCANNER_EXECUTABLE wayland-scanner)
+    find_package(PlasmaWaylandProtocols QUIET)
+    pkg_check_modules(WaylandClient QUIET IMPORTED_TARGET wayland-client)
+    if(KWIN_WAYLAND_EXECUTABLE AND WAYLAND_SCANNER_EXECUTABLE AND PlasmaWaylandProtocols_FOUND AND WaylandClient_FOUND)
+        enable_language(C)   # wayland-scanner erzeugt C; das Hauptprojekt bleibt CXX-only
+        set(_fake_xml ${PLASMA_WAYLAND_PROTOCOLS_DIR}/fake-input.xml)
+        set(_fake_h ${CMAKE_CURRENT_BINARY_DIR}/fake-input-client-protocol.h)
+        set(_fake_c ${CMAKE_CURRENT_BINARY_DIR}/fake-input-protocol.c)
+        add_custom_command(OUTPUT ${_fake_h} ${_fake_c}
+            COMMAND ${WAYLAND_SCANNER_EXECUTABLE} client-header ${_fake_xml} ${_fake_h}
+            COMMAND ${WAYLAND_SCANNER_EXECUTABLE} private-code ${_fake_xml} ${_fake_c}
+            DEPENDS ${_fake_xml} VERBATIM)
+        add_executable(kwin-fake-key tools/kwin-fake-key.c ${_fake_c} ${_fake_h})
+        set_source_files_properties(${_fake_c} PROPERTIES LANGUAGE C)
+        target_include_directories(kwin-fake-key PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+        target_link_libraries(kwin-fake-key PRIVATE PkgConfig::WaylandClient)
+        set_target_properties(kwin-fake-key PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+                                                       LINKER_LANGUAGE C)
+        add_test(NAME integration-shortcuts_wayland
+            COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_shortcuts_wayland.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
+        set_tests_properties(integration-shortcuts_wayland PROPERTIES TIMEOUT 600 LABELS "integration")
+    else()
+        message(STATUS "CT-1 Wayland shortcut test disabled (need kwin_wayland, wayland-scanner, "
+                       "plasma-wayland-protocols, wayland-client)")
+    endif()
 else()
     message(STATUS "Integration tests disabled (need pytest, pipewire, wireplumber, ffmpeg)")
 endif()

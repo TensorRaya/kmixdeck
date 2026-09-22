@@ -114,6 +114,9 @@ Rules for such tests:
   the real `kglobalacceld` (Debian/Ubuntu: `apt install xvfb xdotool kglobalacceld`; the binary lands in
   `/usr/lib/<triplet>/libexec/`, not on `$PATH`). Without them the file skips and the run still says "passed" —
   so after a fresh checkout check `ctest -R shortcuts -V` once and look for `3 passed`, not `3 skipped`.
+  The Wayland twin `integration-shortcuts_wayland` needs `kwin_wayland` plus the build-time pieces for its
+  key helper (`apt install kwin-wayland plasma-wayland-protocols libwayland-dev`); without them CMake does not
+  register it and says so in its status output (`CT-1 Wayland shortcut test disabled …`).
 - **Do not build or run daemons in the tree while ctest runs.** Half of today's red runs were self-inflicted.
   This includes "isolated" A/B comparisons: on 2026-09-21 I ran three suites "alone" while a full gate was
   running next to them (load 8.3–11.0). Both sides were oversubscribed, so the green proved nothing. Before any
