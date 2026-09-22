@@ -72,6 +72,14 @@ set_tests_properties(dbus-doc-vollstaendig PROPERTIES LABELS "fast")
 add_test(NAME doku-abschnitte COMMAND python3 ${CMAKE_SOURCE_DIR}/docs/generiere-doku.py pruefen)
 set_tests_properties(doku-abschnitte PROPERTIES LABELS "fast")
 
+# Review v0.4 (2026-09-22): jeder interne Doku-Link zeigt auf eine existierende Datei UND eine
+# existierende Ueberschrift. README verwies auf `docs/cli.md#scenes` — Datei da, Abschnitt nicht
+# (cli.md ist seit CL-1 nur ein Zeiger auf kmixdeck.md, der Anker wurde beim Umzug nicht
+# mitgeprueft). Ein toter Anker springt im Browser stumm an den Dateianfang; gefunden wurde er
+# nur durch Nachschlagen jedes einzelnen Links von Hand. Genau diese Handarbeit ersetzt der Test.
+add_test(NAME doku-links COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/pruefe-doku-links.py ${CMAKE_SOURCE_DIR})
+set_tests_properties(doku-links PROPERTIES LABELS "fast")
+
 # CL-9: jedes Kommando der Dispatch-Tabelle steht in der Doku und umgekehrt.
 # `scene` ging in v0.3.0 heraus, ohne im Hilfetext zu stehen — die Funktion war
 # da, niemand konnte sie finden. Genau das faengt dieser Test.
