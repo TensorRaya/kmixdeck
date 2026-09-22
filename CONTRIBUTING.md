@@ -153,6 +153,19 @@ Rules for such tests:
   against the committed state (`git stash` → build → run) instead of reading the diff: that is what proved
   `test_cl5_tree` was already red before this branch (seven leftover scenes from earlier tests in the same
   module, fixed here by looking for the test's own scene instead of comparing the whole list).
+- **One commit, one thing — and say it the same way every time.** Reviewed on 2026-09-22 over the 18 commits
+  since `v0.3.0`: median 8 files each, which is fine, but two habits had drifted. **Form:** only 7 of 18
+  carried a conventional prefix (`feat(ux18):`, `fix(fx):`, `test(ct1):`, `docs:`); the other 11 used the
+  requirement ID (`CL-7:`, `FX-8:`) or free text (`Gate-Tempo:`). Mixing both makes `git log --grep` unreliable,
+  so: **`type(scope): subject`**, where `type` is one of feat/fix/test/docs/build/refactor/perf/chore and
+  `scope` is the requirement ID in lower case (`ux18`, `ct8`, `fx9`) or the area (`cli`, `web`, `gate`).
+  The requirement ID belongs in the scope, not in front of the subject. **Content:** four commits bundled
+  several requirements — `dd64d25` alone shipped CL-1, CL-2, CL-4 and CL-9 together, `3fb0419` shipped
+  CL-3 + CL-8. One requirement per commit, even when they share a file; the test and the doc for that one
+  requirement belong **in** it, a second requirement does not. What never counts as a second thing: a bug you
+  found *while* building the feature, when leaving it in would ship the feature broken — name it in the body
+  with its measurement, the way `8262f94` names the `-2691 dB` clamp.
+  This rule is about the next 18 commits, not the last 18: rewriting published history is off the table.
 
 ## Where things live
 
