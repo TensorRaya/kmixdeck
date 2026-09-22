@@ -597,6 +597,10 @@ Service::Service(QObject *parent) : QObject(parent) {
         if (!QFile::exists(Layout::defaultPath())) { qCInfo(lcDbus) << "no layout yet — writing starter layout to" << Layout::defaultPath(); }
         else qCWarning(lcDbus) << "layout.json unreadable; running with the starter layout, NOT overwriting the file";
     }
+    // B2: from here on the file is watched, so an edit from outside (by hand, by config management,
+    // by a synced copy from another machine) is applied without a restart. Started after the initial
+    // load on purpose — during the load there is nothing to compare against yet.
+    m_mixer.watchLayoutFile();
     qDBusRegisterMetaType<InterfaceMap>();
     qDBusRegisterMetaType<ManagedObjects>();
     qDBusRegisterMetaType<StringMap>();

@@ -9,6 +9,7 @@
 #include <QVector>
 #include <QSet>
 #include <QString>
+#include <QFileSystemWatcher>
 #include <optional>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -53,6 +54,9 @@ public:
     bool loadLayout();                 // returns false if missing/corrupt (then keeps current)
     bool saveLayout() const;           // JSON + pipewire.conf.d fragment (DV-1, DV-5)
     void reconcile();                  // make PipeWire match the layout (create missing nodes)
+    /// B2: watch layoutPath and apply an edit made by anything other than us, without a restart.
+    /// Idempotent, so calling it twice does not stack watchers. Off until called.
+    void watchLayoutFile();
 
     bool connected() const { return m_connected; }
     QStringList channelSlugs() const;
@@ -408,6 +412,12 @@ private:
     Audition m_audition;
     Layout m_layout;
     QString m_layoutPath, m_pwConfPath;
+    // B2: the loop brake. saveLayout() records the bytes it wrote; the watcher compares the file
+    // against them and stays silent when they match, so our own writes never trigger a reload.
+    // A hash, not an mtime: QSaveFile commits by rename, so the timestamp always looks new.
+    mutable QByteArray m_layoutGeschrieben;
+    mutable QFileSystemWatcher *m_layoutWatcher = nullptr;
+    QTimer m_layoutEntprellung;           // editors write in several steps; coalesce to one reload
     bool m_reconciled = false;
     QTimer m_reconnect;
     int m_reconnectMs = 500;      // channel + mix null sinks, key: node name

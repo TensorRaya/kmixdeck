@@ -480,3 +480,59 @@ def test_ps2_layout_from_a_newer_kmixdeck_is_kept_aside_not_downgraded(stack):
     finally:
         if aside.exists(): aside.unlink()
         p.write_text(good); stack.restart_daemon()
+
+# ---------------------------------------------------------------- B2: config reloaded while running
+
+def test_b2_an_edit_made_outside_the_daemon_is_applied_without_a_restart(stack):
+    """The owner's criterion is "data and configs loaded automatically while running". Until 2026-09-22
+    layout.json was read exactly once, at startup: an edit by hand, by config management or from a synced
+    copy needed a restart to take effect. Now a QFileSystemWatcher applies it live."""
+    p = Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json"
+    if not p.exists(): stack.cli("mix", "add", "Probe For File")
+    vorher = p.read_text()
+    try:
+        doc = json.loads(vorher)
+        doc["mixes"].append({"slug": "vonhand", "name": "Von Hand", "icon": "audio-volume-high"})
+        p.write_text(json.dumps(doc, indent=1))          # NOT through the daemon — that is the point
+        # No restart anywhere in this test. The watcher debounces 300 ms, so allow a little more.
+        assert wait(lambda: any(m["Slug"] == "vonhand" for m in stack.cli("mix", "list", json_out=True)),
+                    what="the externally added mix appears on the bus without a restart")
+        # and the graph really carries it, not just the property
+        stack.pw.wait_node("kmixdeck.mix.vonhand")
+    finally:
+        p.write_text(vorher); stack.restart_daemon()
+        stack.pw.wait_node("kmixdeck.mix.stream")
+
+
+def test_b2_our_own_writes_do_not_trigger_a_reload_loop(stack):
+    """The loop brake: saveLayout() records the bytes it wrote, the watcher compares and stays silent.
+    Without it every CLI edit would re-read the file it just wrote — and with reconcile() in that path,
+    that is a feedback loop, not just noise. Measured here by counting the daemon's own log line."""
+    def reload_zeilen():
+        return open(stack.daemon_log_path).read().count("applying without restart")
+    vorher = reload_zeilen()
+    for i in range(5):
+        stack.cli("mix", "add", f"Loop Probe {i}")        # five writes through the daemon
+    time.sleep(1.2)                                       # well past the 300 ms debounce
+    nachher = reload_zeilen()
+    assert nachher == vorher, (
+        f"our own {5} writes triggered {nachher - vorher} reload(s) — the loop brake is not holding")
+    for i in range(5):
+        stack.cli("mix", "remove", f"loop-probe-{i}", check=False)
+
+
+def test_b2_a_corrupt_file_on_disk_is_refused_and_the_running_layout_survives(stack):
+    """DV-6 applied to the live path: a half-written or broken file must NOT replace a working layout.
+    The daemon keeps what it has and says so — the opposite of "load whatever is there"."""
+    p = Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json"
+    if not p.exists(): stack.cli("mix", "add", "Probe For File")
+    vorher = p.read_text()
+    mixe_vorher = {m["Slug"] for m in stack.cli("mix", "list", json_out=True)}
+    try:
+        p.write_text("{ this is not json")
+        time.sleep(1.2)                                   # give the watcher time to look and refuse
+        assert stack.cli("status", check=False).returncode == 0, "the daemon must still be running"
+        assert {m["Slug"] for m in stack.cli("mix", "list", json_out=True)} == mixe_vorher, \
+            "a corrupt file must not change the running layout"
+    finally:
+        p.write_text(vorher); time.sleep(0.6)

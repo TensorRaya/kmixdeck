@@ -9,6 +9,7 @@
 #include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
 #include <QDir>
 #include <QRegularExpression>
 #include <QDebug>
@@ -118,9 +119,85 @@ bool Mixer::loadLayout() {
 }
 bool Mixer::saveLayout() const {
     bool ok = true;
-    if (!m_layoutPath.isEmpty()) ok &= m_layout.save(m_layoutPath);
+    if (!m_layoutPath.isEmpty()) {
+        // B2: remember exactly what we put on disk, so the watcher can tell our own write apart
+        // from somebody else's. Same serialisation as Layout::save — if the two ever drift, the
+        // watcher reloads after every save, which is noisy but still correct.
+        m_layoutGeschrieben = QJsonDocument(m_layout.toJson()).toJson(QJsonDocument::Indented);
+        ok &= m_layout.save(m_layoutPath);
+        // 🔴 And re-arm the file watch. QSaveFile writes via rename, so every save replaces the inode
+        // and Qt drops the watch — and a watch on the parent directory does NOT stand in for it:
+        // directoryChanged fires when the file is created or removed, never when its CONTENT changes
+        // (measured 2026-09-22 with a 40-line Qt6 reproduction, /var/tmp/qtwatch.cpp). Without this
+        // line the feature was dead in exactly the case that matters: the daemon writes the starter
+        // layout after watchLayoutFile() has already run, so the file watch was never established and
+        // an external edit produced no signal at all.
+        if (m_layoutWatcher && !m_layoutWatcher->files().contains(m_layoutPath) && QFile::exists(m_layoutPath))
+            m_layoutWatcher->addPath(m_layoutPath);
+    }
     if (!m_pwConfPath.isEmpty()) ok &= m_layout.writePipewireConf(m_pwConfPath);
     return ok;
+}
+
+// B2 (owner: "data and configs loaded automatically while running"). Before this, an edit to
+// layout.json by hand, by a config-management tool or by a second machine's synced copy needed a
+// daemon restart to take effect — the file was read exactly once, at startup (measured 2026-09-22:
+// one single call site of loadLayout()).
+//
+// Three things make this safe rather than a feedback loop:
+//   * the loop brake above — a write we did ourselves has identical bytes, so we stay silent;
+//   * 300 ms of debouncing — editors and rsync write in several steps and QFileSystemWatcher
+//     reports each one; without this a single `vim :w` reloads up to three times;
+//   * re-adding the path after every event — a rename-based write (QSaveFile, vim, rsync) replaces
+//     the inode and Qt drops the watch silently. Watching the *directory* as well catches the case
+//     where the file is deleted and recreated later.
+//
+// 🔴 The directory has to be created here, and addPath's return value has to be checked. First cut did
+// neither and the whole feature was dead on a fresh install: at Service construction time there is no
+// layout.json AND no ~/.config/kmixdeck yet ("no layout yet — writing starter layout"), so BOTH addPath
+// calls failed, silently, and nothing was ever watched. Measured 2026-09-22: external edit not picked up
+// after 5 s, daemon log empty. QFileSystemWatcher cannot watch what does not exist, and it tells you so
+// only through the bool nobody reads.
+void Mixer::watchLayoutFile() {
+    if (m_layoutPath.isEmpty() || m_layoutWatcher) return;      // idempotent
+    const QString verzeichnis = QFileInfo(m_layoutPath).absolutePath();
+    QDir().mkpath(verzeichnis);                                  // may not exist on a fresh install
+    m_layoutWatcher = new QFileSystemWatcher(this);
+    if (!m_layoutWatcher->addPath(verzeichnis))
+        qCWarning(lcMixer) << "cannot watch the config directory, an external edit will need a restart" << verzeichnis;
+    if (QFile::exists(m_layoutPath)) m_layoutWatcher->addPath(m_layoutPath);
+    // If the file is not there yet, saveLayout() arms the file watch as soon as it writes it. The
+    // directory watch only tells us a file appeared or vanished — NOT that its content changed.
+
+    m_layoutEntprellung.setSingleShot(true);
+    m_layoutEntprellung.setInterval(300);
+    connect(&m_layoutEntprellung, &QTimer::timeout, this, [this] {
+        // Re-arm first: by the time we get here the inode may already be a new one.
+        if (!m_layoutWatcher->files().contains(m_layoutPath) && QFile::exists(m_layoutPath))
+            m_layoutWatcher->addPath(m_layoutPath);
+
+        QFile f(m_layoutPath);
+        if (!f.open(QIODevice::ReadOnly)) return;                // gone or mid-rename, nothing to do
+        const QByteArray jetzt = f.readAll();
+        if (jetzt == m_layoutGeschrieben) return;                // our own write — loop brake
+        if (jetzt.isEmpty()) return;                             // truncated mid-write, wait for the next event
+
+        Layout probe;
+        if (!probe.load(m_layoutPath)) {                         // corrupt: keep what we have, say so
+            qCWarning(lcMixer) << "layout file changed on disk but does not parse, keeping the running layout"
+                               << m_layoutPath;
+            return;
+        }
+        qCInfo(lcMixer) << "layout file changed on disk, applying without restart" << m_layoutPath;
+        loadLayout();
+        m_layoutGeschrieben = jetzt;      // this state is now ours too — no reload on the next save
+        reconcile();                      // create/remove the PipeWire objects the new layout asks for
+        Q_EMIT layoutChanged();           // every frontend redraws: window, tray, web, Stream Deck
+    });
+
+    const auto angestossen = [this](const QString &) { m_layoutEntprellung.start(); };
+    connect(m_layoutWatcher, &QFileSystemWatcher::fileChanged, this, angestossen);
+    connect(m_layoutWatcher, &QFileSystemWatcher::directoryChanged, this, angestossen);
 }
 
 // Layout → PipeWire. Mirrors Layout::toPipewireConf exactly (same loopbackArgs calls, so runtime and
