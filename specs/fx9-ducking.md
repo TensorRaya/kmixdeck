@@ -227,7 +227,14 @@ Sidechain, sondern einen simplen Gain, den der Daemon nach dem gemessenen
 Trigger-Pegel faehrt. Das ist auch fachlich naeher an dem, was ein Streamer
 "Ducking" nennt (feste Absenkung um N dB, nicht Kompressor-Kennlinie).
 
-## FX-9 funktioniert (2026-09-21)
+## FX-9 schien zu funktionieren (2026-09-21) — war aber unhoerbar
+
+> ⚠️ **Korrigiert am 2026-09-22.** Dieser Abschnitt beschreibt den Umbau, der die
+> Werte korrekt fuehrte und `DuckReduction` richtig meldete — aber **nicht hoerbar**
+> war: der Gain-Knoten lag neben dem Signalweg und spielte nach `kmixdeck.null`.
+> Der Befund und der Fix stehen unten unter „Es war nie zu hoeren". Was hier folgt,
+> gilt weiter fuer die Ableitung (kein SC3, kein Sidechain, Daemon fuehrt den
+> Multiplikator) — nur der Ort, an dem der Multiplikator wirkt, war falsch.
 
 Umbau auf zwei builtin-`linear`-Gains, die der Daemon auf jedem Meter-Tick
 (25/s) ueber Props fuehrt. Vorab am Referenzaufbau geprueft: `set-param Props
@@ -388,3 +395,57 @@ Alle vier Werte in allen drei Frontends einstellbar, Abzeichen mit Trigger-Name 
 in allen drei. Aus im Ruhezustand (`not ducked`, `duckedBy: ""`, kein Abzeichen), Regler ohne Trigger
 gesperrt. Vertrag in `interfaces/org.kmixdeck1.Channel.xml`, Doku in `docs/dbus-api.md`, `docs/kmixdeck.md`,
 `docs/web.md`, `docs/window.md`. Katalog 313/313, kein fuzzy.
+
+## 2026-09-22 — Es war nie zu hoeren: der Ducker lag neben dem Signalweg
+
+Alle FX-9-Tests bis hierher haben geprueft, dass sich die vier Werte **setzen** lassen — CLI, Browser,
+KDE-Dialog, Dreifachparitaet, Badge. Kein einziger hat **hingehoert**. Genau so ist ein Ducker in
+Produktion gegangen, der nichts tat.
+
+Gemessen mit getrennten Mixes (`cell set voice monitor 0`), damit im Monitor ausschliesslich Musik liegt:
+
+| | vorher | waehrend Trigger | danach |
+|---|---|---|---|
+| Mix-Pegel (alt) | −24,18 dB | −24,18 dB | −24,15 dB |
+| `DuckReduction` (alt) | 0 | **−18** | 0 |
+
+Der Daemon meldete −18 dB, der Mix bewegte sich um 0,06 dB. Der Graph zeigt warum:
+
+```
+channel.game → duck.game → duck.game.out → kmixdeck.null    ← Sackgasse
+channel.game → link.game.monitor.in → mix.monitor           ← das hoerbare Signal, ungeducked
+```
+
+Der Filter-Chain-Knoten las den Kanal-Monitor, wendete seine Verstaerkung korrekt an und spielte ins
+Nichts. **Ein Zweig neben dem Signalweg kann den Signalweg nicht daempfen** — kein fehlendes
+`node.target`, sondern der falsche Ansatz. `DuckReduction` war nie falsch: es liest den Multiplikator,
+den der Daemon fuehrt, und der stimmte. Nur kam er nirgends an.
+
+**Der Fix** nimmt das Vorbild, das seit CH-3 im Haus ist: `applyChannelGain()` multipliziert
+gespeicherte Lautstaerke × Pan — dort kommt der Ducking-Faktor als dritter Term dazu. Kein eigener
+Knoten, kein Modul im Config-Fragment (das baute den toten Knoten bei jedem Login neu),
+`renderDuckerArgs`/`duckerGainControl` geloescht.
+
+**Der zweite Bug, gefaehrlicher als der erste.** Nach dem Release meldete `DuckReduction` korrekt 0,
+das Kanal-Volume stand aber bei **0,1166** — unter dem geduckten 0,1259. `onNode()` speicherte das
+PipeWire-Echo (`stored × pan × duck`) als neue Wahrheit, der naechste Tick duckte den schon geduckten
+Wert. Ein Fader, der ueber einen Stream hinweg Richtung Stille kriecht. Pan hatte dasselbe Problem
+theoretisch immer — nur aendert Pan sich selten, ein Ducker zehnmal pro Sekunde. `onNode()` rechnet die
+Live-Faktoren jetzt heraus, bevor es speichert: nach dem Release steht der Kanal wieder auf 1,0.
+
+**Messfallen, die je einen halben Fehlschlag gekostet haben:**
+- **Beide Toene sind 1 kHz.** Liegt der Trigger im gemessenen Mix, addieren sich die Sinus je nach Phase
+  zwischen −inf und +6 dB. Erste Messung: „nach dem Release 6 dB **lauter** als vorher" — Phase, nicht Bug.
+- **`pw-link pw-play:output_FL` ist beim zweiten Ton falsch.** Jeder `pw-play`-Prozess heisst „pw-play";
+  `pw-link` nimmt den erstgefundenen. Gemessen: Knoten 214 (erster Ton) haing in **game und voice**,
+  Knoten 220 (zweiter Ton) an nichts. `play_into()` merkt sich jetzt die Knoten-IDs vor dem Start und
+  nimmt den neuen — eine pid-Property hat `pw-play` in dieser Sandbox nicht.
+- **Der Release braucht ~1,5 s, nicht 1 s.** Ein stiller Kanal muss erst aus der Peak-Map fallen, bevor
+  sein Pegel als Null gelesen wird. Gemessen: −18 dB noch bei +0,8 s, 0 dB ab +1,6 s. Ein kuerzeres
+  Fenster sieht genau wie ein haengender Ducker aus.
+
+**Nachher, mit derselben Messung:** vor −24,18 dB, waehrend −42,18 dB (**delta −18,00**), danach −24,18 dB.
+Gegenprobe: Ducking-Faktor aus `applyChannelGain` entfernt → rot; Echo-Rueckrechnung in `onNode`
+entfernt → rot. Der Test `test_fx9_ducking_actually_lowers_the_music_when_the_mic_talks` haette den
+Originalfehler gefunden.
+

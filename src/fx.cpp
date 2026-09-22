@@ -360,47 +360,9 @@ QString renderFilterChainArgs(const Chain &c, const QString &description, const 
 
 QString duckerNode(const QString &slug) { return slug.isEmpty() ? QString() : QStringLiteral("kmixdeck.duck.%1").arg(slug); }
 
-QString duckerGainControl(const QString &slug, bool right) {
-    return QStringLiteral("duck_%1_%2:Mult").arg(slug, right ? QStringLiteral("r") : QStringLiteral("l"));
-}
-
 double duckerMultFor(double depthDb, bool active) {
     // The multiplier the gain nodes run at: unity when idle, 10^(depth/20) while the trigger speaks.
     return active ? std::pow(10.0, std::clamp(depthDb, -60.0, 0.0) / 20.0) : 1.0;
-}
-
-QString renderDuckerArgs(const QString &slug, const QString &description, const QString &channelNode,
-                         const QString &triggerNode, double depthDb, double attackMs, double releaseMs,
-                         double thresholdDb) {
-    if (slug.isEmpty() || channelNode.isEmpty() || triggerNode.isEmpty()) return {};
-    Q_UNUSED(depthDb); Q_UNUSED(attackMs); Q_UNUSED(releaseMs); Q_UNUSED(thresholdDb);
-    // Two builtin `linear` gains (one per channel) that the daemon drives at runtime over Props. This
-    // deliberately does NOT use a sidechain compressor: measured against a hand-built reference chain
-    // (no kmixdeck code involved, the config straight from the filter-chain docs), a LADSPA sidechain port
-    // fed from an extra capture channel never sees the signal — with the trigger at full scale (sidechain
-    // monitor reading 1.0, ~30 dB over threshold) an SC3 at 10:1 reduced by exactly 0.0 dB. See
-    // specs/fx9-ducking.md for the measurements. Ducking is a fixed attenuation anyway, which is what a
-    // streamer means by the word, so a gain the daemon steers off its own peak meter is both simpler and
-    // the thing that actually works. Attack/release/threshold are honoured by the daemon's ramp, not here.
-    const QString links = QStringLiteral("duck_%1_l").arg(slug), rechts = QStringLiteral("duck_%1_r").arg(slug);
-    return QStringLiteral(
-               "{ node.description = %1 "
-               "filter.graph = { nodes = [ "
-               "{ name = %2 type = builtin label = linear control = { \"Mult\" = 1.0 \"Add\" = 0.0 } } "
-               "{ name = %3 type = builtin label = linear control = { \"Mult\" = 1.0 \"Add\" = 0.0 } } ] "
-               "links = [ ] inputs = [ \"%2:In\" \"%3:In\" ] outputs = [ \"%2:Out\" \"%3:Out\" ] } "
-               // The ducked audio is read from the channel sink's monitor (stream.capture.sink), exactly like a
-               // cell loopback does.
-               "capture.props = { node.name = %4 media.name = %5 node.target = %6 audio.channels = 2 "
-               "audio.position = [ FL FR ] stream.capture.sink = true node.passive = true "
-               "node.dont-fallback = true node.linger = true node.dont-reconnect = true node.description = %1 } "
-               "playback.props = { node.name = %7 media.name = %5 audio.channels = 2 audio.position = [ FL FR ] "
-               "node.linger = true node.dont-fallback = true } }")
-        .arg(QLatin1Char('"') + description + QLatin1Char('"'), links, rechts,
-             QLatin1Char('"') + duckerNode(slug) + QLatin1Char('"'),
-             QLatin1Char('"') + description + QLatin1Char('"'),
-             QLatin1Char('"') + channelNode + QLatin1Char('"'),
-             QLatin1Char('"') + duckerNode(slug) + QStringLiteral(".out\""));
 }
 
 QVector<QPair<QString, double>> controlValues(const Chain &c, const QString &idPrefix) {

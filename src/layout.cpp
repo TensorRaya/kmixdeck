@@ -275,22 +275,11 @@ QString Layout::toPipewireConf() const {
                    .arg(q(Names::channelNode(c.slug)), q(c.name));
         fxModule(c.fx, c.name, QStringLiteral("kmixdeck.fx.%1").arg(c.slug), QStringLiteral("kmixdeck.fx.%1.out").arg(c.slug),
                  Names::channelNode(c.slug), Names::channelNode(c.slug), c.slug);
-        // FX-9: the ducker is its own filter-chain BEHIND the sink (it reads the sink's monitor), so it does not
-        // disturb the FX chain in front of it. Only rendered when the user picked a trigger — off by default.
-        if (!c.duckedBy.isEmpty() && c.duckedBy != c.slug) {
-            const bool triggerDa = std::any_of(channels.cbegin(), channels.cend(),
-                                               [&](const LayoutChannel &t) { return t.slug == c.duckedBy; });
-            if (triggerDa) {
-                // The trigger is read post-FX. For a CHANNEL that is the plain sink itself: its chain sits IN
-                // FRONT of the sink (ADR 0008 D3), so everything that reaches the sink has already been through
-                // gate and compressor. Reading `kmixdeck.fx.<slug>.out` instead would be the same signal by a
-                // less stable name — that node only exists while a chain is active.
-                const QString trigger = Names::channelNode(c.duckedBy);
-                const QString args = fx::renderDuckerArgs(c.slug, c.name, Names::channelNode(c.slug), trigger,
-                                                          c.duckDepth, c.duckAttack, c.duckRelease, c.duckThreshold);
-                if (!args.isEmpty()) out += QStringLiteral("  { name = libpipewire-module-filter-chain args = %1 }\n").arg(args);
-            }
-        }
+        // FX-9 needs NO module here. Ducking is a live factor on the channel sink's gain, driven by the
+        // daemon's meter tick (Mixer::tickDucking → applyChannelGain). Until 2026-09-22 this rendered a
+        // filter-chain that read the channel monitor and played into `kmixdeck.null` — a branch beside the
+        // signal path, which cannot attenuate the path. Leaving it in the config fragment would rebuild
+        // that dead node at every login and make `pw-dump` look as if ducking were wired up.
     }
     for (const auto &m : mixes) {
         out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = %1 media.name = %1 node.description = %2 media.class = Audio/Sink object.linger = true audio.position = [ FL FR ] monitor.channel-volumes = true } }\n")

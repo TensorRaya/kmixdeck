@@ -18,8 +18,32 @@ CHAIN = '{"enabled":true,"chain":[{"type":"gate","enabled":true,"params":{"thres
 
 
 def fixture_stack():
-    pw = start_private_pipewire(); pw.wait_node("kmixdeck.mix.stream")
+    """Start a private stack. 🔴 Only safe inside the `stack` fixture below — call that, not this.
+
+    The failure this guards against (measured 2026-09-22): when `wait_node` here times out, the sandbox was
+    already started but no test owns it yet, so no `finally` ever closes it. Nine tests in this file each start
+    their own stack, so one timeout leaked pipewire+wireplumber and the next tests inherited a machine with
+    ever more audio daemons until `start_private_pipewire` itself failed with "private pipewire did not come
+    up" — 3 of 9 tests red, none of them for its own reason. This file was the only integration file calling a
+    plain function instead of a pytest fixture; the other six all use scope="module".
+    """
+    pw = start_private_pipewire()
+    try:
+        pw.wait_node("kmixdeck.mix.stream")
+    except BaseException:
+        pw.close()          # nobody owns it yet — close it here or it leaks for the rest of the file
+        raise
     return pw, Stack(pw)
+
+
+@pytest.fixture
+def stack():
+    """A private stack per test, closed even when the setup itself fails."""
+    pw, s = fixture_stack()
+    try:
+        yield pw, s
+    finally:
+        s.close(); pw.close()
 
 
 def node_names(stack):
@@ -324,3 +348,61 @@ def test_ux18_loudness_is_opt_in_per_mix_and_reads_ebu_r128():
         play.terminate(); play.wait(timeout=5)
     finally:
         s.close(); pw.close()
+
+
+def test_fx9_ducking_actually_lowers_the_music_when_the_mic_talks():
+    """FX-9, the acoustic half: built in 531c761, measured by hand, never by a test — and broken.
+
+    Every FX-9 test until now checked that the four values can be SET, from the CLI, the browser and the
+    KDE dialog. None of them listened, and that is exactly how a ducker that did nothing shipped: the
+    filter-chain node read the channel monitor, applied the gain and played into `kmixdeck.null`, while the
+    audible path ran past it into the mix. The daemon reported −18 dB and the mix moved 0.06 dB.
+
+    Measuring this needs the trigger OUT of the mix being measured (`cell set voice monitor 0`). Both tones
+    are the same 1 kHz sine, so with the trigger in the same mix the two add by phase — anywhere between
+    −inf and +6 dB — and the reading says nothing about the ducker. A control run without ducking proves
+    the separation holds before any duck value is set.
+
+    The release needs ~1.5 s, not one: a silent channel has to drop out of the meter map before its peak
+    reads as zero. A shorter window looks exactly like a stuck ducker (measured: −18 dB still at +0.8 s,
+    0 dB from +1.6 s).
+    """
+    pw, s = fixture_stack()
+    musik = kontroll_ton = stimme = None
+    try:
+        s.cli("cell", "set", "voice", "monitor", "0")
+        time.sleep(0.4)
+        musik = pw.play_into("kmixdeck.channel.game")
+        ruhe = pw.level_at("kmixdeck.mix.monitor")
+        assert ruhe > -30, f"music alone should be audible, got {ruhe} dB — routing broken before we even duck"
+
+        kontroll_ton = pw.play_into("kmixdeck.channel.voice")
+        time.sleep(0.5)
+        kontrolle = pw.level_at("kmixdeck.mix.monitor")
+        kontroll_ton.kill(); kontroll_ton.wait(); kontroll_ton = None
+        time.sleep(0.5)
+        assert kontrolle == pytest.approx(ruhe, abs=1.0), (
+            f"trigger must not reach this mix: {ruhe} -> {kontrolle} dB. The measurement cannot separate "
+            f"ducking from the trigger's own contribution.")
+
+        s.cli("duck", "set", "game", "--by", "voice", "--depth", "-18", "--attack", "5", "--release", "50")
+        vor = pw.level_at("kmixdeck.mix.monitor")
+        stimme = pw.play_into("kmixdeck.channel.voice")
+        time.sleep(0.8)
+        gedueckt = pw.level_at("kmixdeck.mix.monitor")
+        gemeldet = s.cli("--json", "duck", "show", "game", json_out=True)["reduction"]
+        stimme.kill(); stimme.wait(); stimme = None
+        time.sleep(1.8)                                   # release 50 ms + the meter map dropping a silent channel
+        danach = pw.level_at("kmixdeck.mix.monitor")
+    finally:
+        for p_ in (musik, kontroll_ton, stimme):
+            if p_ is not None:
+                p_.kill(); p_.wait()
+        s.close(); pw.close()
+
+    assert gedueckt - vor == pytest.approx(-18.0, abs=1.5), (
+        f"the mic must duck the music by the configured 18 dB: quiet={vor} talking={gedueckt} dB "
+        f"(delta {gedueckt - vor:+.2f})")
+    assert gemeldet == pytest.approx(-18.0, abs=0.5), f"DuckReduction should agree with the sound, got {gemeldet}"
+    assert danach == pytest.approx(vor, abs=1.5), (
+        f"level must come back after release: before={vor} after={danach} dB")

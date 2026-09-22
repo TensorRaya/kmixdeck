@@ -77,14 +77,9 @@ QString renderFilterChainArgs(const Chain &c, const QString &description, const 
 /// at 10:1, gain reduction exactly 0.0 dB. specs/fx9-ducking.md has the full table. A fixed attenuation
 /// is also what "ducking" means to a streamer, so this is the simpler AND the working answer.
 /// The graph control that carries one ducker channel's gain, as Props addresses it: `duck_<slug>_l:Mult`.
-QString duckerGainControl(const QString &slug, bool right);
-
 /// The multiplier the ducker gains run at: 1.0 when idle, 10^(depth/20) while the trigger speaks.
 double duckerMultFor(double depthDb, bool active);
 
-QString renderDuckerArgs(const QString &slug, const QString &description, const QString &channelNode,
-                         const QString &triggerNode, double depthDb, double attackMs, double releaseMs,
-                         double thresholdDb);
 /// Name of the ducker's capture node for a channel (empty slug → empty).
 QString duckerNode(const QString &slug);
 /// The Props param name filter-chain uses for a control at runtime, e.g. "gate:Threshold (dB)".

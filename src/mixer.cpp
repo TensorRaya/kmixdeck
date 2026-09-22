@@ -377,31 +377,32 @@ void Mixer::applyDucking(const QString &slug) {
     if (!m_connected) return;
     const auto *c = m_layout.channel(slug);
     if (!c) return;
+    // There is no node to build. Ducking is a factor on the channel sink's gain, driven per meter tick by
+    // tickDucking() — see applyChannelGain(). Earlier versions loaded a filter-chain here; it read the
+    // channel monitor, applied the gain and played into nothing (`kmixdeck.duck.<slug>.out -> kmixdeck.null`)
+    // while the audible path ran `channel.<slug> -> link.<slug>.<mix>.in -> mix.<mix>` beside it. Measured
+    // 2026-09-22: daemon reporting −18 dB, mix moving 0.06 dB. Any leftover node from such a build is dropped.
     const QString node = fx::duckerNode(slug);
-    // Drop the old ducker first — its controls are baked into the module args, so a changed depth means a
-    // new module. destroyOurNodes matches the capture node and its ".out" tail.
     destroyOurNodes([&](const QString &n) { return n == node || n.startsWith(node + QLatin1Char('.')); });
-    if (c->duckedBy.isEmpty()) return;
-    const QString args = fx::renderDuckerArgs(slug, c->name, Names::channelNode(slug), Names::channelNode(c->duckedBy),
-                                              c->duckDepth, c->duckAttack, c->duckRelease, c->duckThreshold);
-    if (args.isEmpty()) return;
-    qCInfo(lcMixer) << "ducking:" << slug << "ducked by" << c->duckedBy << "-" << args.length() << "chars";
-    m_graph.loadLoopback(args, "libpipewire-module-filter-chain");
-    // No trigger link: the daemon already meters every channel's peak (m_lastPeaks), so the trigger level is
-    // known here and the gains are steered over Props. That replaces the sidechain port, which provably
-    // carries no signal in a filter-chain (specs/fx9-ducking.md).
+    if (c->duckedBy.isEmpty()) {
+        m_duckActive.remove(slug);
+        applyChannelGain(slug);     // back to full gain the moment ducking is switched off
+        return;
+    }
+    qCInfo(lcMixer) << "ducking:" << slug << "ducked by" << c->duckedBy << "depth" << c->duckDepth
+                    << "threshold" << c->duckThreshold << "attack" << c->duckAttack << "release" << c->duckRelease;
     m_duckActive.remove(slug);
+    applyChannelGain(slug);         // start from unity; the ramp takes over on the next meter tick
 }
 
-/// FX-9: steer every ducker's gain from the metered trigger level. Called once per meter tick, so this is
-/// the ramp: attack/release are honoured by how fast the multiplier is allowed to move per tick.
+/// FX-9: steer every ducked channel's gain from the metered trigger level. Called once per meter tick, so
+/// this is the ramp: attack/release are honoured by how fast the multiplier is allowed to move per tick.
 void Mixer::tickDucking() {
     if (!m_connected) return;
     for (const auto &c : m_layout.channels) {
         if (c.duckedBy.isEmpty()) continue;
-        const QString ducker = fx::duckerNode(c.slug);
-        const auto node = m_graph.node(ducker);
-        if (!node) continue;
+        // No node lookup: the gain lives on the channel sink, which always exists. The old version bailed
+        // out here unless a separate ducker node was in the graph — a node that had no effect on the sound.
         // The trigger's own peak, straight from the meters — no sidechain port needed. Meters::peaks is keyed
         // by PipeWire node.name; the "channel/<slug>" form only exists on D-Bus (LevelsAdaptor::publicKey).
         const float spitze = m_lastPeaks.value(Names::channelNode(c.duckedBy), 0.0f);
@@ -414,10 +415,12 @@ void Mixer::tickDucking() {
         const double schritt = (1.0 / (ms / kMeterTickMs));          // full travel over the configured time
         double neu = jetzt + std::clamp(ziel - jetzt, -schritt, schritt);
         if (std::abs(ziel - neu) < 0.001) neu = ziel;
-        if (std::abs(neu - jetzt) < 0.0005) continue;                 // nothing moved: no Props write
+        if (std::abs(neu - jetzt) < 0.0005) continue;                 // nothing moved: no write
         m_duckActive[c.slug] = neu;
-        m_graph.setControl(node->id, fx::duckerGainControl(c.slug, false), neu);
-        m_graph.setControl(node->id, fx::duckerGainControl(c.slug, true), neu);
+        // Apply it where the signal actually is: the channel sink's own gain (applyChannelGain multiplies
+        // stored volume × pan × duck). The old code wrote Props on a filter-chain node that sat beside the
+        // path and drained into kmixdeck.null — see applyChannelGain for the measurement.
+        applyChannelGain(c.slug);
     }
 }
 
@@ -590,7 +593,14 @@ static void panGains(double pan, float &l, float &r) {
 void Mixer::applyChannelGain(const QString &slug) {
     auto it = m_sinks.find(Names::channelNode(slug)); if (it == m_sinks.end()) return;
     float l, r; panGains(channelPan(slug), l, r);
-    m_graph.setVolumeLR(it->id, it->volume * l, it->volume * r, it->mute);
+    // FX-9: the ducker is a live factor on the channel's own gain, exactly like pan — it must NOT touch the
+    // stored volume, or releasing the duck would write the attenuated value back and the fader would crawl
+    // down over a stream. Measured 2026-09-22 why this replaces the parallel filter-chain node: that node
+    // read the channel monitor and wrote into nothing (`duck.game.out -> kmixdeck.null`), while the real
+    // signal went `channel.game -> link.game.monitor.in -> mix.monitor` straight past it. The daemon
+    // reported −18 dB and the mix moved 0.06 dB. A branch beside the path cannot attenuate the path.
+    const float duck = static_cast<float>(m_duckActive.value(slug, 1.0));
+    m_graph.setVolumeLR(it->id, it->volume * l * duck, it->volume * r * duck, it->mute);
 }
 double Mixer::channelPan(const QString &slug) const { const auto *c = m_layout.channel(slug); return c ? c->pan : 0.0; }
 void Mixer::setChannelPan(const QString &slug, double pan) {
@@ -1705,7 +1715,20 @@ void Mixer::onNode(const pw::NodeInfo &n) {
     if (n.name.startsWith(chP)) {
         const QString slug = n.name.mid(chP.size());
         const bool isNew = !m_sinks.contains(n.name);
-        m_sinks[n.name] = n;
+        // Channels deliberately do NOT go through enforceIntent(): that helper rewrites with setVolume(), i.e.
+        // L=R, which would flatten pan (and now the duck factor). For channels the intent lives in the layout
+        // (pan) and in m_duckActive, and applyChannelGain() is the single writer. Mixes and cells have no live
+        // factors — they only ever get setVolume() with identical L/R — so enforceIntent is safe for them.
+        pw::NodeInfo gemeldet = n;
+        // FX-9: what PipeWire echoes back is the gain we are DRIVING (stored × pan × duck), not the fader the
+        // user set. Storing it raw makes the next tick duck the already-ducked value: measured 2026-09-22 the
+        // channel sat at 0.1166 after release while DuckReduction correctly read 0 — a fader that crawls to
+        // silence over a stream. Divide the live factors back out, exactly the pair applyChannelGain applied.
+        float pl, pr; panGains(channelPan(slug), pl, pr);
+        const double duck = m_duckActive.value(slug, 1.0);
+        const float teiler = static_cast<float>(std::max(pl, pr)) * static_cast<float>(duck);
+        if (teiler > 1e-4f) gemeldet.volume = n.volume / teiler;
+        m_sinks[n.name] = gemeldet;
         if (isNew && !m_pendingCellState.isEmpty()) restorePendingCellStates();   // undo of a channel: trim/mute
         if (isNew && channelPan(slug) != 0.0) applyChannelGain(slug);              // DV-22: pan lives in the layout, the node comes later
         bool found = false; for (auto &c : m_channels) if (c.slug == slug) { found = true; if (c.name.isEmpty()) c.name = n.description; }
