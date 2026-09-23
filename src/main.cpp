@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
     about.setupCommandLine(&parser);
     const QCommandLineOption selfTest(QStringLiteral("self-test"), QStringLiteral("Load the UI, then exit (used by ctest)."));
     const QCommandLineOption shot(QStringLiteral("screenshot"), QStringLiteral("Render the window to <file>.png and exit (works offscreen)."), QStringLiteral("file"));
-    const QCommandLineOption openArg(QStringLiteral("open"), QStringLiteral("With --screenshot: open this dialog first (channel|mix)."), QStringLiteral("what"));
+    const QCommandLineOption openArg(QStringLiteral("open"), QStringLiteral("Open this page or dialog first: channel|mix|apps|routing|patchbay|channel-ports|fx/channel|mix/<slug>|duck/<slug>|soundboard (tray: --screenshot only)."), QStringLiteral("what"));
     const QCommandLineOption sizeArg(QStringLiteral("size"), QStringLiteral("With --screenshot: window size WxH (default 1280x760)."), QStringLiteral("wxh"));
     const QCommandLineOption gestureArg(QStringLiteral("gesture"), QStringLiteral("Patchbay gesture to perform, then exit (tests)."), QStringLiteral("spec"));
     const QCommandLineOption probeArg(QStringLiteral("probe"), QStringLiteral("Print <objectName>.<property> of a UI item after --open, then exit (tests)."), QStringLiteral("spec"));
@@ -140,6 +140,7 @@ int main(int argc, char *argv[])
         else if (open == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
         else if (open == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
         else if (open == QLatin1String("channel-ports")) QMetaObject::invokeMethod(win, "addDialogOpenPorts");
+        else if (open == QLatin1String("channel") || open == QLatin1String("mix")) QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, open));
         // FX-8: Effekt-Panel, Form "fx/channel/<slug>" oder "fx/mix/<slug>".
         else if (open.startsWith(QLatin1String("fx/"))) {
             const QStringList t = open.split(QLatin1Char('/'));
@@ -168,7 +169,7 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "kmixdeck: --open soundboard: soundboardPanelOpen() not invokable on the root window\n");
         }
         // Ein unbekanntes Ziel MUSS auffallen, statt lautlos zu verschwinden.
-        else fprintf(stderr, "kmixdeck: --open: unknown target '%s' (apps|routing|patchbay|channel-ports|fx/channel|mix/<slug>|duck/<slug>|soundboard)\n",
+        else fprintf(stderr, "kmixdeck: --open: unknown target '%s' (channel|mix|apps|routing|patchbay|channel-ports|fx/channel|mix/<slug>|duck/<slug>|soundboard)\n",
                      qPrintable(open));
     };
 
@@ -326,12 +327,11 @@ int main(int argc, char *argv[])
         const QString file = parser.value(shot), open = parser.value(openArg);
         const QStringList wh = parser.value(sizeArg).split(QLatin1Char('x'));
         win->resize(wh.size() == 2 ? wh[0].toInt() : 1280, wh.size() == 2 ? wh[1].toInt() : 760); win->show();
-        QTimer::singleShot(1200, &app, [win, file, open] {
-            if (open == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
-            else if (open == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
-            else if (open == QLatin1String("apps")) QMetaObject::invokeMethod(win, "showApps");
-            else if (open == QLatin1String("channel-ports")) QMetaObject::invokeMethod(win, "addDialogOpenPorts");
-            else if (open == QLatin1String("tray")) {   // UX-17: render the tray popover itself
+        // Das Ziel geht durch openZiel wie bei --gesture/--probe. Vorher hatte dieser Zweig eine eigene, kuerzere
+        // Liste, und alles, was darin fehlte (fx/…, duck/…, soundboard), fiel stumm in addDialogOpen: drei
+        // Screenshots, pixelgleich zum Mixer (mittlere Differenz 0,06/255), exit 0 (gemessen 2026-09-22).
+        QTimer::singleShot(1200, &app, [win, file, open, openZiel] {
+            if (open == QLatin1String("tray")) {   // UX-17: render the tray popover itself — a separate window, not an openZiel target
                 QMetaObject::invokeMethod(win, "showTrayOverview", Q_ARG(QVariant, 400), Q_ARG(QVariant, 700));
                 QTimer::singleShot(900, win, [win, file] {
                     QVariant v = win->property("trayOverview"); auto *pop = v.value<QQuickWindow *>();
@@ -341,10 +341,20 @@ int main(int argc, char *argv[])
                 });
                 return;
             }
-            else if (!open.isEmpty()) QMetaObject::invokeMethod(win, "addDialogOpen", Q_ARG(QVariant, open));
-            QTimer::singleShot(900, win, [win, file] {
-                const bool ok = win->grabWindow().save(file);
-                qCInfo(lcFrontend, "%s %s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file));
+            // FX, Ducking und Soundboard gehen ueber pushDialogLayer, und das oeffnet auf dem Desktop ein EIGENES
+            // QQuickWindow. Das Hauptfenster zu fotografieren zeigte dann den Mixer darunter (Differenz 0,0/255,
+            // gemessen 2026-09-22). Fotografiert wird das Fenster, das openZiel neu angelegt hat; gibt es keins,
+            // ist das Hauptfenster das Ziel. Die Liste VOR openZiel nehmen — pushDialogLayer legt synchron an.
+            const auto vorher = QGuiApplication::topLevelWindows();
+            openZiel(win, open);
+            QTimer::singleShot(900, win, [win, file, vorher] {
+                QQuickWindow *ziel = win;
+                for (QWindow *w : QGuiApplication::topLevelWindows())
+                    if (w != win && w->isVisible() && !vorher.contains(w))
+                        if (auto *q = qobject_cast<QQuickWindow *>(w)) ziel = q;
+                const bool ok = ziel->grabWindow().save(file);
+                qCInfo(lcFrontend, "%s %s%s", ok ? "screenshot written:" : "screenshot FAILED:", qPrintable(file),
+                       ziel == win ? "" : " (dialog layer window)");
                 QCoreApplication::exit(ok ? 0 : 1);
             });
         });

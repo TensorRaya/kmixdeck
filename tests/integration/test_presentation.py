@@ -153,6 +153,47 @@ def kde(stack, *args, open_page=None, timeout=90, lang=None):
         if "--probe" in args else [l for l in r.stdout.splitlines() if l.startswith("gesture ")]
 
 
+def test_screenshot_opens_every_target_it_is_given(stack, tmp_path):
+    """`--screenshot --open X` must render X — each target its own picture, the dialog-layer pages from their own window.
+
+    Until 2026-09-22 the screenshot branch had its own, shorter target list. fx/…, duck/… and soundboard were
+    missing from it and fell into addDialogOpen, which opened an empty add dialog: three pictures identical to
+    each other (mean pixel difference 0.06/255), exit 0, "screenshot written". Routing them through openZiel was
+    not enough either: those three open as a SEPARATE window on the desktop (Kirigami pushDialogLayer), and
+    grabbing the main window still showed the mixer underneath (0.0/255). Measured while taking the UI tour.
+
+    Two checks, one per failure: the dialog-layer targets must say they were taken from that window, and no two
+    targets may produce the same picture. A comparison against the plain mixer alone missed the first failure —
+    the empty add dialog is not the mixer, so it passed on the broken build (seen green 2026-09-22).
+    """
+    import itertools
+    from PIL import Image, ImageChops, ImageStat
+    stack.cli("channel", "add", "--soundboard", "Board", check=False)
+    b = BIN / "kmixdeck-kde"
+    if not b.exists(): pytest.skip("kmixdeck-kde not built")
+    env = dict(stack.env, QT_QPA_PLATFORM="offscreen")
+
+    def shot(target):
+        out = tmp_path / (target.replace("/", "_") + ".png")
+        r = subprocess.run([str(b), "--screenshot", str(out), "--size", "1280x760"] + (["--open", target] if target else []),
+                           env=env, capture_output=True, text=True, timeout=60)
+        log = r.stdout + r.stderr
+        assert r.returncode == 0 and out.exists(), f"--open {target!r}: rc={r.returncode} {log[-400:]}"
+        assert "unknown target" not in log and "not invokable" not in log, log[-400:]
+        return Image.open(out).convert("RGB"), "(dialog layer window)" in log
+
+    # One FX target, not two: the channel and the mix panel are the same page with a different title, so their
+    # pictures differ by 0.14/255 (measured) — below any threshold that also catches a real duplicate.
+    layer = ("fx/channel/voice", "duck/game", "soundboard")
+    pics = {}
+    for target in ("", "channel", "mix", "apps", "routing", "patchbay") + layer:
+        pics[target], from_layer = shot(target)
+        assert from_layer == (target in layer), f"--open {target!r}: taken from the {'dialog-layer' if from_layer else 'main'} window"
+    same = [(a or "mixer", b) for a, b in itertools.combinations(pics, 2) if pics[a].size == pics[b].size
+            and sum(ImageStat.Stat(ImageChops.difference(pics[a], pics[b])).mean) / 3 < 1.0]
+    assert not same, f"these --open targets rendered the same picture: {same}"
+
+
 def test_mx10_muted_mix_header_is_red_and_says_so(stack):
     """MX-10: a muted mix is unmistakable — the header background takes the negative colour, the title says 'muted'."""
     stack.cli("mix", "mute", "stream", "off")
