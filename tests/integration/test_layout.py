@@ -6,9 +6,10 @@ laptop to full-HD and a phone.
 Why this exists (2026-09-23, Michel: "sehe da teilweise was überlappen"): with 5 mixes the KDE channel column was
 216 px, the row needed ~320, and the ⋮ button sat 103 px inside the first mix column; the web header ran the device
 name under the whole button row (22 findings at 1600 px, 50 on a phone). No test measured geometry — the pictures
-showed it, the suite was green. Both checks name the two items and the overlap in pixels:
+showed it, the suite was green. Findings: two items overlap, one sticks out of its card, or (KDE) one is cut off
+inside its card — half a number is as unreadable as one under a button. Both checks name items and pixels:
 KDE `--gesture layout:overlaps|2` (Main.qml layoutOverlaps), web tests/integration/layout_overlaps.js."""
-import json, subprocess, time
+import json, subprocess, threading, time
 from pathlib import Path
 import pytest
 from test_fx import fixture_stack
@@ -40,8 +41,27 @@ def stack():
     s.cli("duck", "set", "music", "--by", "voice", "--depth", "-18")
     s.cli("duck", "set", "game", "--by", "discord", "--depth", "-9")
     s.cli("mix", "loudness", "stream", "-16")        # UX-18 read-out: it sat under ⋮/mute/master before
+    # Real signal. With an idle analyser the read-out shows dashes; the first screenshot after the fix showed
+    # "-42.3" digits running out of the card — a layout test on silence measures the wrong widths.
+    # The tone is 120 s, the suite runs longer: it is replayed in a loop, or the web half (which runs after the
+    # KDE half) measures dashes again — exactly how the first counter-check stayed green on the web side.
+    tone, stop = pw.tone(), threading.Event()
+
+    def play():
+        while not stop.is_set():
+            p = subprocess.Popen(["pw-play", "-P", '{ application.name="Spotify" node.name="spotify" }', str(tone)],
+                                 env=pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            while p.poll() is None and not stop.is_set(): time.sleep(0.2)
+            if p.poll() is None: p.kill()
+            else: time.sleep(0.3); s.cli("app", "move", "Spotify", "music", check=False)
+    th = threading.Thread(target=play, daemon=True); th.start()
+    for _ in range(80):
+        if "Spotify" in s.cli("app", check=False).stdout: break
+        time.sleep(0.1)
+    s.cli("app", "move", "Spotify", "music", check=False)
+    time.sleep(3.0)
     yield s
-    s.close(); pw.close()
+    stop.set(); th.join(5); s.close(); pw.close()
 
 
 def set_mixes(stack, n):
@@ -87,8 +107,18 @@ def test_web_mixer_has_no_overlaps(stack, mixes):
                 ch.wait("window.kmixdeck && window.kmixdeck.state.connected && "
                         "document.querySelector('[data-probe=\"channelFx/voice\"]')", 25)
                 ch.wait(f"document.querySelectorAll('.mix-header').length === {mixes}", 10)
+                # measured in the same JS turn as the check that numbers are showing: between two loops of the tone
+                # the analyser drops back to dashes, and a measurement in that gap was green on the old CSS
+                has_digits = "/\\d/.test((document.querySelector('[data-probe=\"lufsTP/stream\"]') || {}).textContent || '')"
+                ch.wait(has_digits, 15)
                 time.sleep(0.8)
-                f = findings(ch.eval(JS))
+                got = None
+                for _ in range(40):
+                    got = ch.eval("(() => { if (!(" + has_digits + ")) return null; return (\n" + JS.strip().rstrip(';') + "\n) })()")
+                    if got is not None: break
+                    time.sleep(0.25)
+                assert got is not None, f"{w}x{h}: the loudness read-out never showed numbers to measure"
+                f = findings(got)
                 if f: bad[f"{w}x{h}"] = f[:12]
     finally:
         web.close()
