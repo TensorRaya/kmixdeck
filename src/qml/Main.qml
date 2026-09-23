@@ -208,17 +208,19 @@ Kirigami.ApplicationWindow {
         function sichtbar(it, start) {
             if (it.width <= 0 || it.height <= 0) return null
             const g = it.mapToItem(start, 0, 0)
-            let x1 = g.x, y1 = g.y, x2 = g.x + it.width, y2 = g.y + it.height
+            let x1 = g.x, y1 = g.y, x2 = g.x + it.width, y2 = g.y + it.height, cutBy = null
             for (let p = it; p; p = p.parent) {
                 if (!p.visible || p.opacity === 0) return null
                 if (p.clip && p !== it) {
                     const q = p.mapToItem(start, 0, 0)
-                    x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); x2 = Math.min(x2, q.x + p.width); y2 = Math.min(y2, q.y + p.height)
-                    if (x2 - x1 < 1 || y2 - y1 < 1) return null
+                    const n1 = Math.max(x1, q.x), m1 = Math.max(y1, q.y), n2 = Math.min(x2, q.x + p.width), m2 = Math.min(y2, q.y + p.height)
+                    if (n2 - n1 < 1 || m2 - m1 < 1) return null
+                    if (!cutBy && (x2 - x1) - (n2 - n1) + (y2 - y1) - (m2 - m1) >= 2) cutBy = p
+                    x1 = n1; y1 = m1; x2 = n2; y2 = m2
                 }
                 if (p === start) break
             }
-            return { x: x1, y: y1, w: x2 - x1, h: y2 - y1, fx: g.x, fy: g.y, fw: it.width, fh: it.height }
+            return { x: x1, y: y1, w: x2 - x1, h: y2 - y1, fx: g.x, fy: g.y, fw: it.width, fh: it.height, cutBy: cutBy }
         }
         function name(it) {
             const n = it.objectName || ""
@@ -236,7 +238,7 @@ Kirigami.ApplicationWindow {
             if (karte.test(it.objectName || "")) card = it
             if (blatt(it)) {
                 const r = sichtbar(it, fenster)
-                if (r) items.push({ it: it, card: card, x: r.x, y: r.y, w: r.w, h: r.h, fx: r.fx, fy: r.fy, fw: r.fw, fh: r.fh })
+                if (r) items.push({ it: it, card: card, x: r.x, y: r.y, w: r.w, h: r.h, fx: r.fx, fy: r.fy, fw: r.fw, fh: r.fh, cutBy: r.cutBy })
                 return
             }
             for (let i = 0; i < (it.children ? it.children.length : 0); ++i) walk(it.children[i], fenster, card)
@@ -255,6 +257,13 @@ Kirigami.ApplicationWindow {
             // full size, not the clipped part: a card that clips its own button cuts it in half — that is the finding
             const raus = Math.max(c.x - a.fx, a.fx + a.fw - (c.x + a.card.width), c.y - a.fy, a.fy + a.fh - (c.y + a.card.height))
             if (raus >= min) out.push("OUTSIDE " + name(a.it) + " @" + Math.round(a.fx) + "," + Math.round(a.fy) + " leaves " + a.card.objectName + " by " + Math.round(raus) + " px")
+            // cut off INSIDE its own card (the card or something in it clips): half a number is as unreadable as
+            // one under a button. A ScrollView outside the card cutting a column at the edge is scrolling, not this.
+            else if (a.cutBy) {
+                let inCard = false
+                for (let p = a.cutBy; p; p = p.parent) if (p === a.card) { inCard = true; break }
+                if (inCard) out.push("CLIPPED " + name(a.it) + " @" + Math.round(a.fx) + "," + Math.round(a.fy) + " shows " + Math.round(a.w) + "x" + Math.round(a.h) + " of " + Math.round(a.fw) + "x" + Math.round(a.fh) + " (cut by " + (a.cutBy.objectName || String(a.cutBy).split("(")[0]) + ")")
+            }
         }
         return out.length + (out.length ? "\n" + out.join("\n") : "")
     }
