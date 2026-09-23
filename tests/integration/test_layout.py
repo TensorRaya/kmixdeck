@@ -96,6 +96,22 @@ def test_kde_mixer_has_no_overlaps(stack, mixes):
         mixes, "\n".join(f"  {k}: " + "\n      ".join(v) for k, v in bad.items()))
 
 
+def test_kde_other_views_have_no_overlaps(stack):
+    """Tray popover, routing and patchbay under the same rules — the tray is its own window, --open tray puts it up
+    and the gesture measures the visible non-main window."""
+    set_mixes(stack, 5)
+    env = dict(stack.env, QT_QPA_PLATFORM="offscreen")
+    bad = {}
+    for view in ("tray", "routing", "patchbay"):
+        r = subprocess.run([str(BIN / "kmixdeck-kde"), "--size", "1600x900", "--open", view, "--gesture", "layout:overlaps|2"],
+                           env=env, capture_output=True, text=True, timeout=90)
+        out = r.stdout.split("gesture layout:overlaps|2 -> ", 1)
+        assert len(out) == 2, f"{view}: no answer from the window: {r.stderr[-400:]}"
+        f = findings(out[1].split("\ngesture ", 1)[0])
+        if f: bad[view] = f[:12]
+    assert not bad, "KDE views, 5 mixes:\n" + "\n".join(f"  {k}: " + "\n      ".join(v) for k, v in bad.items())
+
+
 @pytest.mark.parametrize("mixes", [2, 5, 8])
 def test_web_mixer_has_no_overlaps(stack, mixes):
     set_mixes(stack, mixes)

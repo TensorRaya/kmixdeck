@@ -137,6 +137,9 @@ int main(int argc, char *argv[])
     const auto openZiel = [](QQuickWindow *win, const QString &open) {
         if (open.isEmpty()) return;
         if (open == QLatin1String("apps")) QMetaObject::invokeMethod(win, "showApps");
+        // UX-17: the tray popover as a target too, so --gesture layout:overlaps can measure it (it is its own window;
+        // the gesture measures the visible non-main window). Before, only --screenshot knew "tray".
+        else if (open == QLatin1String("tray")) QMetaObject::invokeMethod(win, "showTrayOverview", Q_ARG(QVariant, 400), Q_ARG(QVariant, 700));
         else if (open == QLatin1String("routing")) QMetaObject::invokeMethod(win, "showRouting");
         else if (open == QLatin1String("patchbay")) QMetaObject::invokeMethod(win, "showPatchbay");
         else if (open == QLatin1String("channel-ports")) QMetaObject::invokeMethod(win, "addDialogOpenPorts");

@@ -31,6 +31,7 @@ Kirigami.AbstractApplicationWindow {
         Kirigami.Theme.inherit: false
     }
     QQC2.ScrollView {
+        objectName: "trayCard/overview"   // layoutOverlaps(): nothing may stick out of the popover's content area
         anchors.fill: parent; anchors.margins: Kirigami.Units.largeSpacing
         contentWidth: availableWidth
         ColumnLayout {
