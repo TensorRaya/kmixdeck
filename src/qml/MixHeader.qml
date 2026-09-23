@@ -114,12 +114,23 @@ QQC2.Control {
             visible: header.loudnessOn && !header.narrow
             spacing: Kirigami.Units.smallSpacing
             anchors { right: parent.right; bottom: mixMeter.top; rightMargin: Kirigami.Units.largeSpacing; bottomMargin: 2 }
+            // Fits the card or drops parts: first the "target" word (the target is also the line ON the meter), then
+            // TP. Anchored right with no width limit it ran 17 px out of the card at 4 mixes/1600 px (2026-09-23).
+            readonly property real avail: header.width - Kirigami.Units.largeSpacing * 2
+            readonly property real core: 3 * (letterM.width + 2 + digits.width) + 3 * spacing
+            readonly property bool showTP: avail >= core + tpW.width
+            readonly property bool showTarget: avail >= core + tpW.width + spacing + targetW.width
+            TextMetrics { id: digits; font.family: "monospace"; font.pixelSize: Kirigami.Theme.smallFont.pixelSize; text: "-00.0" }
+            TextMetrics { id: letterM; font: Kirigami.Theme.smallFont; text: "M" }
+            TextMetrics { id: tpW; font.family: "monospace"; font.pixelSize: Kirigami.Theme.smallFont.pixelSize; text: "TP -00.0" }
+            TextMetrics { id: targetW; font: Kirigami.Theme.smallFont; text: i18n("target %1", "-00") }
             Repeater {
                 model: [{ l: "M", v: header.lufsM }, { l: "S", v: header.lufsS }, { l: "I", v: header.lufsI }]
                 RowLayout {
                     spacing: 2
                     QQC2.Label {
                         text: modelData.l
+                        Layout.preferredWidth: letterM.width
                         font: Kirigami.Theme.smallFont
                         opacity: 0.55
                     }
@@ -128,6 +139,8 @@ QQC2.Control {
                         // -70 is the daemon's "nothing yet" (silence, or the R128 gate never opened) — showing
                         // "-70.0" there would look like a measurement, so it reads as a dash instead.
                         text: modelData.v > -70 ? modelData.v.toFixed(1) : "–"
+                        Layout.preferredWidth: digits.width   // fixed slot: the row does not change width as values move
+                        horizontalAlignment: Text.AlignRight
                         font.family: "monospace"
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                         // I is the number a streamer is judged by: green once the target is met, amber while under it
@@ -139,6 +152,7 @@ QQC2.Control {
             }
             QQC2.Label {
                 objectName: "lufsTP/" + header.mix
+                visible: lufsRow.showTP
                 text: header.lufsTP > -70 ? i18n("TP %1", header.lufsTP.toFixed(1)) : i18n("TP –")
                 font.family: "monospace"
                 font.pixelSize: Kirigami.Theme.smallFont.pixelSize
@@ -148,6 +162,7 @@ QQC2.Control {
             }
             QQC2.Label {
                 objectName: "lufsTarget/" + header.mix
+                visible: lufsRow.showTarget
                 text: i18n("target %1", header.loudnessTarget.toFixed(0))
                 font: Kirigami.Theme.smallFont
                 opacity: 0.55

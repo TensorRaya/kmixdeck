@@ -122,15 +122,24 @@ Item {
         ColumnLayout {
             id: nameCol
             Layout.fillWidth: true
-            Layout.minimumWidth: Kirigami.Units.gridUnit * (header.narrow ? 3.5 : 5)
+            // at least what the name line needs at its tightest (name ≤ 4 gridUnits, each badge squeezed to 1.2) —
+            // a smaller minimum let the layout give the column less than that, and "Apps" slid under mute
+            readonly property real lineMin: Math.min(nameLabel.implicitWidth, Kirigami.Units.gridUnit * 4)
+                + (header.group !== "" ? Kirigami.Units.gridUnit * 1.2 + nameRow.spacing : 0)
+                + (header.isDucked ? Kirigami.Units.gridUnit * 1.2 + nameRow.spacing : 0)
+                + (header.foldedActive ? Kirigami.Units.smallSpacing * 2 + nameRow.spacing : 0)
+            Layout.minimumWidth: Math.max(Kirigami.Units.gridUnit * (header.narrow ? 3.5 : 5), lineMin)
             spacing: 0
             RowLayout {
                 id: nameRow
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing
                 QQC2.Label {
+                    id: nameLabel
                     Layout.fillWidth: true
-                    Layout.minimumWidth: Kirigami.Units.gridUnit * 1.5   // the name never vanishes behind its badges
+                    // the name gives way LAST: badges shrink to their minimum first ("G…" next to two full badges
+                    // was the first screenshot after the overlap fix, 2026-09-23)
+                    Layout.minimumWidth: Math.min(implicitWidth, Kirigami.Units.gridUnit * 4)
                     text: Mixer.channelName(header.channel)
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
