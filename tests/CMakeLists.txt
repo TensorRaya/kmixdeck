@@ -143,7 +143,7 @@ if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMP
     # Am 2026-09-22 fehlte `soundboard` in dieser Liste: 10 CT-8-Tests, committet und als
     # fertig gemeldet, im Vollgate-Log 0 Treffer. Gefunden nur durch Abgleich `ls test_*.py`
     # gegen `ctest -N`. Genau das prueft jetzt der fast-Test `suiten-vollstaendig`.
-    foreach(suite service_cli audio_graph lifecycle routing fx presentation ports frontends_sync soundboard streamdeck web)
+    foreach(suite service_cli audio_graph lifecycle routing fx presentation layout ports frontends_sync soundboard streamdeck web)
         add_test(NAME integration-${suite}
             COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_${suite}.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
