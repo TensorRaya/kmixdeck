@@ -240,8 +240,13 @@ int main(int argc, char *argv[])
                 // Layout check: overlapping text/controls in the main window, or in the dialog-layer window openZiel made.
                 else if (op == QLatin1String("layout") && a.size() >= 1 && a[0] == QLatin1String("overlaps")) {
                     QQuickItem *start = nullptr;
+                    QQuickWindow *measured = win;
                     for (QWindow *w : QGuiApplication::topLevelWindows())
-                        if (w != win && w->isVisible()) if (auto *q = qobject_cast<QQuickWindow *>(w)) start = q->contentItem();
+                        if (w != win && w->isVisible()) if (auto *q = qobject_cast<QQuickWindow *>(w)) { start = q->contentItem(); measured = q; }
+                    // Measure a state a frame would show: layouts place their children in the polish pass before a
+                    // frame. Without it the check once read three M/S/I blocks of a just-enabled loudness row at the
+                    // same x (all at 795 px) — a state no user ever sees (2026-09-23). grabWindow() runs polish+sync.
+                    (void)measured->grabWindow();
                     QMetaObject::invokeMethod(win, "layoutOverlaps", Q_RETURN_ARG(QVariant, ret),
                                               Q_ARG(QVariant, QVariant::fromValue(start)), Q_ARG(QVariant, a.value(1, QStringLiteral("2")).toInt()));
                 }
