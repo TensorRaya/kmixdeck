@@ -30,9 +30,22 @@ export function render(root) {
   grid.append(el("div", { class: "corner bottom" },
     button("+ mix", { probe: "addMix", title: "Add mix", cls: "add", onClick: async () => { const n = prompt2("Mix name", ""); if (n) await C.call(C.ROOT, "AddMix", n).catch(err); } })));
   root.append(grid);
+  fitBadges(grid);
   if (!chans.length) root.append(el("p", { class: "empty" }, "No channels yet — press + to add one, or run the first-run wizard from the KDE window."));
 }
 const err = (e) => toast(e.message, true);
+
+// A badge that does not fit shows its symbol ("⛓", "↓") instead of "M…" / "↓ …" — the phone screenshot had two
+// pills that said nothing (2026-09-23). Same rule as ChannelHeader.qml: measured, full text in the tooltip.
+// textContent stays the full text, so probes and tests reading it see what the tooltip says.
+function fitBadges(root) {
+  for (const b of root.querySelectorAll(".badge[data-short]")) {
+    b.classList.remove("short");
+    if (b.scrollWidth > b.clientWidth + 1) b.classList.add("short");
+  }
+}
+let fitPending = 0;
+window.addEventListener("resize", () => { cancelAnimationFrame(fitPending); fitPending = requestAnimationFrame(() => fitBadges(document)); });
 
 function channelHeader(ch) {
   // ChannelHeader.qml: stripe · icon+name · source line · [mute][listen][pan dial][vertical meter][⋮] — NO fader here:
@@ -44,10 +57,10 @@ function channelHeader(ch) {
   body.append(el("div", { class: "head-row" },
     el("div", { class: "name-line" },
       el("button", { class: "name", probe: `channelName/${slug}`, title: "Rename", onclick: async () => { const n = prompt2("Channel name", ch.Name); if (n) await C.set(ch.path, "Name", n).catch(err); } }, el("span", { class: "icon" }, icon(ch.Icon)), " ", ch.Name),
-      ch.Group ? el("span", { class: "badge", probe: "channelGroupBadge" }, ch.Group) : null,
+      ch.Group ? el("span", { class: "badge", probe: "channelGroupBadge", title: `Group ${ch.Group}`, "data-short": "⛓" }, ch.Group) : null,
       // FX-9: wer duckt und wie viel gerade — dieselben zwei Angaben wie im KDE-Badge.
       ducked(ch)
-        ? el("span", { class: "badge badge-duck", probe: `channelDuckBadge/${ch.Slug}`, title: duckTooltip(ch) },
+        ? el("span", { class: "badge badge-duck", probe: `channelDuckBadge/${ch.Slug}`, title: duckTooltip(ch), "data-short": "↓" },
              duckBadge(ch))
         : null),
     el("button", { class: "source", probe: `channelSource/${slug}`, title: "Hardware input feeding this channel — click to change. Applications can be routed here regardless.", onclick: () => inputPicker(ch) }, ch.Inputs?.length ? ch.Inputs.map((r) => C.state.root.InputDevices?.[r.split(":")[0]] || r).join(", ") : "Apps", ch.InputPresent === false ? el("span", { class: "gone", title: "input device is not connected" }, " ⚠") : null)));
