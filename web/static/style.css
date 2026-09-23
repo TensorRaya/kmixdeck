@@ -56,7 +56,7 @@ main { padding: 12px; overflow: auto; }
 .channel-header .hbody .hrow { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; row-gap: 2px; min-width: 0; }
 .name-line { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 /* name and badges share the line and all shrink; the full text stays in the title/tooltip */
-.name-line > .name { flex: 0 1 auto; min-width: 2.5em; }
+.name-line > .name { flex: 0 0 auto; max-width: 7em; }   /* the name gives way last; badges shrink first */
 .name-line > .badge { flex: 0 1 auto; min-width: 2.2em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hbody .hrow { flex: 0 0 auto; }
 .mix-header .hbody { flex-wrap: wrap; }
@@ -115,7 +115,10 @@ main { padding: 12px; overflow: auto; }
                                       background: repeating-linear-gradient(to right, var(--text) 0 3px, transparent 3px 5px); }
 .meter .lufstarget[data-reached="1"] { background: var(--green); opacity: .9; }
 /* the LUFS readout row: one line, tabular digits so the numbers do not jitter while they update 25×/s */
-.lufsrow { display: flex; align-items: baseline; gap: 4px; margin: 2px 2px 0; font-size: 11px; }
+/* wraps instead of running out of a narrow mix card (8 mixes: TP sat 21 px outside, 2026-09-23); a value never
+   breaks inside itself, so "TP -21.1" moves to the next line as a whole */
+.lufsrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 4px; margin: 2px 2px 0; font-size: 11px; min-width: 0; }
+.lufsrow > span { white-space: nowrap; }
 .lufslabel { opacity: .55; }
 .lufsval { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
 .lufsval[data-reached="1"] { color: var(--green); }
