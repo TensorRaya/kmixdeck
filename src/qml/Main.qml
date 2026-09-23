@@ -231,7 +231,7 @@ Kirigami.ApplicationWindow {
             if (typeof it.text === "string" && it.text.length > 0) return true               // Label, button
             return it.hasOwnProperty("pressed") && it.hasOwnProperty("value")                 // dial, slider
         }
-        const karte = /^(channelHeader|mixHeader|cell)\//
+        const karte = /^(channelHeader|mixHeader|cell|trayCard)\//
         const items = []
         function walk(it, fenster, card) {
             if (!it || !it.visible || it.opacity === 0) return
@@ -264,6 +264,11 @@ Kirigami.ApplicationWindow {
                 for (let p = a.cutBy; p; p = p.parent) if (p === a.card) { inCard = true; break }
                 if (inCard) out.push("CLIPPED " + name(a.it) + " @" + Math.round(a.fx) + "," + Math.round(a.fy) + " shows " + Math.round(a.w) + "x" + Math.round(a.h) + " of " + Math.round(a.fw) + "x" + Math.round(a.fh) + " (cut by " + (a.cutBy.objectName || String(a.cutBy).split("(")[0]) + ")")
             }
+        }
+        // A badge label cut to "M…" says nothing: it must fit, or switch to its symbol (ChannelHeader does that).
+        for (const a of items) {
+            const p = a.it.parent
+            if (a.it.truncated === true && p && /Badge/.test(p.objectName || "")) out.push("ELIDED " + name(a.it) + " in " + p.objectName)
         }
         // Siblings that must line up: every mix header title on one baseline (a band reserved in only one card
         // pushed the Stream title 13 px up, 2026-09-23). Same y for all visible titles of the main window.

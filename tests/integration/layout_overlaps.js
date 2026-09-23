@@ -54,6 +54,9 @@
       out.push(`SQUEEZED ${nm(e)} ${e.scrollWidth}>${e.clientWidth}`);
     if (e.tagName === "SELECT" && e.getBoundingClientRect().width < 60) out.push(`SQUEEZED ${nm(e)} ${Math.round(e.getBoundingClientRect().width)} px`);
   }
+  // a badge cut to "M…" says nothing: it must fit, or show its symbol (.short) — same rule as the KDE check
+  for (const b of document.querySelectorAll(".badge")) if (b.getClientRects().length && !b.classList.contains("short") && b.scrollWidth > b.clientWidth + 1)
+    out.push(`ELIDED ${nm(b)} shows ${b.clientWidth} of ${b.scrollWidth} px`);
   // mix header titles on one line (same rule as the KDE check)
   const tt = [...document.querySelectorAll('[data-probe^="mixName/"]')].filter(e => e.getClientRects().length);
   for (const e of tt) if (Math.abs(e.getBoundingClientRect().top - tt[0].getBoundingClientRect().top) >= min)
