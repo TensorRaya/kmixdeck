@@ -66,7 +66,7 @@ int main(int argc, char *argv[])
     const QCommandLineOption selfTest(QStringLiteral("self-test"), QStringLiteral("Load the UI, then exit (used by ctest)."));
     const QCommandLineOption shot(QStringLiteral("screenshot"), QStringLiteral("Render the window to <file>.png and exit (works offscreen)."), QStringLiteral("file"));
     const QCommandLineOption openArg(QStringLiteral("open"), QStringLiteral("Open this page or dialog first: channel|mix|apps|routing|patchbay|channel-ports|fx/channel|mix/<slug>|duck/<slug>|soundboard (tray: --screenshot only)."), QStringLiteral("what"));
-    const QCommandLineOption sizeArg(QStringLiteral("size"), QStringLiteral("With --screenshot: window size WxH (default 1280x760)."), QStringLiteral("wxh"));
+    const QCommandLineOption sizeArg(QStringLiteral("size"), QStringLiteral("Window size WxH for --screenshot, --probe and --gesture (default 1280x760)."), QStringLiteral("wxh"));
     const QCommandLineOption gestureArg(QStringLiteral("gesture"), QStringLiteral("Patchbay gesture to perform, then exit (tests)."), QStringLiteral("spec"));
     const QCommandLineOption probeArg(QStringLiteral("probe"), QStringLiteral("Print <objectName>.<property> of a UI item after --open, then exit (tests)."), QStringLiteral("spec"));
     parser.addOption(selfTest); parser.addOption(shot); parser.addOption(openArg); parser.addOption(sizeArg); parser.addOption(gestureArg); parser.addOption(probeArg);
@@ -178,6 +178,9 @@ int main(int argc, char *argv[])
         auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         const QStringList gestures = parser.values(gestureArg);
         const QString openG = parser.value(openArg);
+        // --size gilt auch hier. Vorher nur bei --probe/--screenshot: eine Geste lief immer in der Standardgroesse,
+        // und layout:overlaps mass bei "1920x1080" pixelgleich dasselbe wie bei "1600x900" (2026-09-23).
+        if (parser.isSet(sizeArg)) { const QStringList wh = parser.value(sizeArg).split(QLatin1Char('x')); if (wh.size() == 2) win->resize(wh[0].toInt(), wh[1].toInt()); }
         // Ziel IMMER oeffnen, auch mit --probe: genau diese Bedingung war der Fehler.
         QTimer::singleShot(900, &app, [win, openG, openZiel] { openZiel(win, openG); });
         QTimer::singleShot(1200, &app, [win, gestures, &kde] {
@@ -234,6 +237,14 @@ int main(int argc, char *argv[])
                 }
                 else if (op == QLatin1String("trim") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureTrim", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
                 else if (op == QLatin1String("group") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureGroup", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
+                // Layout check: overlapping text/controls in the main window, or in the dialog-layer window openZiel made.
+                else if (op == QLatin1String("layout") && a.size() >= 1 && a[0] == QLatin1String("overlaps")) {
+                    QQuickItem *start = nullptr;
+                    for (QWindow *w : QGuiApplication::topLevelWindows())
+                        if (w != win && w->isVisible()) if (auto *q = qobject_cast<QQuickWindow *>(w)) start = q->contentItem();
+                    QMetaObject::invokeMethod(win, "layoutOverlaps", Q_RETURN_ARG(QVariant, ret),
+                                              Q_ARG(QVariant, QVariant::fromValue(start)), Q_ARG(QVariant, a.value(1, QStringLiteral("2")).toInt()));
+                }
                 else if (op == QLatin1String("firstrun") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureFirstRun", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 else if (op == QLatin1String("focus") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureFocus", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));
                 else if (op == QLatin1String("hide") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureHide", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));

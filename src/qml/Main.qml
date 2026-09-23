@@ -195,6 +195,69 @@ Kirigami.ApplicationWindow {
         const v = it[prop]
         return v === undefined ? "<no property " + prop + ">" : String(v)
     }
+    // Layout check (Michel 2026-09-23: "sehe da teilweise was überlappen"). A picture shows the symptom; this names
+    // both items and the overlap in pixels, so a test can assert on it. Collects what a user reads or presses — a
+    // text, a button, a dial — and stops there (a button's own background/label are not separate findings). Two
+    // kinds of finding: two such items overlap, or one sticks out of the card it belongs to (channel header, mix
+    // header, cell). Walks the main window, or the dialog-layer window if one is given.
+    function layoutOverlaps(startItem, minPx) {
+        const min = minPx || 2
+        const out = []
+        // Visible part of an item in `start` coordinates: every clipping ancestor cuts it (a ScrollView really hides
+        // what scrolled out). null = nothing of it is on screen.
+        function sichtbar(it, start) {
+            if (it.width <= 0 || it.height <= 0) return null
+            const g = it.mapToItem(start, 0, 0)
+            let x1 = g.x, y1 = g.y, x2 = g.x + it.width, y2 = g.y + it.height
+            for (let p = it; p; p = p.parent) {
+                if (!p.visible || p.opacity === 0) return null
+                if (p.clip && p !== it) {
+                    const q = p.mapToItem(start, 0, 0)
+                    x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); x2 = Math.min(x2, q.x + p.width); y2 = Math.min(y2, q.y + p.height)
+                    if (x2 - x1 < 1 || y2 - y1 < 1) return null
+                }
+                if (p === start) break
+            }
+            return { x: x1, y: y1, w: x2 - x1, h: y2 - y1, fx: g.x, fy: g.y, fw: it.width, fh: it.height }
+        }
+        function name(it) {
+            const n = it.objectName || ""
+            const txt = (typeof it.text === "string" && it.text.length) ? it.text.slice(0, 28) : ""
+            return (n || String(it).split("(")[0]) + (txt ? " \"" + txt + "\"" : "")
+        }
+        function blatt(it) {
+            if (typeof it.text === "string" && it.text.length > 0) return true               // Label, button
+            return it.hasOwnProperty("pressed") && it.hasOwnProperty("value")                 // dial, slider
+        }
+        const karte = /^(channelHeader|mixHeader|cell)\//
+        const items = []
+        function walk(it, fenster, card) {
+            if (!it || !it.visible || it.opacity === 0) return
+            if (karte.test(it.objectName || "")) card = it
+            if (blatt(it)) {
+                const r = sichtbar(it, fenster)
+                if (r) items.push({ it: it, card: card, x: r.x, y: r.y, w: r.w, h: r.h, fx: r.fx, fy: r.fy, fw: r.fw, fh: r.fh })
+                return
+            }
+            for (let i = 0; i < (it.children ? it.children.length : 0); ++i) walk(it.children[i], fenster, card)
+        }
+        const start = startItem || root.contentItem
+        walk(start, start, null)
+        for (let i = 0; i < items.length; ++i) for (let j = i + 1; j < items.length; ++j) {
+            const a = items[i], b = items[j]
+            const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)
+            const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
+            if (ox >= min && oy >= min) out.push(name(a.it) + " @" + Math.round(a.x) + "," + Math.round(a.y) + " ⨯ " + name(b.it) + " @" + Math.round(b.x) + "," + Math.round(b.y) + " = " + Math.round(ox) + "x" + Math.round(oy))
+        }
+        for (const a of items) {
+            if (!a.card) continue
+            const c = a.card.mapToItem(start, 0, 0)
+            // full size, not the clipped part: a card that clips its own button cuts it in half — that is the finding
+            const raus = Math.max(c.x - a.fx, a.fx + a.fw - (c.x + a.card.width), c.y - a.fy, a.fy + a.fh - (c.y + a.card.height))
+            if (raus >= min) out.push("OUTSIDE " + name(a.it) + " @" + Math.round(a.fx) + "," + Math.round(a.fy) + " leaves " + a.card.objectName + " by " + Math.round(raus) + " px")
+        }
+        return out.length + (out.length ? "\n" + out.join("\n") : "")
+    }
     // UX-4: the item behind an objectName (visual tree, not QObject parents — findChild() does not see QML items)
     function itemByName(name) {
         function find(item) {
