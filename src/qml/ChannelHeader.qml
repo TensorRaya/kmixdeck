@@ -24,8 +24,24 @@ Item {
     property string iconName: Mixer.channelIcon(channel)
     property string colorCode: Mixer.channelColor(channel)   // MX-5
     property string group: Mixer.channelGroup(channel)       // CH-8
-    readonly property bool compact: width < Kirigami.Units.gridUnit * 21   // only the FX button folds into ⋮; listen stays
-    readonly property bool narrow: width < Kirigami.Units.gridUnit * 13    // many mixes: smaller tile, no trim read-out (tooltip has it)
+    // Many mixes → narrow column: no icon tile, tighter spacing, no " dB" on the trim read-out (the tooltip has it).
+    readonly property bool narrow: width < Kirigami.Units.gridUnit * 16
+    // What the row needs without the FX and ducking buttons. Computed from the real controls, not guessed: until
+    // 2026-09-23 "compact" was a fixed 21 gridUnits, the header was 12 or 19 wide, and with active FX/ducking the
+    // buttons sat on the first mix column by up to 103 px (Michel: "sehe da teilweise was überlappen").
+    readonly property real rowSpacing: Kirigami.Units.smallSpacing * (narrow ? 1 : 1.5)
+    readonly property real baseNeed: row.anchors.leftMargin + row.anchors.rightMargin
+        + (narrow ? 0 : tile.Layout.preferredWidth + rowSpacing)
+        + nameCol.Layout.minimumWidth + rowSpacing
+        + muteBtn.implicitWidth + rowSpacing + trimDial.Layout.preferredWidth + rowSpacing
+        + (header.inputDevice.length > 0 ? panDial.Layout.preferredWidth + rowSpacing : 0)
+        + chMeter.Layout.preferredWidth + rowSpacing + listenBtn.implicitWidth + rowSpacing + menuBtn.implicitWidth
+    // Room for how many of the two optional buttons. Both fit → both show (active or not). One fits → the active
+    // one, effects first. None → both live in ⋮ only, and a dot next to the name says something is active there.
+    readonly property int extraSlots: Math.max(0, Math.min(2, Math.floor((width - baseNeed) / (menuBtn.implicitWidth + rowSpacing))))
+    readonly property bool showFx: extraSlots >= 2 || (extraSlots === 1 && hasFx)
+    readonly property bool showDuck: extraSlots >= 2 || (extraSlots === 1 && isDucked && !hasFx)
+    readonly property bool foldedActive: (hasFx && !showFx) || (isDucked && !showDuck)
     property bool dropActive: false           // UX-11: a drag hovers this row
 
     Connections {
@@ -77,12 +93,15 @@ Item {
     }
 
     RowLayout {
+        id: row
         anchors { fill: parent; leftMargin: Kirigami.Units.smallSpacing * 1.5; rightMargin: Kirigami.Units.smallSpacing / 2 }
-        spacing: Kirigami.Units.smallSpacing * 1.5
+        spacing: header.rowSpacing
 
         // icon tile — the channel's icon on a darker rounded square
         Rectangle {
-            Layout.preferredWidth: Kirigami.Units.gridUnit * (header.narrow ? 1.6 : 2.2)
+            id: tile
+            visible: !header.narrow
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 2.2
             Layout.preferredHeight: Layout.preferredWidth
             radius: Kirigami.Units.smallSpacing
             color: Qt.darker(Kirigami.Theme.alternateBackgroundColor, 1.25)
@@ -101,14 +120,17 @@ Item {
 
         // name + input line
         ColumnLayout {
+            id: nameCol
             Layout.fillWidth: true
-            Layout.minimumWidth: Kirigami.Units.gridUnit * (header.narrow ? 3 : 5)
+            Layout.minimumWidth: Kirigami.Units.gridUnit * (header.narrow ? 3.5 : 5)
             spacing: 0
             RowLayout {
+                id: nameRow
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing
                 QQC2.Label {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 1.5   // the name never vanishes behind its badges
                     text: Mixer.channelName(header.channel)
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
@@ -121,8 +143,18 @@ Item {
                     color: Kirigami.Theme.highlightColor
                     implicitWidth: badgeLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
                     implicitHeight: badgeLabel.implicitHeight + 2
+                    // shares the line with the name: shrinks (and elides, full text in the tooltip) instead of
+                    // pushing past the column onto the mute button
+                    Layout.maximumWidth: implicitWidth
+                    Layout.preferredWidth: implicitWidth
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 1.2
+                    Layout.fillWidth: true
+                    clip: true
                     QQC2.Label {
-                        id: badgeLabel; anchors.centerIn: parent
+                        id: badgeLabel
+                        anchors { fill: parent; leftMargin: Kirigami.Units.smallSpacing; rightMargin: Kirigami.Units.smallSpacing }
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
                         text: "⛓ " + header.group
                         font: Kirigami.Theme.smallFont
                         color: Kirigami.Theme.highlightedTextColor
@@ -140,8 +172,16 @@ Item {
                     color: Kirigami.Theme.neutralBackgroundColor
                     implicitWidth: duckBadgeLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
                     implicitHeight: duckBadgeLabel.implicitHeight + 2
+                    Layout.maximumWidth: implicitWidth
+                    Layout.preferredWidth: implicitWidth
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 1.2
+                    Layout.fillWidth: true
+                    clip: true
                     QQC2.Label {
-                        id: duckBadgeLabel; anchors.centerIn: parent
+                        id: duckBadgeLabel
+                        anchors { fill: parent; leftMargin: Kirigami.Units.smallSpacing; rightMargin: Kirigami.Units.smallSpacing }
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
                         // Waehrend es wirklich absenkt, steht die Zahl dabei; sonst nur wer der Trigger ist.
                         text: header.duckReduction < -0.1
                             ? i18nc("@info ducked by channel, with the reduction happening now",
@@ -162,6 +202,19 @@ Item {
                         onTriggered: header.duckReduction = Mixer.duckReduction(header.channel)
                     }
                 }
+                Rectangle {   // effects or ducking is on, but its button is folded into ⋮ for lack of room
+                    objectName: "channelFoldedActive/" + header.channel
+                    visible: header.foldedActive
+                    Layout.preferredWidth: Kirigami.Units.smallSpacing * 2; Layout.preferredHeight: Layout.preferredWidth
+                    radius: width / 2
+                    color: Kirigami.Theme.positiveTextColor
+                    QQC2.ToolTip.text: header.hasFx && header.isDucked ? i18n("Effects and ducking are on — see ⋮")
+                                     : header.hasFx ? i18n("Effects are on — see ⋮") : i18n("Ducking is on — see ⋮")
+                    QQC2.ToolTip.visible: foldHover.hovered
+                    HoverHandler { id: foldHover }
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: QQC2.ToolTip.text
+                }
             }
             QQC2.Label {
                 id: inLabel
@@ -181,6 +234,7 @@ Item {
 
         // mute + the channel's own fader (what all mixes receive)
         QQC2.ToolButton {
+            id: muteBtn
             objectName: "channelMute/" + header.channel   // AR-12 probe
             icon.name: header.muted ? "audio-volume-muted" : "audio-volume-high"
             icon.color: header.muted ? Kirigami.Theme.negativeTextColor : undefined
@@ -273,6 +327,8 @@ Item {
         // Headphones like in the mix header — it sat next to the mute button with the SAME speaker glyph (laptop
         // screenshot: two identical icons, one of them meaning "solo").
         QQC2.ToolButton {
+            id: listenBtn
+            objectName: "channelListen/" + header.channel
             icon.name: "audio-headphones"
             display: QQC2.AbstractButton.IconOnly
             text: i18n("Listen to this channel")
@@ -285,7 +341,8 @@ Item {
 
         // effects — highlighted when a chain is active (ADR 0008)
         QQC2.ToolButton {
-            visible: !header.compact || header.hasFx
+            objectName: "channelFx/" + header.channel
+            visible: header.showFx
             icon.name: "view-media-equalizer"
             icon.color: header.hasFx ? Kirigami.Theme.positiveTextColor : undefined
             display: QQC2.AbstractButton.IconOnly
@@ -297,7 +354,7 @@ Item {
         // FX-9 ducking — highlighted while a trigger is configured
         QQC2.ToolButton {
             objectName: "channelDuck/" + header.channel
-            visible: !header.compact || header.isDucked
+            visible: header.showDuck
             icon.name: "audio-volume-low"
             icon.color: header.isDucked ? Kirigami.Theme.positiveTextColor : undefined
             display: QQC2.AbstractButton.IconOnly
@@ -307,6 +364,7 @@ Item {
             Accessible.name: Mixer.channelName(header.channel) + " — " + text
         }
         QQC2.ToolButton {
+            id: menuBtn
             objectName: "channelMenuButton/" + header.channel
             icon.name: "overflow-menu"
             display: QQC2.AbstractButton.IconOnly
@@ -351,8 +409,8 @@ Item {
             onTriggered: Mixer.moveChannel(header.channel, idx + 1)
         }
         QQC2.MenuItem { text: i18n("Hardware input…"); icon.name: "audio-input-microphone"; onTriggered: inMenu.popup() }
-        QQC2.MenuItem { text: i18n("Effects…"); icon.name: "view-media-equalizer"; onTriggered: applicationWindow().fxPanelOpen("channel", header.channel) }
-        QQC2.MenuItem { text: i18n("Ducking…"); icon.name: "audio-volume-low"; onTriggered: applicationWindow().duckPanelOpen(header.channel) }
+        QQC2.MenuItem { text: header.hasFx ? i18n("Effects (active)…") : i18n("Effects…"); icon.name: "view-media-equalizer"; onTriggered: applicationWindow().fxPanelOpen("channel", header.channel) }
+        QQC2.MenuItem { text: header.isDucked ? i18n("Ducking (active)…") : i18n("Ducking…"); icon.name: "audio-volume-low"; onTriggered: applicationWindow().duckPanelOpen(header.channel) }
         QQC2.MenuItem {
             text: i18n("New applications start here")
             icon.name: "go-jump"

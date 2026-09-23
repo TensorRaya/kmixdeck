@@ -41,12 +41,20 @@ QQC2.Control {
         }
     }
     padding: 0
+    // UX-18 read-out gets its own band under the controls (MixerPage makes every mix header that much taller while
+    // any mix has the analyser on, so the rows stay aligned). It used to be anchored over the bottom of the card,
+    // and the M/S/I/TP digits sat under ⋮, mute and the master fader (--gesture layout:overlaps, 2026-09-23).
+    readonly property int lufsBand: lufsRow.implicitHeight + 7
+    bottomPadding: loudnessOn && !narrow ? lufsBand : 0
     // Narrow card (laptop, 3 mixes): the FX button folds into the ⋮ menu (it is there anyway) so the device line keeps
     // room. The listen button NEVER folds — hold-to-listen is a primary control (UX-12).
     readonly property bool compact: width < Kirigami.Units.gridUnit * 24
     // Folded header (many mixes on a normal screen): two rows — icon+name+⋮ over mute+master+listen. Same controls,
     // same objectNames, so every gesture and probe keeps working; only the arrangement changes.
-    readonly property bool narrow: width < Kirigami.Units.gridUnit * 12
+    // 17, not 12: the one-row header (tile, name, ⋮, mute, master, listen) needs ~16.5 gridUnits. Between 12 and 17 it
+    // stayed one row and pushed the listen button 6 px out of the card (--gesture layout:overlaps, 5 mixes at 1920 px,
+    // 2026-09-23). MixerPage.mixColWide is the same number, so a folded header always gets the two-row height.
+    readonly property bool narrow: width < Kirigami.Units.gridUnit * 17
 
     Connections {
         target: Mixer
