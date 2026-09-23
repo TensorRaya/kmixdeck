@@ -265,6 +265,11 @@ Kirigami.ApplicationWindow {
                 if (inCard) out.push("CLIPPED " + name(a.it) + " @" + Math.round(a.fx) + "," + Math.round(a.fy) + " shows " + Math.round(a.w) + "x" + Math.round(a.h) + " of " + Math.round(a.fw) + "x" + Math.round(a.fh) + " (cut by " + (a.cutBy.objectName || String(a.cutBy).split("(")[0]) + ")")
             }
         }
+        // Siblings that must line up: every mix header title on one baseline (a band reserved in only one card
+        // pushed the Stream title 13 px up, 2026-09-23). Same y for all visible titles of the main window.
+        const titles = items.filter(a => /^mixHeaderTitle\//.test(a.it.objectName || ""))
+        for (const a of titles) if (Math.abs(a.fy - titles[0].fy) >= min)
+            out.push("MISALIGNED " + name(a.it) + " y=" + Math.round(a.fy) + ", " + name(titles[0].it) + " y=" + Math.round(titles[0].fy))
         return out.length + (out.length ? "\n" + out.join("\n") : "")
     }
     // UX-4: the item behind an objectName (visual tree, not QObject parents — findChild() does not see QML items)

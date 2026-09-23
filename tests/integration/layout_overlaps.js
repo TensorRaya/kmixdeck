@@ -2,7 +2,7 @@
 // Layout check for the web frontend, the same rules as layoutOverlaps() in Main.qml: what a user reads or presses
 // (a text run, a button, a select, a slider) — stop there, a button's inner icon is not a separate finding. Two
 // kinds of finding: two such items overlap, or one sticks out of the card it belongs to (channel header, mix
-// header, cell). Clipped parts count as not visible (overflow hidden really hides them).
+// header, cell), plus mix header titles that do not share one line. Clipped parts count as not visible.
 (() => {
   const min = 2;
   const card = (e) => e.closest(".channel-header, .mix-header, .cell");
@@ -54,5 +54,9 @@
       out.push(`SQUEEZED ${nm(e)} ${e.scrollWidth}>${e.clientWidth}`);
     if (e.tagName === "SELECT" && e.getBoundingClientRect().width < 60) out.push(`SQUEEZED ${nm(e)} ${Math.round(e.getBoundingClientRect().width)} px`);
   }
+  // mix header titles on one line (same rule as the KDE check)
+  const tt = [...document.querySelectorAll('[data-probe^="mixName/"]')].filter(e => e.getClientRects().length);
+  for (const e of tt) if (Math.abs(e.getBoundingClientRect().top - tt[0].getBoundingClientRect().top) >= min)
+    out.push(`MISALIGNED ${nm(e)} y=${Math.round(e.getBoundingClientRect().top)}, ${nm(tt[0])} y=${Math.round(tt[0].getBoundingClientRect().top)}`);
   return out.length + (out.length ? "\n" + out.join("\n") : "");
 })()
