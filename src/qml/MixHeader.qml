@@ -45,7 +45,10 @@ QQC2.Control {
     // any mix has the analyser on, so the rows stay aligned). It used to be anchored over the bottom of the card,
     // and the M/S/I/TP digits sat under ⋮, mute and the master fader (--gesture layout:overlaps, 2026-09-23).
     readonly property int lufsBand: lufsRow.implicitHeight + 7
-    bottomPadding: loudnessOn && !narrow ? lufsBand : 0
+    // Set by MixerPage while ANY mix has the analyser on: every header then reserves the band, not only the one that
+    // shows it — with the padding on the Stream header alone its title sat 13 px above the others (screenshot, 2026-09-23).
+    property bool reserveLufsBand: loudnessOn
+    bottomPadding: reserveLufsBand && !narrow ? lufsBand : 0
     // Narrow card (laptop, 3 mixes): the FX button folds into the ⋮ menu (it is there anyway) so the device line keeps
     // room. The listen button NEVER folds — hold-to-listen is a primary control (UX-12).
     readonly property bool compact: width < Kirigami.Units.gridUnit * 24

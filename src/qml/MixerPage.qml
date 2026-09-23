@@ -203,6 +203,7 @@ Kirigami.ScrollablePage {
                     MixHeader {
                         Layout.fillWidth: true
                         Layout.preferredHeight: page.headerH
+                        reserveLufsBand: Object.keys(page.loudMixes).length > 0
                         mix: mixPanel.modelData; channel: ""
                         onLoudnessOnChanged: page.noteLoudness(mix, loudnessOn)
                         Component.onCompleted: page.noteLoudness(mix, loudnessOn)

@@ -125,8 +125,8 @@ Item {
             // at least what the name line needs at its tightest (name ≤ 4 gridUnits, each badge squeezed to 1.2) —
             // a smaller minimum let the layout give the column less than that, and "Apps" slid under mute
             readonly property real lineMin: Math.min(nameLabel.implicitWidth, Kirigami.Units.gridUnit * 4)
-                + (header.group !== "" ? Kirigami.Units.gridUnit * 1.2 + nameRow.spacing : 0)
-                + (header.isDucked ? Kirigami.Units.gridUnit * 1.2 + nameRow.spacing : 0)
+                + (header.group !== "" ? Kirigami.Units.gridUnit * 1.5 + nameRow.spacing : 0)
+                + (header.isDucked ? Kirigami.Units.gridUnit * 1.5 + nameRow.spacing : 0)
                 + (header.foldedActive ? Kirigami.Units.smallSpacing * 2 + nameRow.spacing : 0)
             Layout.minimumWidth: Math.max(Kirigami.Units.gridUnit * (header.narrow ? 3.5 : 5), lineMin)
             spacing: 0
@@ -145,18 +145,24 @@ Item {
                     elide: Text.ElideRight
                 }
                 Rectangle {   // CH-8 group badge: same label on every member → you see who moves together
+                    id: groupBadge
                     objectName: "channelGroupBadge"
                     visible: header.group !== ""
                     readonly property string groupName: header.group
                     radius: height / 2
                     color: Kirigami.Theme.highlightColor
-                    implicitWidth: badgeLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
+                    // Too narrow for the text -> the symbol alone ("⛓"), never a bare "…" (KDE screenshot at 5 mixes
+                    // showed two "…" pills that said nothing, 2026-09-23). Widths from TextMetrics, not from the
+                    // label, so the choice does not feed back into the width it is based on.
+                    TextMetrics { id: groupFull; font: Kirigami.Theme.smallFont; text: "⛓ " + header.group }
+                    TextMetrics { id: groupShort; font: Kirigami.Theme.smallFont; text: "⛓" }
+                    implicitWidth: groupFull.advanceWidth + Kirigami.Units.smallSpacing * 2 + 1
                     implicitHeight: badgeLabel.implicitHeight + 2
                     // shares the line with the name: shrinks (and elides, full text in the tooltip) instead of
                     // pushing past the column onto the mute button
                     Layout.maximumWidth: implicitWidth
                     Layout.preferredWidth: implicitWidth
-                    Layout.minimumWidth: Kirigami.Units.gridUnit * 1.2
+                    Layout.minimumWidth: groupShort.advanceWidth + Kirigami.Units.smallSpacing * 2 + 1
                     Layout.fillWidth: true
                     clip: true
                     QQC2.Label {
@@ -164,7 +170,7 @@ Item {
                         anchors { fill: parent; leftMargin: Kirigami.Units.smallSpacing; rightMargin: Kirigami.Units.smallSpacing }
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                         elide: Text.ElideRight
-                        text: "⛓ " + header.group
+                        text: groupBadge.width >= groupBadge.implicitWidth - 0.5 ? "⛓ " + header.group : "⛓"
                         font: Kirigami.Theme.smallFont
                         color: Kirigami.Theme.highlightedTextColor
                     }
@@ -175,15 +181,22 @@ Item {
                     Accessible.name: i18n("in group %1", header.group)
                 }
                 Rectangle {   // FX-9 badge: WER duckt und WIE VIEL gerade — die Spec verlangt beides am Kanal
+                    id: duckBadge
                     objectName: "channelDuckBadge/" + header.channel
                     visible: header.isDucked
                     radius: height / 2
                     color: Kirigami.Theme.neutralBackgroundColor
-                    implicitWidth: duckBadgeLabel.implicitWidth + Kirigami.Units.smallSpacing * 2
+                    readonly property string fullText: header.duckReduction < -0.1
+                        ? i18nc("@info ducked by channel, with the reduction happening now",
+                                "↓ %1 %2 dB", Mixer.channelName(header.duckedBy), header.duckReduction.toFixed(1))
+                        : i18nc("@info ducked by this channel", "↓ %1", Mixer.channelName(header.duckedBy))
+                    TextMetrics { id: duckFull; font: Kirigami.Theme.smallFont; text: duckBadge.fullText }
+                    TextMetrics { id: duckShort; font: Kirigami.Theme.smallFont; text: "↓" }
+                    implicitWidth: duckFull.advanceWidth + Kirigami.Units.smallSpacing * 2 + 1
                     implicitHeight: duckBadgeLabel.implicitHeight + 2
                     Layout.maximumWidth: implicitWidth
                     Layout.preferredWidth: implicitWidth
-                    Layout.minimumWidth: Kirigami.Units.gridUnit * 1.2
+                    Layout.minimumWidth: duckShort.advanceWidth + Kirigami.Units.smallSpacing * 2 + 1
                     Layout.fillWidth: true
                     clip: true
                     QQC2.Label {
@@ -192,10 +205,7 @@ Item {
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                         elide: Text.ElideRight
                         // Waehrend es wirklich absenkt, steht die Zahl dabei; sonst nur wer der Trigger ist.
-                        text: header.duckReduction < -0.1
-                            ? i18nc("@info ducked by channel, with the reduction happening now",
-                                    "↓ %1 %2 dB", Mixer.channelName(header.duckedBy), header.duckReduction.toFixed(1))
-                            : i18nc("@info ducked by this channel", "↓ %1", Mixer.channelName(header.duckedBy))
+                        text: duckBadge.width >= duckBadge.implicitWidth - 0.5 ? duckBadge.fullText : "↓"
                         font: Kirigami.Theme.smallFont
                         color: Kirigami.Theme.neutralTextColor
                     }
