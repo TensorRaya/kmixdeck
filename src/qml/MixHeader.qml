@@ -48,7 +48,9 @@ QQC2.Control {
     // Set by MixerPage while ANY mix has the analyser on: every header then reserves the band, not only the one that
     // shows it — with the padding on the Stream header alone its title sat 13 px above the others (screenshot, 2026-09-23).
     property bool reserveLufsBand: loudnessOn
-    bottomPadding: reserveLufsBand && !narrow ? lufsBand : 0
+    // Folded or not: the readout is UX-18, it does not go away because the column is narrow (it did from 11:32 on
+    // 2026-09-23, when narrow moved from 12 to 17 gridUnits — test_ux18 red in the full gate). Narrow shows fewer parts.
+    bottomPadding: reserveLufsBand ? lufsBand : 0
     // Narrow card (laptop, 3 mixes): the FX button folds into the ⋮ menu (it is there anyway) so the device line keeps
     // room. The listen button NEVER folds — hold-to-listen is a primary control (UX-12).
     readonly property bool compact: width < Kirigami.Units.gridUnit * 24
@@ -114,15 +116,18 @@ QQC2.Control {
         RowLayout {
             id: lufsRow
             objectName: "lufsRow/" + header.mix
-            visible: header.loudnessOn && !header.narrow
+            visible: header.loudnessOn
             spacing: Kirigami.Units.smallSpacing
             anchors { right: parent.right; bottom: mixMeter.top; rightMargin: Kirigami.Units.largeSpacing; bottomMargin: 2 }
             // Fits the card or drops parts: first the "target" word (the target is also the line ON the meter), then
             // TP. Anchored right with no width limit it ran 17 px out of the card at 4 mixes/1600 px (2026-09-23).
             readonly property real avail: header.width - Kirigami.Units.largeSpacing * 2
-            readonly property real core: 3 * (letterM.width + 2 + digits.width) + 3 * spacing
-            readonly property bool showTP: avail >= core + tpW.width
-            readonly property bool showTarget: avail >= core + tpW.width + spacing + targetW.width
+            // Parts drop in this order: "target", TP, then M and S. I stays — it is the number a stream is judged by.
+            readonly property real one: letterM.width + 2 + digits.width
+            readonly property bool showMS: avail >= 3 * one + 2 * spacing
+            readonly property real core: (showMS ? 3 * one + 2 * spacing : one)
+            readonly property bool showTP: avail >= core + spacing + tpW.width
+            readonly property bool showTarget: showTP && avail >= core + 2 * spacing + tpW.width + targetW.width
             TextMetrics { id: digits; font.family: "monospace"; font.pixelSize: Kirigami.Theme.smallFont.pixelSize; text: "-00.0" }
             TextMetrics { id: letterM; font: Kirigami.Theme.smallFont; text: "M" }
             TextMetrics { id: tpW; font.family: "monospace"; font.pixelSize: Kirigami.Theme.smallFont.pixelSize; text: "TP -00.0" }
@@ -131,6 +136,7 @@ QQC2.Control {
                 model: [{ l: "M", v: header.lufsM }, { l: "S", v: header.lufsS }, { l: "I", v: header.lufsI }]
                 RowLayout {
                     spacing: 2
+                    visible: modelData.l === "I" || lufsRow.showMS
                     QQC2.Label {
                         text: modelData.l
                         Layout.preferredWidth: letterM.width
@@ -204,7 +210,9 @@ QQC2.Control {
         }
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.minimumWidth: Kirigami.Units.gridUnit * (header.narrow ? 4 : 5)
+            // 3.5 folded: the title elides, and at 4 the two-row header needed 151 px — six mixes at 1280 px then no
+            // longer fit next to the 15-gridUnit channel column (MX-5 red in the full gate, 2026-09-23).
+            Layout.minimumWidth: Kirigami.Units.gridUnit * (header.narrow ? 3.5 : 5)
             Layout.preferredWidth: Kirigami.Units.gridUnit * (header.narrow ? 5 : 7)
             Layout.columnSpan: header.narrow ? 2 : 1
             spacing: 0

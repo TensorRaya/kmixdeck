@@ -30,7 +30,7 @@ Kirigami.ScrollablePage {
     // narrow (< mixColWide) → the header folds to two rows (icon+name+⋮ / mute+master+listen) and the channel column
     // shrinks with it. Only beyond mixColMin per mix does the strip scroll.
     readonly property int mixColWide: Kirigami.Units.gridUnit * 17   // = MixHeader.narrow threshold (one-row header needs it)
-    readonly property int mixColMin: Kirigami.Units.gridUnit * 8.5
+    readonly property int mixColMin: Kirigami.Units.gridUnit * 8
     readonly property int channelColWide: Kirigami.Units.gridUnit * 19
     // 15, not 12: the narrow header (no tile) needs ~14 gridUnits for name, mute, trim, pan, meter, listen and ⋮ —
     // at 12 the ⋮ button sat 66 px inside the first mix column (measured with --gesture layout:overlaps, 2026-09-23).
@@ -48,7 +48,7 @@ Kirigami.ScrollablePage {
     property var loudMixes: ({})
     function noteLoudness(slug, on) { const m = Object.assign({}, loudMixes); if (on) m[slug] = true; else delete m[slug]; loudMixes = m }
     readonly property int lufsBandH: Kirigami.Units.gridUnit + 7
-    readonly property int headerH: (narrow ? Math.round(rowH * 1.55) : rowH) + (!narrow && Object.keys(loudMixes).length > 0 ? lufsBandH : 0)   // two-row header when folded     // MX-5: the header (icon, name, mute, master, listen, ⋮) needs this much; below it the master handle left the card
+    readonly property int headerH: (narrow ? Math.round(rowH * 1.55) : rowH) + (Object.keys(loudMixes).length > 0 ? lufsBandH : 0)   // two-row header when folded     // MX-5: the header (icon, name, mute, master, listen, ⋮) needs this much; below it the master handle left the card
 
     Kirigami.PlaceholderMessage {
         anchors.centerIn: parent
