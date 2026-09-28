@@ -13,20 +13,21 @@ Exit 1 with one line per finding; exit 0 prints "ok".
 import pathlib, re, sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CODE = ["src", "web", "streamdeck", "interfaces", "data", "tools", "tests"]
-EXT = {".cpp", ".h", ".qml", ".py", ".js", ".html", ".css", ".xml", ".conf", ".in", ".json", ""}
+CODE = ["src", "web", "streamdeck", "interfaces", "data", "tools", "tests", "docs/adr", "docs/spec", "README.md", "CONTRIBUTING.md"]
+EXT = {".cpp", ".h", ".qml", ".py", ".js", ".html", ".css", ".xml", ".conf", ".in", ".json", ".md", ""}
 SELF = pathlib.Path(__file__).resolve()
 
 RULES = [
     ("QFile opened for writing — use QSaveFile (BP-7)", re.compile(r"\bQFile\b[^;]*;\s*(?:[^\n]*\n){0,2}?[^\n]*\.open\([^)]*WriteOnly")),
     ("person name in shipped code", re.compile(r"\bMichel\b")),
     ("developer home path", re.compile(r"/home/[a-z]")),
-    ("machine-specific scratch dir", re.compile(r"/var/tmp/(?:ab-|kmx-)")),
+    ("machine-specific scratch dir", re.compile(r"/var/tmp/(?!build\b|build_)[A-Za-z]")),   # build trees in examples are fine
 ]
 
 def files():
     for top in CODE:
-        for p in (ROOT / top).rglob("*"):
+        base = ROOT / top
+        for p in ([base] if base.is_file() else base.rglob("*")):
             if p.is_file() and p.resolve() != SELF and "__pycache__" not in p.parts and p.suffix in EXT:
                 yield p
 

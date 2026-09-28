@@ -46,7 +46,7 @@ def wait_level(fn, pred, tries=6, what="level"):
     return here.
 
     On `tries`: 6 recordings are ~11.4 s of real waiting, not 2.4 s — the sleep is the small part. MEASURED
-    (/var/tmp/trim_wahrheit.py, 2026-09-20): a wire trim is fully applied 26 ms after the CLI returns and
+    (throwaway script, 2026-09-20): a wire trim is fully applied 26 ms after the CLI returns and
     holds within 0.3 dB for the next 5 s; the product has no fade at all (graph.cpp:369 sets channelVolumes
     hard). Raising tries does not fix a level that never arrives — it only burns the ctest time budget."""
     v = None

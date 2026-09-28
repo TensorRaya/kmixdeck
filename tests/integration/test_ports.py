@@ -9,6 +9,7 @@ The fake source is `Audio/Source/Virtual`: that null-sink variant has `input_<PO
 and `capture_<POS>` ports the daemon captures from — a plain `Audio/Source` null-sink has no inputs at all (and
 drops its first position, PipeWire 1.x quirk)."""
 import os
+import tempfile
 import json
 import subprocess
 import time
@@ -80,7 +81,7 @@ def _keine_leichen(request, stack):
 # edge cannot load, the report path fires. No calibration, no timing, nothing to re-measure.
 # (Setting the variable globally does NOT work — pipewire itself builds starter.conf out of loopback
 # modules, so the sandbox never comes up. Verified 2026-09-20.)
-_MODULE_MIRROR = Path("/var/tmp/kmixdeck-test-modules-noloopback")
+_MODULE_MIRROR = Path(tempfile.gettempdir()) / "kmixdeck-test-modules-noloopback"
 
 
 def module_dir_without_loopback() -> Path:
@@ -132,7 +133,7 @@ def wait_level(fn, pred, tries=6, what="level"):
     On `tries`: each fn() call is a ~1.5 s RECORDING, so 6 tries are ~11.4 s of real waiting, not 2.4 s —
     do not reason about this window from the sleep alone (I got that wrong on 2026-09-20 and "fixed" a
     non-problem by raising tries to 20, which pushed integration-ports over its 600 s ctest limit).
-    MEASURED (/var/tmp/trim_wahrheit.py): a wire trim is fully applied 26 ms after the CLI returns and stays
+    MEASURED (throwaway script, 2026-09-20): a wire trim is fully applied 26 ms after the CLI returns and stays
     within 0.3 dB over the next 5 s — there is no fade in the product (graph.cpp:369 sets channelVolumes
     hard via pw_node_set_param). So 6 tries are generous for a settle; if a level never arrives at all,
     more patience cannot help and only burns the suite's time budget."""

@@ -1,6 +1,6 @@
 # ADR 0010 — One backend, one view model, N frontends: a feature is done when every frontend has it
 
-**Status:** accepted 2026-09-17 · **Owner:** Raya · **Requested by:** Michel
+**Status:** accepted 2026-09-17 · **Owner:** Raya · **Requested by:** project owner
 
 ## Context
 
@@ -13,7 +13,7 @@ kmixdeck now has three frontends in our own hands, with a fourth planned:
 | **tray** (in `kmixdeck-kde`, UX-17) | the essentials at a glance; double-click opens the window | this ADR |
 | web UI (AR-8) | everything, browser | planned |
 
-Michel, 2026-09-17: *"Damit müssen ja drei UIs feature-synchron entwickelt werden. Regel 1: Backend und API first.
+Owner, 2026-09-17: *"Damit müssen ja drei UIs feature-synchron entwickelt werden. Regel 1: Backend und API first.
 Regel 2: Ein Feature ist erst fertig, wenn es in allen UIs eingebaut ist, die wir entwickeln."*
 
 Without a structure, rule 2 is a wish: every feature would be N hand-written UI patches that drift the moment one
@@ -72,10 +72,10 @@ and the window's header bar renders the same struct (so "essentials" stays one d
 2. **`tests/integration/test_frontends_sync.py`** (new): for every core-tier row, drives the change through the CLI
    and reads it back through `overview()` (tray path) AND a KDE `--probe` — one test per row, table-driven, so adding
    a row is adding a line, not a file.
-3. **CONTRIBUTING.md** gets Michel's two rules verbatim, above AR-10.
+3. **CONTRIBUTING.md** gets the owner's two rules verbatim, above AR-10.
 
 ## Consequences
-- Features cost one client-lib change + N renderings; drift between frontends is caught by the audit, not by Michel.
+- Features cost one client-lib change + N renderings; drift between frontends is caught by the audit, not by a human reviewer.
 - The tray is cheap: it is a second renderer of data that exists anyway.
 - The web bridge (AR-8) becomes a serialiser of the same view models over WebSocket — no separate model.
 - Cost of the rule: a core feature is not ✅ until the tray has it. That is the point.

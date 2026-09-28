@@ -1,13 +1,13 @@
 # ADR 0009 — Port-based virtual devices (DV-13, DV-17…20)
 
-**Status:** accepted 2026-09-16 · **Owner:** Michel · **Drives:** DV-13, DV-17, DV-18, DV-19, DV-20
+**Status:** accepted 2026-09-16 · **Owner:** project owner · **Drives:** DV-13, DV-17, DV-18, DV-19, DV-20
 
 ## Context
 
 A RØDECaster Pro II is one USB node with 8+ capture and 8+ playback ports (Mic 1–4, Bluetooth, USB 1/2 …); a
 Soundcraft Ui24R is one node with 32 in / 32 out. kmixdeck treated a device as *one* thing: `channel input voice
 <node>` took the whole node, `mix output monitor <node>` the same. That is fine for a headset and wrong for a mixer:
-Michel wants "CH 18+19 as a stereo channel *Music*", "CH 21 mono as *Talkback*", "Headphones 2 as the *Stream*
+The owner wants "CH 18+19 as a stereo channel *Music*", "CH 21 mono as *Talkback*", "Headphones 2 as the *Stream*
 output" — several virtual devices carved from one piece of hardware, each behaving like any other channel/output.
 
 ## Decision
@@ -62,7 +62,7 @@ both sides; bad port ref rejected), `test_dv20_*` (`DevicePorts` lists ports; CL
 
 ## Amendment A (2026-09-16) — sides and pan (DV-21, DV-22, DV-23)
 
-Michel, after seeing the first cut: *"I'd expect to address the single channels and link them — not just one
+The owner, after seeing the first cut: *"I'd expect to address the single channels and link them — not just one
 beam, but connect left and right individually; in doubt put L and R on two different mixes. And a mono mic must
 be able to become stereo again."* And the concrete case: Ui24R over USB = 32 mono channels, one XLR = one channel,
 so a microphone is exactly ONE port to drag.
@@ -94,7 +94,7 @@ channel MAY have a second input edge with the other side: `Channel.InputDevices`
 `["ui24r:AUX18>L", "rode:Mic 2>R"]`. Each ref renders as its own loopback whose playback side declares only that
 channel position (`audio.position = [ FL ]`), so the two edges do not fight. Mono-only edges are the natural fit for
 "L and R of one source on two different mixes": make two channels, `src:AUX1>L`-style refs, route each to its mix.
-Yes, it makes little sense musically — Michel said so himself — but it costs nothing because it falls out of A2.
+Yes, it makes little sense musically — the owner said so himself — but it costs nothing because it falls out of A2.
 
 **A4. Pan is a channel property, not routing.** `Channel.Pan` (d, -1..1, default 0) sets the channel-sink's
 channelVolumes (constant-power law). For a mono source it is a position, for stereo a balance. The picker text
@@ -114,7 +114,7 @@ instead of hand-made pw-cli nodes.
 
 ## Amendment B (2026-09-16) — Patchbay, Loopback-style (DV-24…27), Web UI (AR-8/9)
 
-Michel: *"I meant more the variant: a hardware device like the Ui24R that has x connectors you can wire — like
+Owner: *"I meant more the variant: a hardware device like the Ui24R that has x connectors you can wire — like
 Loopback on the Mac."* Reference studied: rogueamoeba.com/loopback (tour screenshot). What we take from it:
 
 - **Cards, not boxes.** A source is a card with a header (title, on/off) and one row per connector: label, live
