@@ -233,3 +233,49 @@ Lehre: `addPath` gibt einen `bool` zurück, den niemand liest — und eine Annah
 über Fremdverhalten („das Verzeichnis fängt das mit ab") gehört gemessen, nicht
 kommentiert. Vier Läufe hätte ich mir gespart, wenn die 40 Zeilen Qt-Reproduktion
 am Anfang gestanden hätten statt am Ende.
+
+### 2026-09-23 — Überlappende Bedienelemente (Michel: „sehe da teilweise was überlappen")
+
+- FAKT (Messwerkzeug zuerst): `kmixdeck-kde --gesture layout:overlaps` meldet
+  sichtbare, bedienbare Elemente, die sich schneiden (OVERLAP), aus ihrer Karte
+  ragen (OUTSIDE), abgeschnitten sind (CLIPPED, ELIDED) oder deren Mix-Titel nicht
+  auf einer Linie stehen (MISALIGNED). Web-Gegenstück: `tests/integration/layout_overlaps.js`.
+- FAKT (vorher): KDE bis 37 Befunde (1280 px), 21 (1920 px); Web 22 (1600 px), 50 (412 px).
+- ROOT CAUSES: feste Schwellen statt gemessener Platzbedarf — Kanal-`compact` fest
+  21 gridUnits bei 12/19 breiter Spalte; einzeiliger Mix-Kopf braucht ~16,5 gridUnits,
+  faltete aber erst unter 12; die UX-18-Lautheitszeile lag *über* ⋮/Mute/Master statt
+  in einem eigenen Band.
+- AKTION: Platzbedarf aus den echten Knöpfen gerechnet, Überzähliges nur im ⋮-Menü
+  (grüner Punkt am Namen), Abzeichen fallen auf ihr Symbol zurück statt auf „…",
+  eigenes Lautheitsband für alle Mix-Köpfe. Suite `integration-layout` (7 Tests).
+- FAKT (nachher): 1/2/3/5/6/8 Mixe × 1152/1280/1600/1920 px → 0; Web 412–1600 px → 0.
+  Gegenprobe mit den alten Dateien: KDE 2/5 und Web 2/5/8 Mixe rot.
+
+### 2026-09-23 — drei Regressionen, die erst das Vollgate zeigte
+
+- FAKT: Vollgate 13:30, 28/30. Rot: `integration-frontends_sync` (3) und
+  `integration-ports` (2).
+- FAKT (frontends_sync, alle drei von mir, heute):
+  1. MX-5 — sechs Mixe bei 1280 px: `needed 938 > available 922`. Ursache: Kanalspalte
+     schmal 12 → 15 gridUnits, dazu Mix-Mindestbreite 8,5 gridUnits.
+  2. UX-18 — `lufsRow/r128.visible = false`. Ursache: `narrow` 12 → 17 gridUnits
+     machte die Lautheitszeile in jedem gefalteten Kopf unsichtbar
+     (`visible: loudnessOn && !narrow`). Die Layout-Prüfung konnte das nicht sehen:
+     ein verstecktes Element überlappt nichts.
+  3. UX-5 — `po/kmixdeck.pot` veraltet (337 statt 334 msgids), drei neue Tooltips
+     ohne Übersetzung.
+- AKTION: Lautheitszeile bleibt auch gefaltet sichtbar und lässt der Reihe nach
+  „Ziel", TP, dann M/S weg — I bleibt immer. Mix-Mindestbreite 8,5 → 8, Titelspalte
+  gefaltet 4 → 3,5 gridUnits (Titel kürzt mit …). Katalog neu erzeugt, 3 Strings übersetzt.
+- PREDICTION: 6 Mixe/1280 px `needed ≤ available`, Lautheitszeile sichtbar, 0 Befunde.
+  → **getroffen**: 920 ≤ 922, `lufsRow/stream.visible = true`, 1152–1920 px × 5/6/8 Mixe
+  je 0 Befunde.
+- Lehre: „Nicht überlappen" ist nur eine Hälfte. Die Lösung „einfach ausblenden"
+  besteht jede Überlappungsprüfung — dagegen schützt nur der Anforderungstest,
+  und der läuft erst im Vollgate. Deshalb laufen `presentation`, `layout`, `ports`
+  und `frontends_sync` bei QML-Änderungen ab jetzt vor dem Commit, nicht danach.
+- FAKT (ports): `test_dv21_side_bound_output…` −∞ dB an AUX5, `test_dv14` fällt danach
+  über die Reste (9 Knoten). Dasselbe Paar war schon am 2026-09-19, -21 und -22 rot, in
+  anderen Vollgates grün — vor meinen heutigen Änderungen, die den Daemon nicht berühren.
+  Offen als eigener Befund (siehe unten, sobald gemessen).
+
