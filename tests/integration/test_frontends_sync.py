@@ -907,7 +907,16 @@ def test_ux18_loudness_is_visible_in_every_frontend(stack):
             m, s, i, tp = lu
             assert abs(i - want) < 2.0, f"integrated {i:.2f} LUFS should be near the measured reference {want:.2f} LUFS"
 
+            def bus_i(): return json.loads(stack.cli("--json", "loudness", "--once").stdout)["r128"][2]
+
+            def within(shown, lo, hi, tol=0.5):
+                # I still creeps while a frontend starts up (measured 2026-09-28: bus -20.60 when read, KDE -20.1 a few
+                # seconds later, a 0.503 LU "mismatch" that was only time). The frontend must lie inside the bus
+                # values read right before and right after it, plus the unit-error tolerance.
+                return min(lo, hi) - tol < shown < max(lo, hi) + tol
+
             # (2) KDE window: the readout row must be there AND carry the same numbers, plus the target line
+            i0 = bus_i()
             w = window(stack, "lufsRow/r128.visible", "lufsI/r128.text", "lufsM/r128.text",
                        "lufsTP/r128.text", "lufsTarget/r128.text", "loudnessTarget/r128.visible")
             assert w["lufsRow/r128.visible"] == "true", f"the analyser is on but the KDE readout is hidden: {w}"
@@ -915,22 +924,27 @@ def test_ux18_loudness_is_visible_in_every_frontend(stack):
             assert w["lufsTarget/r128.text"] == "target -16", w
             # 0.5 LU between a frontend and the bus, not 3: the readouts are fed by the same signal at 25 Hz, so
             # anything larger is a unit error or the wrong array index, which is exactly what this row must catch.
-            assert abs(float(w["lufsI/r128.text"]) - i) < 0.5, f"KDE shows I={w['lufsI/r128.text']}, bus says {i:.2f}"
+            i1 = bus_i()
+            assert within(float(w["lufsI/r128.text"]), i0, i1), f"KDE shows I={w['lufsI/r128.text']}, bus said {i0:.2f} → {i1:.2f}"
             assert abs(float(w["lufsM/r128.text"]) - m) < 2.0, f"KDE shows M={w['lufsM/r128.text']}, bus says {m:.2f}"
             assert w["lufsTP/r128.text"].startswith("TP "), w
 
             # (3) tray: the integrated value against the target, one glance
+            i0 = bus_i()
             tr = tray(stack, "trayLufs/r128.visible", "trayLufs/r128.text")
             assert tr["trayLufs/r128.visible"] == "true", f"analyser on but tray line hidden: {tr}"
             assert "target -16" in tr["trayLufs/r128.text"], tr
-            assert abs(float(tr["trayLufs/r128.text"].split()[0]) - i) < 0.5, f"tray disagrees with the bus: {tr}"
+            i1 = bus_i()
+            assert within(float(tr["trayLufs/r128.text"].split()[0]), i0, i1), f"tray disagrees with the bus ({i0:.2f} → {i1:.2f}): {tr}"
 
             # (4) web UI
+            i0 = bus_i()
             b = browser(stack, "lufsRow/r128.textContent", "lufsI/r128.textContent", "lufsTP/r128.textContent",
                         "loudnessTarget/r128.dataset.lufs")
             assert "target -16" in b["lufsRow/r128.textContent"], b
             assert b["loudnessTarget/r128.dataset.lufs"] == "-16", f"web target line at the wrong value: {b}"
-            assert abs(float(b["lufsI/r128.textContent"]) - i) < 0.5, f"web shows I={b['lufsI/r128.textContent']}, bus says {i:.2f}"
+            i1 = bus_i()
+            assert within(float(b["lufsI/r128.textContent"]), i0, i1), f"web shows I={b['lufsI/r128.textContent']}, bus said {i0:.2f} → {i1:.2f}"
         finally:
             play.terminate()
 
