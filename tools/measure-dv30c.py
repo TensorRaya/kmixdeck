@@ -35,7 +35,7 @@ def one(run, outdir):
         built = time.time() - t0
         want = [f"kmixdeck.in.d{i}.in" for i in range(1, 33)] + [f"kmixdeck.out.r{k}" for k in range(4)] + \
                [f"kmixdeck.cells.d{i}" for i in range(1, 33)] + [f"kmixdeck.tap.r{k}" for k in range(4)]
-        t1 = time.time(); took = d.wait_nodes(want, timeout=180); visible = time.time() - t1
+        t1 = time.time(); d.wait_nodes(want, timeout=180); visible = time.time() - t1
         time.sleep(2.0)
         # every cell of every channel carries all 6 mixes (monitor, stream, r0..r3)
         missing = [(i, m) for i in range(1, 33) for m in ("monitor", "stream", "r0", "r1", "r2", "r3") if m not in d.cell_gains(f"d{i}")]
