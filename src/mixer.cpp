@@ -8,6 +8,7 @@
 #include <QTimer>
 #include <QDateTime>
 #include <QFile>
+#include <QSaveFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QDir>
@@ -1109,10 +1110,10 @@ bool Mixer::saveScene(const QString &name) {
     const QString path = scenePath(name);
     if (path.isEmpty()) { qCWarning(lcMixer) << "scene: refusing empty name"; return false; }
     QDir().mkpath(sceneDir());
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) { qCWarning(lcMixer) << "scene: cannot write" << path; return false; }
+    QSaveFile f(path);   // BP-7: a scene cut off mid-write must not replace the good one
+    if (!f.open(QIODevice::WriteOnly)) { qCWarning(lcMixer) << "scene: cannot write" << path; return false; }
     f.write(QJsonDocument(captureScene()).toJson(QJsonDocument::Indented));
-    f.close();
+    if (!f.commit()) { qCWarning(lcMixer) << "scene: cannot write" << path << f.errorString(); return false; }
     qCInfo(lcMixer) << "scene saved:" << name;
     Q_EMIT scenesChanged();
     return true;

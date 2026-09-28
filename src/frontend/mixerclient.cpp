@@ -4,6 +4,7 @@
 #include "../logging.h"
 Q_LOGGING_CATEGORY(lcFrontend, "kmixdeck.frontend")
 #include <QFile>
+#include <QSaveFile>
 #include <KLocalizedString>
 #include <QDBusInterface>
 #include <QSet>
@@ -613,9 +614,11 @@ bool MixerClient::exportToFile(const QUrl &url) {
     QDBusInterface iface(BUS, ROOT, QStringLiteral("org.kmixdeck1.Mixer"), QDBusConnection::sessionBus());
     const QDBusReply<QString> r = iface.call(QStringLiteral("Export"));
     if (!r.isValid()) { m_lastError = r.error().message(); Q_EMIT lastErrorChanged(); return false; }
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) { m_lastError = f.errorString(); Q_EMIT lastErrorChanged(); return false; }
-    f.write(r.value().toUtf8()); m_lastError.clear(); Q_EMIT lastErrorChanged(); return true;
+    QSaveFile f(path);   // BP-7: same as `kmixdeck export` — never leave a half-written backup behind
+    if (!f.open(QIODevice::WriteOnly)) { m_lastError = f.errorString(); Q_EMIT lastErrorChanged(); return false; }
+    f.write(r.value().toUtf8());
+    if (!f.commit()) { m_lastError = f.errorString(); Q_EMIT lastErrorChanged(); return false; }
+    m_lastError.clear(); Q_EMIT lastErrorChanged(); return true;
 }
 bool MixerClient::importFromFile(const QUrl &url) {
     const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();

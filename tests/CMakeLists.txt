@@ -58,6 +58,11 @@ set_tests_properties(suiten-vollstaendig PROPERTIES LABELS "fast")
 add_test(NAME sot-audit COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/sot-audit.py)
 set_tests_properties(sot-audit PROPERTIES LABELS "fast")
 
+# Review v0.5: persistence through QSaveFile only (BP-7) and no internal references in shipped code.
+# Measured red first: 2 bare QFile writers (scene save, UI export) + 4 person-name quotes in comments.
+add_test(NAME hygiene COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/pruefe-hygiene.py)
+set_tests_properties(hygiene PROPERTIES LABELS "fast")
+
 # RQ-3: 100 % des D-Bus-Vertrags hat eine Beschreibung (tools/dbus-doc.py, exit 1 + Liste sonst).
 # Das Werkzeug gab es, aber niemand rief es auf — gemessen 2026-09-22 waren 17 von 121 Mitgliedern
 # undokumentiert (CT-8 8, CT-9 5, FX-9 4), und zwar seit Monaten still. Ein Werkzeug, das kein Test
