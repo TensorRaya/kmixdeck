@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kmixdeck\n"
 "Report-Msgid-Bugs-To: https://github.com/TensorRaya/kmixdeck/issues\n"
-"POT-Creation-Date: 2026-09-23 14:12+0200\n"
+"POT-Creation-Date: 2026-09-28 19:49+0200\n"
 "PO-Revision-Date: 2026-09-17 14:00+0200\n"
 "Last-Translator: Raya Elena Solano\n"
 "Language-Team: German\n"
@@ -130,19 +130,19 @@ msgstr "%1 stumm"
 msgid "%1 unmuted"
 msgstr "%1 hörbar"
 
-#: src/frontend/mixerclient.cpp:299
+#: src/frontend/mixerclient.cpp:300
 #, kde-format
 msgctxt "@label ref bound to the left side only"
 msgid " → L"
 msgstr " → L"
 
-#: src/frontend/mixerclient.cpp:300
+#: src/frontend/mixerclient.cpp:301
 #, kde-format
 msgctxt "@label ref bound to the right side only"
 msgid " → R"
 msgstr " → R"
 
-#: src/frontend/mixerclient.cpp:324
+#: src/frontend/mixerclient.cpp:325
 #, kde-format
 msgid ""
 "Connect a source to a channel, a channel to a mix, or a mix to an output."
@@ -150,34 +150,34 @@ msgstr ""
 "Eine Quelle mit einem Kanal verbinden, einen Kanal mit einem Mix oder einen "
 "Mix mit einem Ausgang."
 
-#: src/frontend/mixerclient.cpp:339
+#: src/frontend/mixerclient.cpp:340
 #, kde-format
 msgid "The capture device of a mix is always connected."
 msgstr "Das Aufnahmegerät eines Mixes ist immer verbunden."
 
-#: src/frontend/mixerclient.cpp:340
+#: src/frontend/mixerclient.cpp:341
 #, kde-format
 msgid "A device feeds a channel, not a mix — add a channel first."
 msgstr "Ein Gerät speist einen Kanal, keinen Mix — zuerst einen Kanal anlegen."
 
-#: src/frontend/mixerclient.cpp:341
+#: src/frontend/mixerclient.cpp:342
 #, kde-format
 msgid "These two cannot be wired."
 msgstr "Diese beiden lassen sich nicht verbinden."
 
-#: src/frontend/mixerclient.cpp:400
+#: src/frontend/mixerclient.cpp:401
 #, kde-format
 msgctxt "@label stereo row"
 msgid "1 (L)"
 msgstr "1 (L)"
 
-#: src/frontend/mixerclient.cpp:400
+#: src/frontend/mixerclient.cpp:401
 #, kde-format
 msgctxt "@label stereo row"
 msgid "2 (R)"
 msgstr "2 (R)"
 
-#: src/frontend/mixerclient.cpp:459 src/qml/RoutingPage.qml:161
+#: src/frontend/mixerclient.cpp:460 src/qml/RoutingPage.qml:161
 #, kde-format
 msgid "Capture: %1"
 msgstr "Aufnahme: %1"
@@ -521,13 +521,13 @@ msgid "Listen to this channel"
 msgstr "Diesen Kanal anhören"
 
 #: src/qml/ChannelHeader.qml:368 src/qml/ChannelHeader.qml:431
-#: src/qml/MixHeader.qml:308
+#: src/qml/MixHeader.qml:307
 #, kde-format
 msgid "Effects (active)…"
 msgstr "Effekte (aktiv) …"
 
 #: src/qml/ChannelHeader.qml:368 src/qml/ChannelHeader.qml:431
-#: src/qml/MixHeader.qml:308 src/qml/MixHeader.qml:333
+#: src/qml/MixHeader.qml:307 src/qml/MixHeader.qml:332
 #, kde-format
 msgid "Effects…"
 msgstr "Effekte …"
@@ -547,12 +547,12 @@ msgstr "Absenken…"
 msgid "Channel actions"
 msgstr "Kanalaktionen"
 
-#: src/qml/ChannelHeader.qml:399 src/qml/MixHeader.qml:318
+#: src/qml/ChannelHeader.qml:399 src/qml/MixHeader.qml:317
 #, kde-format
 msgid "Rename…"
 msgstr "Umbenennen …"
 
-#: src/qml/ChannelHeader.qml:400 src/qml/MixHeader.qml:319
+#: src/qml/ChannelHeader.qml:400 src/qml/MixHeader.qml:318
 #, kde-format
 msgid "Icon…"
 msgstr "Symbol …"
@@ -1155,95 +1155,95 @@ msgstr "Ganzen Mix stummschalten (alle Ausgänge und die Aufnahme)"
 msgid "Mute mix %1"
 msgstr "Mix %1 stumm"
 
-#: src/qml/MixHeader.qml:277 src/qml/MixHeader.qml:288
+#: src/qml/MixHeader.qml:287
 #, kde-format
 msgid "Master volume of mix %1"
 msgstr "Master-Lautstärke von Mix %1"
 
-#: src/qml/MixHeader.qml:296
+#: src/qml/MixHeader.qml:295
 #, kde-format
 msgid "Listen to this mix"
 msgstr "Diesen Mix anhören"
 
-#: src/qml/MixHeader.qml:321
+#: src/qml/MixHeader.qml:320
 #, kde-format
 msgid "Duplicate…"
 msgstr "Duplizieren …"
 
-#: src/qml/MixHeader.qml:324
+#: src/qml/MixHeader.qml:323
 #, kde-format
 msgid "Move left"
 msgstr "Nach links"
 
-#: src/qml/MixHeader.qml:329
+#: src/qml/MixHeader.qml:328
 #, kde-format
 msgid "Move right"
 msgstr "Nach rechts"
 
-#: src/qml/MixHeader.qml:332
+#: src/qml/MixHeader.qml:331
 #, kde-format
 msgid "Outputs…"
 msgstr "Ausgänge …"
 
-#: src/qml/MixHeader.qml:338
+#: src/qml/MixHeader.qml:337
 #, kde-format
 msgid "Loudness meter (EBU R128)"
 msgstr "Lautheitsanzeige (EBU R128)"
 
-#: src/qml/MixHeader.qml:346
+#: src/qml/MixHeader.qml:345
 #, kde-format
 msgid "Loudness target… (%1 LUFS)"
 msgstr "Lautheitsziel… (%1 LUFS)"
 
-#: src/qml/MixHeader.qml:352
+#: src/qml/MixHeader.qml:351
 #, kde-format
 msgid "Remove mix"
 msgstr "Mix entfernen"
 
-#: src/qml/MixHeader.qml:364
+#: src/qml/MixHeader.qml:363
 #, kde-format
 msgid "%1 LUFS (EBU R128 broadcast)"
 msgstr "%1 LUFS (EBU R128 Rundfunk)"
 
-#: src/qml/MixHeader.qml:365
+#: src/qml/MixHeader.qml:364
 #, kde-format
 msgid "%1 LUFS (streaming)"
 msgstr "%1 LUFS (Streaming)"
 
-#: src/qml/MixHeader.qml:366
+#: src/qml/MixHeader.qml:365
 #, kde-format
 msgid "%1 LUFS"
 msgstr "%1 LUFS"
 
-#: src/qml/MixHeader.qml:380
+#: src/qml/MixHeader.qml:379
 #, kde-format
 msgctxt "@item mix output"
 msgid "No output (capture only)"
 msgstr "Kein Ausgang (nur Aufnahme)"
 
-#: src/qml/MixHeader.qml:401
+#: src/qml/MixHeader.qml:400
 #, kde-format
 msgctxt "@item pick single ports of a multichannel output"
 msgid "%1 · ports…"
 msgstr "%1 · Ports …"
 
-#: src/qml/MixHeader.qml:421
+#: src/qml/MixHeader.qml:420
 #, kde-format
 msgctxt "@item unplugged output kept as selection"
 msgid "%1 (unplugged)"
 msgstr "%1 (nicht verbunden)"
 
-#: src/qml/MixHeader.qml:429
+#: src/qml/MixHeader.qml:428
 #, kde-format
 msgid "Fallback: silence"
 msgstr "Ausweichend: Stille"
 
-#: src/qml/MixHeader.qml:430
+#: src/qml/MixHeader.qml:429
 #, kde-format
 msgid "Fallback: %1"
 msgstr "Ausweichend: %1"
 
-#: src/qml/MixHeader.qml:432
+#: src/qml/MixHeader.qml:431
 #, kde-format
 msgctxt "@item no fallback output"
 msgid "Silence (never the system default)"

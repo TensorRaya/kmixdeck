@@ -3,7 +3,7 @@
 web UI, with the setup that broke it: long device names, a group, active effects AND active ducking, 2/5/8 mixes,
 laptop to full-HD and a phone.
 
-Why this exists (2026-09-23, Michel: "sehe da teilweise was überlappen"): with 5 mixes the KDE channel column was
+Why this exists (user report 2026-09-23: overlapping controls): with 5 mixes the KDE channel column was
 216 px, the row needed ~320, and the ⋮ button sat 103 px inside the first mix column; the web header ran the device
 name under the whole button row (22 findings at 1600 px, 50 on a phone). No test measured geometry — the pictures
 showed it, the suite was green. Findings: two items overlap, one sticks out of its card, or (KDE) one is cut off

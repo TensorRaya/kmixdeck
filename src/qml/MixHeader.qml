@@ -274,7 +274,6 @@ QQC2.Control {
         Fader {
             id: master
             objectName: "mixFader/" + header.mix   // AR-12 probe
-            accessibleName: i18n("Master volume of mix %1", header.title)
             Layout.fillWidth: true
             Layout.columnSpan: header.narrow ? 2 : 1   // folded: under the name column, full width between mute and listen
             Layout.preferredWidth: Kirigami.Units.gridUnit * (header.narrow ? 2.5 : 4)

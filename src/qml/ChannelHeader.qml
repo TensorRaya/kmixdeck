@@ -28,7 +28,7 @@ Item {
     readonly property bool narrow: width < Kirigami.Units.gridUnit * 16
     // What the row needs without the FX and ducking buttons. Computed from the real controls, not guessed: until
     // 2026-09-23 "compact" was a fixed 21 gridUnits, the header was 12 or 19 wide, and with active FX/ducking the
-    // buttons sat on the first mix column by up to 103 px (Michel: "sehe da teilweise was überlappen").
+    // buttons sat on the first mix column by up to 103 px (user report 2026-09-23: overlapping controls).
     readonly property real rowSpacing: Kirigami.Units.smallSpacing * (narrow ? 1 : 1.5)
     readonly property real baseNeed: row.anchors.leftMargin + row.anchors.rightMargin
         + (narrow ? 0 : tile.Layout.preferredWidth + rowSpacing)

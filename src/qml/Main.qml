@@ -195,7 +195,7 @@ Kirigami.ApplicationWindow {
         const v = it[prop]
         return v === undefined ? "<no property " + prop + ">" : String(v)
     }
-    // Layout check (Michel 2026-09-23: "sehe da teilweise was überlappen"). A picture shows the symptom; this names
+    // Layout check (user report 2026-09-23: overlapping controls). A picture shows the symptom; this names
     // both items and the overlap in pixels, so a test can assert on it. Collects what a user reads or presses — a
     // text, a button, a dial — and stops there (a button's own background/label are not separate findings). Two
     // kinds of finding: two such items overlap, or one sticks out of the card it belongs to (channel header, mix
