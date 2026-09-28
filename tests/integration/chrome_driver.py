@@ -73,11 +73,17 @@ class Chrome:
         return asyncio.run(go())
 
     def wait(self, expr, timeout=10):
-        t0 = time.time()
+        """Poll until `expr` is truthy. A JS exception counts as "not yet": the page re-renders by replaceChildren,
+        so `querySelector(...).attr` hits null for one frame after every snapshot (seen as a one-off RuntimeError in
+        test_ar8_web_reconnects_after_the_bridge_restarts, 1 in 17 runs). The last exception is kept for the timeout."""
+        t0, last = time.time(), None
         while time.time() - t0 < timeout:
-            if self.eval(f"!!({expr})"): return True
+            try:
+                if self.eval(f"!!({expr})"): return True
+            except RuntimeError as e:
+                last = e
             time.sleep(0.1)
-        raise TimeoutError(expr)
+        raise TimeoutError(f"{expr}" + (f" — last JS error: {last}" if last else ""))
 
     def probe(self, name, attr="dataset.value"):
         """attr is a JS property path on the element; 'computed.<css-prop>' reads getComputedStyle (colours come back as rgb(...))."""
