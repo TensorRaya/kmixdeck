@@ -1,133 +1,134 @@
-# ADR 0013 — Zellen sind Gains auf einem Bus, keine Loopbacks
+# ADR 0013 — Cells are gains on a bus, not loopbacks
 
-Datum: 2026-09-28 · Status: akzeptiert · Löst ab: den Zellen-Teil von ADR 0002 und ADR 0009 ·
-Beantwortet: ADR 0012, Konsequenz 3
+**Status:** accepted 2026-09-28 · **Supersedes:** the cell part of ADR 0002 and ADR 0009 ·
+**Answers:** ADR 0012, Consequence 3
 
-## Anlass
+## Context
 
-`test_dv30c` (32 Mono-Kanäle + 4 Stereo-Mixe auf einem 32×32-Gerät) kippte auch nach ADR 0012. Zwei
-Ursachen, beide gemessen (2026-09-26/27, `/var/tmp/ab-dv30c/`):
+`test_dv30c` (32 mono channels + 4 stereo mixes on a 32×32 device) failed even after ADR 0012. Two
+causes, both measured (2026-09-26/27; repeatable with `tools/measure-dv30c.py`):
 
-1. **Listen-Backlog.** Jede Zelle war ein eigenes `module-loopback`, und jedes `module-loopback` baut eine
-   **eigene Client-Verbindung** zum PipeWire-Server auf. ~300 gleichzeitige `connect()` gegen
-   `listen(fd, 128)` → `EAGAIN` → Socket verworfen → 8 ms später `Broken pipe` → das Modul zerstört sich selbst.
-   Die Kante fehlt, ohne dass irgendwer einen Fehler meldet.
-2. **Dateigrenze.** Ein Loopback kostet ~20 Dateien (8 memfd, 8 eventfd, 2 Sockets, Rest), 264 davon ≈ 5300,
-   verteilt auf Server und Daemon. Das Soft-Limit des PipeWire-Servers ist 4096.
+1. **Listen backlog.** Every cell was its own `module-loopback`, and every `module-loopback` opens its
+   **own client connection** to the PipeWire server. ~300 concurrent `connect()` against
+   `listen(fd, 128)` → `EAGAIN` → socket dropped → 8 ms later `Broken pipe` → the module destroys itself.
+   The edge is missing, without anyone reporting an error.
+2. **File limit.** One loopback costs ~20 files (8 memfds, 8 eventfds, 2 sockets, rest), 264 of them ≈ 5300,
+   spread across server and daemon. The soft limit of the PipeWire server is 4096.
 
-Die erste Reparatur war ein Drop-in, das `RLIMIT_NOFILE` des Servers hebt, plus eine Wiederholungslogik im
-Daemon für verschwundene Kanten. Beides machte den Test grün und beides war Symptombehandlung: es hebt eine
-Grenze an, die nur deshalb erreicht wurde, weil der Graph für jede Zelle ein komplettes Programm startet.
+The first repair was a drop-in raising the server's `RLIMIT_NOFILE`, plus retry logic in the daemon for
+vanished edges. Both made the test green, and both were symptom treatment: it raises a limit that was
+only reached because the graph starts a full program for every cell.
 
-Terminologie, weil sie in der Diskussion falsch lief: ein PipeWire-**Link** zwischen zwei Ports kostet fast
-nichts (+64 Dateien für 256 Links, gemessen). Was teuer war, ist die „Kante" im kmixdeck-Sinn — ein
-vollständiges `module-loopback` mit eigener Socket-Verbindung, zwei Stream-Knoten und Shared Memory.
+Terminology, because the discussion got it wrong: a PipeWire **link** between two ports costs almost
+nothing (+64 files for 256 links, measured). What was expensive was the "edge" in the kmixdeck sense — a
+complete `module-loopback` with its own socket connection, two stream nodes, and shared memory.
 
-## Entscheidung
+## Decision
 
-Eine Zelle (Kanal × Mix) ist **ein Gain-Wert**, kein Knoten.
+A cell (channel × mix) is **a gain value**, not a node.
 
-- **Pro Kanal eine Filter-Chain** `kmixdeck.cells.<kanal>`. Sie greift den Kanal-Sink ab
-  (`stream.capture.sink`, `node.target`), verteilt L/R per builtin `copy` auf je ein builtin `mixer`-Paar
-  `L<mix>`/`R<mix>` pro Mix. `"Gain 1"` dieses Paars **ist** der Zellfader.
-- **Ein Bus** `kmixdeck.bus`: Null-Sink mit festen 64 Kanälen `AUX0..AUX63`, `stream.dont-remix`. Mix *i*
-  belegt `AUX(2i)`/`AUX(2i+1)`. Jede Kanal-Chain spielt ihre 2·M Ausgänge dorthin; PipeWire summiert.
-- **Pro Mix ein Abgriff** `kmixdeck.tap.<mix>`: ein Loopback, das seine beiden AUX vom Bus-Monitor liest und
-  in den Mix-Eingang spielt (bei aktivem Mix-FX in dessen Chain, sonst in den Mix-Sink).
-- Verbunden wird ausschließlich über `target.object`/`node.target` in der Config. WirePlumber stellt die
-  Links her; **der Graph entsteht aus der Config allein** (DV-1), ohne laufenden Daemon.
+- **One filter chain per channel** `kmixdeck.cells.<channel>`. It taps the channel sink
+  (`stream.capture.sink`, `node.target`) and distributes L/R via the builtin `copy` into one builtin `mixer`
+  pair `L<mix>`/`R<mix>` per mix. The `"Gain 1"` of that pair **is** the cell fader.
+- **One bus** `kmixdeck.bus`: a null sink with fixed 64 channels `AUX0..AUX63`, `stream.dont-remix`. Mix *i*
+  occupies `AUX(2i)`/`AUX(2i+1)`. Every channel chain plays its 2·M outputs there; PipeWire sums them.
+- **One tap per mix** `kmixdeck.tap.<mix>`: a loopback that reads its two AUXes from the bus monitor and
+  plays them into the mix input (into that mix's chain when mix FX is active, otherwise into the mix sink).
+- Wiring is done exclusively via `target.object`/`node.target` in the config. WirePlumber establishes the
+  links; **the graph arises from the config alone** (DV-1), no running daemon.
 
-Grenze: `SPA_AUDIO_MAX_CHANNELS = 64` → 32 Mixe pro Bus. MX-1 verbietet ein festes Maximum, also bekommt
-jede weitere Gruppe von 32 Mixen einen eigenen Bus `kmixdeck.bus.<k>` und jeder Kanal eine Chain
-`kmixdeck.cells.<kanal>@<k>` pro Gruppe. Bus-Geometrie und die Argumente von Chain und Abgriff kommen aus
-**einer** Stelle (`namespace ADR13` in `layout.h`), die Config-Renderer und Laufzeit gemeinsam benutzen — sie
-können nicht auseinanderlaufen.
+Limit: `SPA_AUDIO_MAX_CHANNELS = 64` → 32 mixes per bus. MX-1 forbids a fixed maximum, so every further
+group of 32 mixes gets its own bus `kmixdeck.bus.<k>`, and every channel a chain
+`kmixdeck.cells.<channel>@<k>` per group. Bus geometry and the arguments of the chain and the tap come from
+**one** place (`namespace ADR13` in `layout.h`), shared by the config renderer and the runtime — they
+cannot drift apart.
 
-### Der Daemon bleibt die zentrale API
+### The daemon stays the central API
 
-Nichts an der Rolle ändert sich (Michel, 2026-09-27): Die D-Bus-API, `cell set/mute/get`, Undo, Szenen,
-Export/Import, MX-7-Verknüpfungen — alles unverändert. Geändert hat sich nur, **was hinter** `writeCell`
-passiert: statt `setVolume` auf einem Loopback-Knoten ein `setControl` auf zwei Controls der Kanal-Chain.
+Nothing about its role changes (owner, 2026-09-27): D-Bus API, `cell set/mute/get`, undo, scenes,
+export/import, MX-7 linkages — all unchanged. What changed is only **what happens behind** `writeCell`:
+instead of a `setVolume` on a loopback node, a `setControl` on two controls of the channel chain.
 
-### Wo der Zellzustand lebt
+### Where cell state lives
 
-WirePlumber sichert Stream-Lautstärken (`state-stream.lua`), aber **keine Filter-Controls**. Deshalb:
+WirePlumber persists stream volumes (`state-stream.lua`), but **no filter controls**. Therefore:
 
-- Lautstärke und Stumm jeder Zelle stehen in `layout.json` (`"cells"`), Quelle der Wahrheit ist das Layout.
-- Die Config rendert sie als `control = { "Gain 1" = <wert> }` → nach einem PipeWire-/WirePlumber-Neustart
-  ohne Daemon kommt jede Zelle mit ihrem Wert zurück (gemessen, `test_dv7_levels_and_mute_survive_daemon_restart`).
-- Stumm = Gain 0; der Faderwert bleibt im Layout erhalten.
-- Schreibt ein Fremder (`pw-cli`) einen Zell-Gain, sieht der Daemon das am Echo (`Props.params`) und stellt den
-  Layout-Wert wieder her (MX-2, `test_mx2_cell_state_survives_a_foreign_writer`).
-- Kommt ein Mix hinzu oder fällt weg, ändert sich die Signatur der Chain (`node.description` trägt die
-  Mix-Liste); der Daemon baut veraltete Chains neu. Der Bus bleibt stehen, weil er fest 64 Kanäle hat.
+- The volume and mute of every cell are in `layout.json` (`"cells"`); the source of truth is the layout.
+- The config renders them as `control = { "Gain 1" = <value> }` → after a PipeWire/WirePlumber restart
+  without the daemon, every cell comes back with its value (measured,
+  `test_dv7_levels_and_mute_survive_daemon_restart`).
+- Mute = gain 0; the fader value is preserved in the layout.
+- When an outsider (`pw-cli`) writes a cell gain, the daemon sees it in the echo (`Props.params`) and
+  restores the layout value (MX-2, `test_mx2_cell_state_survives_a_foreign_writer`).
+- When a mix is added or removed, the signature of the chain changes (`node.description` carries the
+  mix list); the daemon rebuilds stale chains. The bus stays put, because its 64 channels are fixed.
 
-### Zellpegel (UX-13)
+### Cell levels (UX-13)
 
-Es gibt keinen Knoten pro Zelle mehr, an dem ein Meter hängen könnte. UX-13 verlangt einen Post-Fader-Pegel,
-also rechnet der Daemon `cell/<k>/<m> = Kanalpeak × Zellgain`. Mathematisch identisch, null Streams extra.
+There is no longer a node per cell on which a meter could hang. UX-13 demands a post-fader level,
+so the daemon computes `cell/<k>/<m> = channel peak × cell gain`. Mathematically identical, zero extra streams.
 
-## Gemessen
+## Measured
 
-Pult über die CLI aufgebaut, privater PipeWire, **Standard-Dateigrenze 4096, kein Drop-in**. Reproduzierbar mit
-`tools/measure-dv30c.py` (ein Lauf) bzw. `tools/measure-dv30c.py F --runs 10 --load 3` (die Reihe unten).
+Console built via the CLI, private PipeWire, **standard file limit 4096, no drop-in**. Reproducible with
+`tools/measure-dv30c.py` (one run) or `tools/measure-dv30c.py F --runs 10 --load 3` (the series below).
 
-32 × 4 (Vergleich mit ADR 0012, dort gemessen): Loopback-Matrix **556 Knoten, 3846–3933 fds** →
-ADR 0013 **75 Knoten, 1314 Server-Dateien, 39 Client-Verbindungen, 264 Links**.
+32 × 4 (comparison with ADR 0012, measured there): loopback matrix **556 nodes, 3846–3933 fds** →
+ADR 0013 **75 nodes, 1314 server files, 39 client connections, 264 links**.
 
-32 × 32 (dv30c) — Loopback-Matrix: rot (Listen-Backlog 128 bei ~300 gleichzeitigen Verbindungen,
-Dateigrenze 4096). ADR 0013, Zehnerreihe F1–F10 **unter Last** (3 × `nice 19`-Dauerschleife, Last 6–9 auf
-4 Kernen), Stand nach den drei Fixes unten:
+32 × 32 (dv30c) — loopback matrix: red (listen backlog 128 with ~300 concurrent connections,
+file limit 4096). ADR 0013, the F1–F10 run of ten **under load** (3 × `nice 19` endless loops, load 6–9 on
+4 cores), state after the three fixes below:
 
 | | F1–F10 |
 |---|---|
-| Knoten | **219** (alle 10 Läufe identisch) |
-| Server-Dateien | **1711** |
-| Client-Verbindungen | **90** |
+| Nodes | **219** (identical across all 10 runs) |
+| Server files | **1711** |
+| Client connections | **90** |
 | Links | **680** |
-| Aufbau über die CLI | **9,0–15,2 s** unter Last |
-| fehlende Zellen / LastError | **0 / leer**, 10 von 10 |
-| Zelle d1→r0 auf 0,25 | 0,25 in r0, 1,0 in r1 |
+| Build via the CLI | **9,0–15,2 s** under load |
+| Missing cells / LastError | **0 / empty**, 10 of 10 |
+| Cell d1→r0 set to 0,25 | 0,25 in r0, 1,0 in r1 |
 
-Vorher unter derselben Last: 1 von 5 Läufen rot (`cells.d13` fehlte), 1 von 12 mit 221 statt 219 Knoten.
-Restliche Core-Fehler in F1–F10 (0–30 je Lauf, „no global N“ nach dem Umhängen der Mix-Ausgänge) kamen aus
-`destroyOurNodes`, das beide Hälften eines Moduls zerstörte — dort nachgezogen, danach im Kurzlauf 0.
+Before, under the same load: 1 of 5 runs red (`cells.d13` missing), 1 of 12 with 221 nodes instead of 219.
+The remaining core errors in F1–F10 (0–30 per run, "no global N" after rewiring the mix outputs) came from
+`destroyOurNodes`, which destroyed both halves of a module — addressed there, then 0 in the short run.
 
-## Befund unter Last (2026-09-28)
+## Findings under load (2026-09-28)
 
-Ruhig: 15/15 und 40/40 grün. Unter CPU-Kontention (3 × `nice 19`-Schleifen, Last 5–7,5 auf 4 Kernen) fehlte
-in Lauf L5 `kmixdeck.cells.d13` nach 180 s (vorher in Reihe 1: `out.r1`/`tap.r1`), und je ein Lauf hatte
-zwei Knoten zu viel (221 statt 219). Mit Trace jeder Anforderung/Zerstörung (`KMX_TRACE_GRAPH`) gemessen,
-drei Fehler im Daemon, keiner in PipeWire:
+Calm: 15/15 and 40/40 green. Under CPU contention (3 × `nice 19` loops, load 5–7,5 on 4 cores),
+`kmixdeck.cells.d13` was missing in run L5 after 180 s (earlier in series 1: `out.r1`/`tap.r1`), and
+one run each had two nodes too many (221 instead of 219). Measured with a trace of every request/destruction
+(`KMX_TRACE_GRAPH`), three errors in the daemon, none in PipeWire:
 
-1. **MX-2 wertete das Echo einer frischen Chain.** `filter-graph.c` meldet `control_data[0]`, das bis zum
-   ersten Aufsetzen des Graphen 0,0 ist (`pw-mon`: bis zu 9 Echos mit 0,0 vor dem ersten richtigen Wert).
-   Der Wächter hielt das für einen Fremdschreiber: **2578 Rückschreibungen** in einem 32×32-Lauf, 72 schon
-   beim Anlegen eines Mixes auf einem 3-Kanal-Pult. Jetzt: eine Chain wird erst bewertet, nachdem sie das
-   Layout einmal zurückgemeldet hat. Nach dem Fix: 0 beim Mix-Anlegen, der Fremdschreiber-Test bleibt scharf.
-2. **Doppelte Zerstörung.** Beide Streams eines Moduls wurden zerstört, obwohl einer das ganze Modul
-   entlädt, und Abgleichläufe vor der Rückmeldung zerstörten dieselbe ID noch einmal: 157× „no global N“,
-   244× „unknown resource N“ (Steuerwerte an sterbende Knoten) im 3-Kanal-Lauf. Jetzt eine Zerstörung pro
-   Modul und keine Schreibzugriffe auf Knoten im Abbau: **0 Core-Fehler**.
-3. **Anforderungs-Merker.** `onNode` löschte den Merker bei *jedem* Param-Echo; die alte Chain gleichen
-   Namens echote bis zu ihrer Entfernung und gab so die noch ladende neue frei → zweites Modul (221 Knoten).
-   Und ein Knoten, der nie kam, wurde nie neu angefordert, obwohl der Kommentar es versprach → d13 fehlte
-   für immer. Jetzt: nur das erste Auftauchen erfüllt die Anforderung; „nie erschienen“ gibt sie frei und
-   fordert neu an; Zwillinge werden beim Abgleich auf den älteren reduziert.
+1. **MX-2 evaluated the echo of a fresh chain.** `filter-graph.c` reports `control_data[0]`, which is 0,0
+   until the graph is first set up (`pw-mon`: up to 9 echoes of 0,0 before the first correct value).
+   The watcher took that for a foreign writer: **2578 write-backs** in a single 32×32 run, 72 already
+   when creating a mix on a 3-channel console. Now: a chain is only evaluated after it has reported
+   the layout back once. After the fix: 0 on mix creation; the foreign-writer test stays sharp.
+2. **Double destruction.** Both streams of a module were destroyed, although one of them unloads the whole
+   module, and reconciliation runs before the report destroyed the same ID again: 157× "no global N",
+   244× "unknown resource N" (control values to dying nodes) in the 3-channel run. Now one destruction per
+   module and no write accesses to nodes being torn down: **0 core errors**.
+3. **Request marker.** `onNode` deleted the marker on *every* parameter echo; the old chain of the same
+   name echoed until its removal, thereby freeing the still-loading new one → a second module (221 nodes).
+   And a node that never came was never re-requested, even though the comment promised it → d13 was missing
+   forever. Now: only the first appearance fulfills the request; "never appeared" releases it and
+   re-requests; twins are reduced to the older one during reconciliation.
 
-## Was entfernt wurde
+## What was removed
 
-- `data/pipewire-50-kmixdeck-nofile.conf` und die CMake-Zeile dazu — der Graph passt wieder in die
-  Standardgrenze, ein gehobenes Limit ist keine Voraussetzung mehr.
-- Die zeitgesteuerten Wiederholungen aus der Bandage (`m_edgeRetries`) — der Massenausfall, den sie
-  überdeckte, entsteht nicht mehr, weil es die ~300 gleichzeitigen Verbindungen nicht mehr gibt.
-- `kmixdeck.link.<kanal>.<mix>`-Knoten, `m_cells`, `Names::cellNode`.
+- `data/pipewire-50-kmixdeck-nofile.conf` and its CMake line — the graph fits within the standard
+  limit again; a raised limit is no longer a prerequisite.
+- The timed retries from the bandage (`m_edgeRetries`) — the mass failure they masked no longer occurs,
+  because the ~300 concurrent connections no longer exist.
+- `kmixdeck.link.<channel>.<mix>` nodes, `m_cells`, `Names::cellNode`.
 
-## Folgen
+## Consequences
 
-- Die Pegelmessung pro Zelle ist berechnet, nicht abgegriffen. Ein Fehler **innerhalb** der Chain (z. B. ein
-  Gain, der nicht ankommt) zeigt sich nicht im Zellmeter, sondern erst am Mix. Das Echo aus `Props.params`
-  deckt genau diesen Fall ab.
-- Ein Mix mehr oder weniger baut alle Kanal-Chains neu. Das ist ein kurzer Aussetzer (Modul-Neuladen) auf
-  jedem Kanal — akzeptiert, weil Mixe selten angelegt werden und Kanäle/Zellen die häufige Operation sind.
-- Import älterer Exporte mit `kmixdeck.link.<k>.<m>`-Pegeln wird weiter verstanden und auf Zellen abgebildet.
+- The per-cell level measurement is computed, not tapped. An error **within** the chain (e.g., a
+  gain that never arrives) doesn't show up in the cell meter, only at the mix. The echo from `Props.params`
+  covers exactly this case.
+- Adding or removing a mix rebuilds all channel chains. That is a short interruption (module reload) on
+  every channel — accepted, because mixes are rarely created and channels/cells are the frequent operation.
+- Import of older exports with `kmixdeck.link.<k>.<m>` levels is still understood and mapped to cells.

@@ -1,62 +1,60 @@
-# qpwgraph — Analyse für kmixdeck
+# qpwgraph — analysis for kmixdeck
 
-Stand des Untersuchungsgegenstands: upstream `rncbc/qpwgraph` v1.0.4 (2026-08-26), 17.7k Zeilen Qt/C++ in 39 Dateien. Analysiert am 2026-09-19.
+State of the code under investigation: upstream `rncbc/qpwgraph` v1.0.4 (2026-08-26), 17.7k lines of Qt/C++ in 39 files. Analyzed on 2026-09-19.
 
-## Kurzportrait
+## Short profile
 
-qpwgraph ist ein **direkter PipeWire-Client mit eigener GUI**: ein QMainWindow mit QGraphicsScene-Canvas, eine Registry-Subscribtion, alles Leben im einen Prozess. Kein Daemon, keine IPC-Schicht — die GUI *ist* der Zustandsträger. Das ist für uns nur in Punkten interessant, die unabhängig von dieser Architektur funktionieren ( unten, Spalte „Übernehmen"). Für die Grundfrage — Daemon mit D-Bus, Frontends austauschbar (AR-1..AR-9) — ist das Gegenteil ihres Aufbaus die Bestätigung unseres Modells: qpwgraph kann ohne sichtendes Fenster nichts patchen, und sein Zustand hängt an einer QSettings-Datei des GUI-Prozesses.
+qpwgraph is a **direct PipeWire client with its own GUI**: a QMainWindow with a QGraphicsScene canvas, a registry subscription, all life in one process. No daemon, no IPC layer — the GUI *is* the state holder. That is interesting for us only in points that work independently of this architecture (below, column "Adopt"). For the fundamental question — daemon with D-Bus, frontends interchangeable (AR-1..AR-9) — the opposite of their design is the confirmation of our model: qpwgraph can patch nothing without a visible window, and its state hangs off a QSettings file of the GUI process.
 
-Ihr Herzstück ist das **Patchbay-Profil**: XML-Datei mit Verbindungspaaren, beim Start gescannt und in den Live-Graph gematcht. Das ist dem Layout-JSON von kmixdeck verwandt, aber mit zwei Mechanismen, die wir nicht haben und brauchen könnten.
+Its centerpiece is the **patchbay profile**: an XML file with connection pairs, scanned at startup and matched against the live graph. That is a relative of kmixdeck's layout JSON, but with two mechanisms we do not have and might need.
 
-## Tabelle — was wie und warum übernehmen
+## Table — what to adopt, how, and why
 
-| # | Punkt | qpwgraph 1.0.4 | kmixdeck heute | Übernehmen? | Warum |
+| # | Point | qpwgraph 1.0.4 | kmixdeck today | Adopt? | Why |
 |---|---|---|---|---|---|
-| 1 | **Kanten ohne Gain als plain link** | Link-Erzeugung über `link-factory` mit `LINK_OUTPUT_NODE/PORT` + `LINK_INPUT_NODE/PORT`, dazu `OBJECT_LINGER=true` und `LINK_PASSIVE` aus der Env. Kein eigener Client pro Kante. | Jede Kante ist ein Modul-Load: ein PipeWire-Client pro Kante, **gemessen 20–21 fds** (idle-Daemon 14 fds; ein Mix-Output-Edge +21, eine Zelle +20, ein virtuelles Gerät +20). | **Nein — nachgemessen, trägt nicht.** Siehe Messung unten. | Die Prämisse („die Gain-freien Kanten sind die Masse") ist falsch: in einem realistischen Setup sind **76 % der Kanten Zellen**, und die *müssen* Loopback bleiben, weil die Playback-Volume dort der Fader ist. Gain-frei sind nur 19 %. Dazu kann laut D-Bus-API **jede** Wire Trim tragen (`Channel.SetWireTrim`, `Mix.SetWireTrim`) — ein plain link müsste beim ersten Trim-Dreh live in einen Loopback umgebaut werden, also Umpatchen bei laufendem Audio. Aufwand und Risiko gegen 19 % einer Größe, die nach DV-30 (`LimitNOFILE=65536`) kein Limit mehr hat. |
-| 2 | **Exklusiv vs. additiv beim Laden eines Profils** | Zwei Schalter: *Activated* (Profil anwenden) und *Exclusive*. Exclusiv: Verbindungen, die nicht im Profil stehen, werden getrennt. Nicht-exclusiv: Profil ergänzt nur. Beides auch als CLI: `-d/--deactivated`, `-n/--nonexclusive`. | CT-9 (Szenen) ist 📝: Recall schreibt die gespeicherte Teilmenge ins Layout, ohne Aussage über fremde Kanten. | **Ja,** als Default für `scene recall`: exklusiv. Additiv als Flag `--add`. | Ohne Exclusivity-Regel ist ein Szenenwechsel nicht deterministisch — eine App, die zwischenzeitlich WirePlumber-Standard-Routing bekommen hat, überlebt die Szene. Exclusivity ist exakt das, was „Szene" von „Sammelbecken" unterscheidet. |
-| 3 | **Auto-Pin neuer Kanten** | Schalter „Auto pin": jede frisch gelegte Verbindung wird automatisch ins aktive Profil geschrieben. Manuell getrennte werden *nicht* zurückgepinnt. |existent Szenen-Logik (noch nicht gebaut) würde bei jedem Recall alles über die Köpfe der laufenden Sitzung schreiben. | Bei CT-9 mitnehmen: Recall = Sollzustand; was der Nutzer *nach* dem Recall ändert, wird Teil der Szene, wenn Auto-Pin an ist. | Das ist die einzige sinnvolle Merge-Regel für „Szene laden, dann weiterarbeiten". Manuell-getrennt-nicht-zurück heißt: die Absicht des Nutzers schlägt die Profil-Liste. |
-| 4 | **Merger-Liste (Regex pro Node-Name)** | Node-Namen, die mehrfach auftauchen (Browser!), werden für Patchbay-Matching zu einem logischen Knoten zusammengelegt. Eigene Optionsseite mit Regex-Liste; Matching läuft über `nodeNameEx` statt `nodeName`. | Apps sammeln wir unter `appKey = application.name` (CH-6), aber die Patchbay-Karten (DV-24) zeigen pro PipeWire-*Node* — ein Chromium mit vier Streams ergibt vier Kartenreihen. | **Ja,** abgeschwächt: gleiche `application.name` → eine Karte, Positionen zusammengeführt. Keine Regex-Liste nötig, der Key ist schon da. | Bei echten Setups (Browser + Discord + OBS) bläht sonst Spalte 1 der Patchbay auf das Zwei-, Dreifache. Das Merger-Konzept löst genau das; die Regex-Liste ihrer Umsetzung ist Ballast, weil wir den Gruppierungsschlüssel schon haben. |
-| 5 | **Knotenidentität über Name, nicht id** | `NodeNameKey(name, mode, type)` als Hash-Key; ChangeLog seit 0.9.0: kurze Nodes mit wiederverwendeten ids, same-name-different-id explizit behandelt. | Layout und App-Zuordnung hängen an `application.name`/`node.name`, die Live-Registry in `graph.cpp` an der `uint32 id` — als *Live*-Cache korrekt. | Bestätigt, nichts zu ändern. | Die id-only-Falle ist bei uns on-disk schon vermieden (CH-6); ihr ChangeLog belegt, dass andere sie hatten. |
-| 6 | **Version im Profil-Root** | `version`-Attribut am Root-Element, Migration beim Laden (`< "0.5.0"` → Legacy-Names bereinigen). | Layout.json hat `version` + Sidecar `.vN-from-newer-kmixdeck` für Dateien aus neuerer Version. | Gleichartig, nichts übernehmen. | Beide Seiten lösen dasselbe Problem; unseres ist für zwei Frontends (JSON statt XML) besser geeignet. |
-| 7 | **Kürzlich-used Profile als Tray-Menü** | System-Tray-Menü „Presets" mit Recently-used-Profilpfaden; eines anklicken = anwenden. | UX-17-Tray-Popover zeigt Overview, keine Szenen. | Klein: letzter-Absatz im Tray-Popover „Zuletzt geladen: …" mit Direkt-Recall. | Zwei Klicks auf den häufigsten Fall (Rechner aufgewacht, Szene holen). Rest des Tray-Layouts bleibt unserer. |
-| 8 | **Node-Farbtypen (audio/video/midi/midi2/other) mit editierbaren Farben** | Fünf Porttyp-Farbkarten im Optionsdialog, Persistenz über `ColorsGroup` mit hex-Keys; MIDI 2 (UMP) als eigener Typ. | Web-Patchbay sortiert nach Richtung, Farben nur für pegel- vs. stille Kanten. | Nein. | Bei uns trägt die Kante ihren Zweck im Ref (`>L`, `>R`, Position); Farbklassen nach Media-Class sind Information zweiter Hand. |
-| 9 | **Freier Canvas mit Toposort („Arrange Nodes“)** | Rank = Abstand zur Quelle, Spalten, danach Spalten vertikal auf Mittelwerte der Ziel-Y ausgerückt; Repel Overlapping Nodes als Extra. | Patchbay ist bewusst fest-spaltig (Sources → Channels → Outputs → Monitors, DV-24/DV-27). | Nein. | Ihr Algorithmus optimiert Drähte auf einem wilden Graphen — bei uns ist die Struktur die Semantik (eine Spalte = eine Stufe im Signalweg). Wegsortieren würde die Lesbarkeit kosten, die das Layout ausmacht. |
-| 10 | Thumb-View-Ecke, Zoom-Range, Fullscreen, Pinch-Zoom | QGraphicsView-Spielereien mit Eckenpositionen und Settings-Keys. | Web-UI ist responsive ohne eigene Zoom-Infrastruktur. | Nein. | Fenstermanagement, kein Fachverhalten. |
-| 11 | GUI besitzt den Graph (kein Daemon) | Everything-Process: kein Patchen ohne Fenster, Zustand in QSettings des GUI. | AR-1: Daemon trägt alles, Frontends sind Blätter. | Nein — Gegenreferenz. | Ihr Modell ist der Grund, warum ihre Patches beim Schließen des Fensters neu gescannt werden müssen; unseres nicht. Gehört in ADR-0010 als Kontrast. |
+| 1 | **Gain-less edges as plain links** | Link creation via `link-factory` with `LINK_OUTPUT_NODE/PORT` + `LINK_INPUT_NODE/PORT`, plus `OBJECT_LINGER=true` and `LINK_PASSIVE` from the environment. No own client per edge. | Every edge is a module load: a PipeWire client per edge, **measured 20–21 fds** (idle daemon 14 fds; a mix output edge +21, a cell +20, a virtual device +20). | **No — remeasured, does not hold up.** See the measurement below. | The premise ("the gain-less edges are the majority") is false: in a realistic setup **76 % of the edges are cells**, and those *must* stay loopback, because the playback volume there is the fader. Gain-less is only 19 %. On top of that, per the D-Bus API **every** wire can carry a trim (`Channel.SetWireTrim`, `Mix.SetWireTrim`) — a plain link would have to be rebuilt as a loopback live on the first trim turn, i.e. repatching while the audio is running. Effort and risk against 19 % of a total that, after DV-30 (`LimitNOFILE=65536`), no longer has a limit. |
+| 2 | **Exclusive vs. additive when loading a profile** | Two switches: *Activated* (apply the profile) and *Exclusive*. Exclusive: connections not in the profile are disconnected. Non-exclusive: the profile only adds. Both also as CLI: `-d/--deactivated`, `-n/--nonexclusive`. | CT-9 (scenes) is 📝: recall writes the stored subset into the layout, with no statement about foreign edges. | **Yes,** as the default for `scene recall`: exclusive. Additive as the flag `--add`. | Without an exclusivity rule, a scene switch is not deterministic — an app that has picked up WirePlumber default routing in the meantime survives the scene. Exclusivity is exactly what distinguishes a "scene" from a "catch basin". |
+| 3 | **Auto-pin of new edges** | Switch "Auto pin": every freshly laid connection is written automatically into the active profile. Manually disconnected ones are *not* re-pinned. | Existing scene logic (not yet built) would, on every recall, write everything over the heads of the running session. | Adopt with CT-9: recall = target state; what the user changes *after* the recall becomes part of the scene when auto-pin is on. | That is the only sensible merge rule for "load a scene, then keep working". Manually-disconnected-stays means: the user's intent beats the profile list. |
+| 4 | **Merger list (regex per node name)** | Node names that appear multiple times (browsers!) are merged into one logical node for patchbay matching. Own options page with a regex list; matching runs via `nodeNameEx` instead of `nodeName`. | We group apps under `appKey = application.name` (CH-6), but the patchbay cards (DV-24) are shown per PipeWire *node* — a Chromium with four streams yields four card rows. | **Yes,** toned down: same `application.name` → one card, positions merged. No regex list needed, the key is already there. | In real setups (browser + Discord + OBS), column 1 of the patchbay otherwise bloats to two- or three-fold. The merger concept solves exactly that; the regex list of that implementation is ballast, because we already have the grouping key. |
+| 5 | **Node identity by name, not id** | `NodeNameKey(name, mode, type)` as the hash key; ChangeLog since 0.9.0: short-lived nodes with reused ids, same-name-different-id handled explicitly. | Layout and app assignment hang off `application.name`/`node.name`, the live registry in `graph.cpp` off the `uint32 id` — correct as a *live* cache. | Confirmed, nothing to change. | The id-only pitfall is already avoided on-disk for us (CH-6); their change log proves that others had it. |
+| 6 | **Version in the profile root** | `version` attribute on the root element, migration on load (`< "0.5.0"` → clean up legacy names). | Layout.json has `version` + sidecar `.vN-from-newer-kmixdeck` for files from a newer version. | Comparable, nothing to adopt. | Both sides solve the same problem; ours is better suited to two frontends (JSON instead of XML). |
+| 7 | **Recently used profiles as tray menu** | System tray menu "Presets" with recently used profile paths; click one = apply. | The UX-17 tray popover shows Overview, no scenes. | Small: last paragraph in the tray popover "Last loaded: …" with direct recall. | Two clicks for the most common case (machine woke up, fetch the scene). The rest of the tray layout stays ours. |
+| 8 | **Node color types (audio/video/midi/midi2/other) with editable colors** | Five port-type color cards in the options dialog, persistence via `ColorsGroup` with hex keys; MIDI 2 (UMP) as its own type. | The web patchbay sorts by direction, colors only for levelled vs. silent edges. | No. | For us the edge carries its purpose in the ref (`>L`, `>R`, position); color classes by media class are second-hand information. |
+| 9 | **Free canvas with topological sort ("Arrange Nodes")** | Rank = distance from the source, columns, then the columns vertically aligned to the means of the target Y; Repel Overlapping Nodes as an extra. | The patchbay is deliberately fixed-column (sources → channels → outputs → monitors, DV-24/DV-27). | No. | Their algorithm optimizes wires on a wild graph — for us the structure is the semantics (one column = one stage in the signal path). Sorting it away would cost the readability that the layout is made of. |
+| 10 | Thumb-view corner, zoom range, fullscreen, pinch zoom | Gimmicky QGraphicsView features with corner positions and settings keys. | The web UI is responsive without its own zoom infrastructure. | No. | Window management, no domain behaviour. |
+| 11 | The GUI owns the graph (no daemon) | Everything in one process: no patching without a window, state in the GUI's QSettings. | AR-1: the daemon carries everything, frontends are leaves. | No — counter-reference. | Their model is the reason their patches have to be rescanned when the window closes; ours doesn't. Belongs in ADR-0010 as a contrast. |
 
-## Messung zu Punkt 1 (2026-09-19, Sandbox)
+## Measurement for point 1 (2026-09-19, sandbox)
 
-Ich hatte plain links als ersten Umsetzungspunkt vorgeschlagen und danach die Prämisse gemessen. Sie hält nicht.
+I had suggested plain links as the first implementation point and then measured the premise. It does not hold.
 
-Kosten pro Kante, gemessen am fd-Zähler des Daemons (`/proc/<pid>/fd`), Sandbox-PipeWire:
+Cost per edge, measured on the daemon's fd counter (`/proc/<pid>/fd`), sandbox PipeWire:
 
-| Schritt | fds | Δ |
+| Step | fds | Δ |
 |---|---|---|
-| idle, Starter-Layout (2 Mixes) | 14 | — |
-| + 2 Fake-Geräte (kein kmixdeck-Objekt) | 14 | 0 |
-| + 1 Mix→Gerät-Kante | 35 | **+21** |
-| + 1 Kanal (2 Zellen) + 1 Geräte-Eingang | 95 | +60 |
-| + 4 Kanäle (8 Zellen) | 255 | +160 (**20 pro Zelle**) |
-| + virtuelles Gerät 8×8 | 275 | **+20** |
+| idle, starter layout (2 mixes) | 14 | — |
+| + 2 fake devices (no kmixdeck object) | 14 | 0 |
+| + 1 mix→device edge | 35 | **+21** |
+| + 1 channel (2 cells) + 1 device input | 95 | +60 |
+| + 4 channels (8 cells) | 255 | +160 (**20 per cell**) |
+| + virtual device 8×8 | 275 | **+20** |
 
-Kanten-Inventar für ein realistisches Setup (6 Kanäle × 4 Mixes, 2 Geräte-Eingänge, 2 Mix-Ausgänge), 84 Kanten:
+Edge inventory for a realistic setup (6 channels × 4 mixes, 2 device inputs, 2 mix outputs), 84 edges:
 
-| Kantentyp | Anzahl | Anteil | Gain? |
+| Edge type | Count | Share | Gain? |
 |---|---|---|---|
-| Zelle (`kmixdeck.link.*`) | 64 | **76 %** | ja — Playback-Volume IST der Fader (ADR 0002) |
-| Mix-Ausgang (`kmixdeck.out.*`) | 8 | 9 % | DV-14-Trim möglich |
-| Mix-Capture (`kmixdeck.source.*`) | 8 | 9 % | DV-14-Trim möglich |
-| Geräte-Eingang (`kmixdeck.in.*`) | 4 | 5 % | DV-14-Trim möglich |
+| cell (`kmixdeck.link.*`) | 64 | **76 %** | yes — the playback volume IS the fader (ADR 0002) |
+| mix output (`kmixdeck.out.*`) | 8 | 9 % | DV-14 trim possible |
+| mix capture (`kmixdeck.source.*`) | 8 | 9 % | DV-14 trim possible |
+| device input (`kmixdeck.in.*`) | 4 | 5 % | DV-14 trim possible |
 
-**Ergebnis:** Gain-frei *im Moment der Anlage* sind 19 % der Kanten, und auch die können jederzeit Trim bekommen (`Channel.SetWireTrim` / `Mix.SetWireTrim`). Ein plain link müsste beim ersten Trim-Dreh live zum Loopback umgebaut werden — Umpatchen bei laufendem Audio, für eine Ersparnis, die nach `LimitNOFILE=65536` (DV-30) niemanden mehr drückt. **Verworfen**, nicht umgesetzt.
+**Result:** gain-less *at the moment of creation* is 19 % of the edges, and even those can get a trim at any time (`Channel.SetWireTrim` / `Mix.SetWireTrim`). A plain link would have to be rebuilt as a loopback live on the first trim turn — repatching while the audio is running, for a saving that, after `LimitNOFILE=65536` (DV-30), no longer squeezes anyone. **Rejected**, not implemented.
 
-Nebenbefund für #2/#3: Zellen dominieren die Kantenzahl so deutlich, dass eine Szenen-Implementierung (CT-9) auf keinen Fall Kanten anlegen/abreißen sollte, sondern nur Volumes setzen — was die Spec ohnehin so festlegt („nicht die Verdrahtung").
+Side finding for #2/#3: cells dominate the edge count so clearly that a scene implementation (CT-9) should under no circumstances create/break edges, but only set volumes — which the spec anyway fixes that way ("not the wiring").
 
 
+## What of this concretely lands in v0.3
 
-## Was davon konkret in v0.3 fällt
+**#1 is rejected** (measurement above). Remaining: **#2/#3** together with CT-9 (scenes), because the merge rule has to be defined there anyway — exclusive as the default, `--add` as the flag, auto-pin for "load a scene and keep working". **#4** (apps with the same `application.name` = one patchbay card) is a small change in `patchbay.js` plus grouping in `overview()`. **#7** (last-loaded scene in the tray popover) lands with CT-9. #5/#6 are confirmations without work, #8–#11 reasoned nos.
 
-**#1 ist verworfen** (Messung oben). Bleibt: **#2/#3** zusammen mit CT-9 (Szenen), weil dort die Merge-Regel ohnehin definiert werden muss — exklusiv als Default, `--add` als Flag, Auto-Pin für „Szene laden und weiterarbeiten". **#4** (Apps mit gleichem `application.name` = eine Patchbay-Karte) ist eine kleine Änderung in `patchbay.js` plus Gruppierung in `overview()`. **#7** (zuletzt geladene Szene im Tray-Popover) fällt mit CT-9 ab. #5/#6 sind Bestätigungen ohne Arbeit, #8–#11 begründete Nein.
-
-Ehrlicher Ertrag dieser Analyse: **zwei** übernehmbare Mechanismen (Exclusivity-Regel, Merger-Idee) und eine widerlegte eigene Hypothese. Für 17,7k Zeilen Fremdcode ist das wenig — aber die Exclusivity-Regel hätte ich mir bei CT-9 sonst selbst ausdenken müssen, und ihre ChangeLog-Historie (0.9.0: „nodes with reused ids", 0.9.3: „players power-cycling their client on a whim") ist der Beweis, dass unsere Namens-statt-id-Entscheidung aus CH-6 die richtige war.
-
+Honest yield of this analysis: **two** adoptable mechanisms (exclusivity rule, merger idea) and one refuted own hypothesis. For 17.7k lines of foreign code that is little — but the exclusivity rule is something I would otherwise have had to invent myself for CT-9, and their change-log history (0.9.0: "nodes with reused ids", 0.9.3: "players power-cycling their client on a whim") is the proof that our name-instead-of-id decision from CH-6 was the right one.
