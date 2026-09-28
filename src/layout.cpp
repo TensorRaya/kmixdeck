@@ -128,10 +128,15 @@ QJsonObject Layout::toJson() const {
     for (const auto &a : apps) appArr.append(QJsonObject{{QStringLiteral("key"), a.key}, {QStringLiteral("nodeName"), a.nodeName}, {QStringLiteral("channels"), QJsonArray::fromStringList(a.channels)}});
     QJsonArray virtArr;
     for (const auto &v : virtualDevices) virtArr.append(QJsonObject{{QStringLiteral("slug"), v.slug}, {QStringLiteral("name"), v.name}, {QStringLiteral("inputs"), v.inputs}, {QStringLiteral("outputs"), v.outputs}, {QStringLiteral("portPrefix"), v.portPrefix}});
+    QJsonArray cellArr;   // ADR 0013: only non-default cells (volume != 1 or muted) — like trim/mute, the rest is unity
+    for (const auto &c : cells)
+        if (c.volume != 1.0 || c.mute)
+            cellArr.append(QJsonObject{{QStringLiteral("channel"), c.channel}, {QStringLiteral("mix"), c.mix}, {QStringLiteral("volume"), c.volume}, {QStringLiteral("mute"), c.mute}});
     return {{QStringLiteral("version"), kLayoutVersion}, {QStringLiteral("channels"), ch}, {QStringLiteral("mixes"), mx}, {QStringLiteral("inputs"), in},
             {QStringLiteral("apps"), appArr}, {QStringLiteral("virtualDevices"), virtArr},
             {QStringLiteral("defaultChannel"), defaultChannel}, {QStringLiteral("listeningDevice"), listeningDevice}, {QStringLiteral("knownApps"), QJsonArray::fromStringList(knownApps)}, {QStringLiteral("hiddenDevices"), QJsonArray::fromStringList(hiddenDevices)},
-            {QStringLiteral("links"), [this] { QJsonArray a; for (const auto &l : links) a.append(QJsonObject{{QStringLiteral("channel"), l.channel}, {QStringLiteral("mix"), l.mix}, {QStringLiteral("follows"), l.follows}}); return a; }()}};
+            {QStringLiteral("links"), [this] { QJsonArray a; for (const auto &l : links) a.append(QJsonObject{{QStringLiteral("channel"), l.channel}, {QStringLiteral("mix"), l.mix}, {QStringLiteral("follows"), l.follows}}); return a; }()},
+            {QStringLiteral("cells"), cellArr}};
 }
 Layout Layout::fromJson(const QJsonObject &o) {
     Layout l;
@@ -197,7 +202,30 @@ Layout Layout::fromJson(const QJsonObject &o) {
         for (const auto &c : a.value(QStringLiteral("channels")).toArray()) la.channels << c.toString();
         if (!la.key.isEmpty() && !la.channels.isEmpty()) l.apps.push_back(la);
     }
+    for (const auto &v : o.value(QStringLiteral("cells")).toArray()) {   // ADR 0013
+        const auto j = v.toObject();
+        const QString ch = j.value(QStringLiteral("channel")).toString(), mx = j.value(QStringLiteral("mix")).toString();
+        if (ch.isEmpty() || mx.isEmpty()) continue;
+        l.cells.push_back({ch, mx, std::clamp(j.value(QStringLiteral("volume")).toDouble(1.0), 0.0, 4.0), j.value(QStringLiteral("mute")).toBool(false)});
+    }
     return l;
+}
+// ADR 0013 cell accessors.
+LayoutCell *Layout::cell(const QString &ch, const QString &mix) {
+    for (auto &c : cells) if (c.channel == ch && c.mix == mix) return &c;
+    return nullptr;
+}
+const LayoutCell *Layout::cell(const QString &ch, const QString &mix) const {
+    for (const auto &c : cells) if (c.channel == ch && c.mix == mix) return &c;
+    return nullptr;
+}
+void Layout::setCell(const QString &ch, const QString &mix, double volume, bool mute) {
+    if (auto *c = cell(ch, mix)) { c->volume = std::clamp(volume, 0.0, 4.0); c->mute = mute; return; }
+    cells.push_back({ch, mix, std::clamp(volume, 0.0, 4.0), mute});
+}
+double Layout::cellGain(const QString &ch, const QString &mix) const {
+    const LayoutCell *c = cell(ch, mix);
+    return c ? (c->mute ? 0.0 : c->volume) : 1.0;   // no entry = unity; mute = 0 (volume kept in the layout)
 }
 // B2: the watcher must judge the bytes it captured when the event arrived, not whatever is on disk by
 // the time it gets round to looking — see Mixer::watchLayoutFile. Same rules as load(), one code path.
@@ -236,6 +264,76 @@ static QString q(const QString &s) { QString r = s; r.replace(QLatin1Char('\\'),
 // device port with the same audio.channel, so this alone selects the subset (AUX3 AUX4 → playback_AUX3/_AUX4,
 // first named = the stream's left, second = right; measured on a fake 4-port sink).
 static QString pos(const QStringList &p) { return p.isEmpty() ? QStringLiteral("[ FL FR ]") : QStringLiteral("[ ") + p.join(QLatin1Char(' ')) + QStringLiteral(" ]"); }
+
+// ---- ADR 0013: the cell graph (shared by config renderer and runtime — they can never drift) ---------------------
+// One filter-chain per channel (per bus group when M > 32). It reads the channel sink (stream.capture.sink +
+// node.target: the MONITOR stream, post-trim, post-FX — the exact signal the old per-cell loopbacks captured
+// from the plain sink), fans each side out to a builtin "mixer" node per mix, and lands the per-mix outputs on
+// the shared bus. The "Gain 1" control of mixer L<idx>/R<idx> IS the cell fader for (channel, mix idx).
+// PipeWire sums every channel stream on the bus; one loopback per mix then taps its own AUX2idx/AUX2idx+1 pair
+// off the bus monitor into the mix entry (the mix sink, or its FX entry — unchanged). Measured (2026-09-27,
+// sandbox): 32 channels × 4 mixes = 73 nodes / 1314 server fds / 39 clients vs 554 / 3000–4100 / ~300 for the
+// old 128 loopbacks; cell gain 0.25 → −12.0 dB in exactly that mix, all other mixes untouched; a conf-baked
+// gain survives a full pipewire+wireplumber restart.
+// >32 mixes (SPA_AUDIO_MAX_CHANNELS = 64 = 2×32): the mixes spill onto additional buses (kmixdeck.bus.k) and
+// each channel gets one chain per bus group — cellChainArgs() renders one group.
+namespace {
+// The builtin node blocks for one channel chain: one mixer per mix of the bus group, absolute indices
+// firstIn..firstIn+mixes-1. Node names carry the mix SLUG (L<slug>/R<slug>) — the stable identifier the
+// daemon uses for Graph::setControl ("<slug>:Gain 1") — while the AUX pair on the bus stays the absolute
+// position AUX2*idx*/AUX2*idx*+1.
+void cellChainNodesAndLinks(const int firstIn, const int mixes, const Layout &l, const QString &ch,
+                            QStringList *nodeBlocks, QStringList *linkBlocks, QStringList *outPorts) {
+    nodeBlocks->clear(); linkBlocks->clear(); outPorts->clear();
+    *nodeBlocks << QStringLiteral("{ type = builtin label = copy name = iL }")
+               << QStringLiteral("{ type = builtin label = copy name = iR }");
+    QStringList names;   // node name per m, used by the links
+    for (int m = 0; m < mixes; ++m) {
+        const int idx = firstIn + m;
+        const double gain = l.cellGain(ch, l.mixes[idx].slug);   // 0.0 when muted — the volume stays in the layout
+        for (const QChar side : {QLatin1Char('L'), QLatin1Char('R')}) {
+            const QString nm = side + l.mixes[idx].slug;
+            names << nm;
+            *nodeBlocks << QStringLiteral("{ type = builtin label = mixer name = %1 control = { \"Gain 1\" = %2 } }")
+                            .arg(nm).arg(gain, 0, 'g', 10);
+            *outPorts << QStringLiteral("\"%1:Out\"").arg(nm);
+        }
+    }
+    for (int m = 0; m < mixes; ++m)
+        for (int s = 0; s < 2; ++s)
+            *linkBlocks << QStringLiteral("{ output = \"i%1:Out\" input = \"%2:In 1\" }").arg(s ? QLatin1Char('R') : QLatin1Char('L'), names[2 * m + s]);
+}
+}
+QString ADR13::cellChainArgs(const Layout &l, const QString &ch, const int bus, const int nMixesOnBus) {
+    const int firstIn = bus * kMixesPerBus;
+    QStringList nodes, links, outs;
+    cellChainNodesAndLinks(firstIn, nMixesOnBus, l, ch, &nodes, &links, &outs);
+    const QString busPos = busPositions(nMixesOnBus).join(QLatin1Char(' '));
+    return QStringLiteral("{ node.description = \"%1\" filter.graph = { nodes = [ %2 ] links = [ %3 ] inputs = [ \"iL:In\" \"iR:In\" ] outputs = [ %4 ] } "
+                          "capture.props = { node.name = %5 media.name = %5 node.target = %6 audio.position = [ FL FR ] "
+                          "stream.capture.sink = true node.passive = true node.dont-fallback = true } "
+                          "playback.props = { node.name = %7 node.passive = true audio.position = [ %8 ] target.object = %9 "
+                          "node.dont-fallback = true stream.dont-remix = true } }")
+        .arg(QStringLiteral("cells ") + ch + QLatin1Char(' ') + chainSignature(l, bus), nodes.join(QLatin1Char(' ')), links.join(QLatin1Char(' ')), outs.join(QLatin1Char(' ')),
+             q(chainNode(ch, bus)), q(Names::channelNode(ch)),
+             q(chainPlaybackNode(ch, bus)), busPos, q(busNode(bus)));
+}
+QString ADR13::chainSignature(const Layout &l, const int bus) {
+    QStringList s;
+    for (int i = bus * kMixesPerBus; i < l.mixes.size() && i < (bus + 1) * kMixesPerBus; ++i) s << l.mixes[i].slug;
+    return QLatin1Char('[') + s.join(QLatin1Char(' ')) + QLatin1Char(']');
+}
+QString ADR13::mixTapArgs(const QString &mix, const int mixIdx, const QString &mixEntry) {
+    const int bus = busIndex(mixIdx);
+    const int idxInBus = mixIdx - bus * kMixesPerBus;
+    const QString a = QStringLiteral("AUX") + QString::number(2 * idxInBus), b = QStringLiteral("AUX") + QString::number(2 * idxInBus + 1);
+    return QStringLiteral("{ node.description = \"mix %1 %4 %5\" capture.props = { node.name = %2 media.name = %2 stream.capture.sink = true target.object = %3 "
+                          "audio.position = [ %4 %5 ] stream.dont-remix = true node.passive = true node.dont-fallback = true } "
+                          "playback.props = { node.name = %6 media.name = %6 target.object = %7 audio.position = [ FL FR ] "
+                          "node.dont-fallback = true node.dont-reconnect = true } }")
+        .arg(mix, q(tapNode(mix) + QStringLiteral(".in")), q(busNode(bus)), a, b,
+             q(tapNode(mix)), q(mixEntry));
+}
 
 QString virtualPassArgs(const LayoutVirtualDevice &v) {
     // The capture half reads the sink's monitor (stream.capture.sink); the playback half IS the device's input side:
@@ -291,7 +389,9 @@ QString loopbackArgs(const QString &description,
 QString Layout::toPipewireConf() const {
     QString out;
     out += QStringLiteral("# Generated by kmixdeckd — do not edit; change the layout through kmixdeck/kmixdeck-kde instead.\n"
-                          "# ADR 0002: channel = null sink, mix = null sink, cell = loopback whose playback volume is the fader.\n"
+                          "# ADR 0013: channel = null sink, mix = null sink, cell = the \"Gain 1\" of a per-channel\n"
+                          "# filter-chain (kmixdeck.cells.<ch>) that feeds the shared cell bus (kmixdeck.bus); one loopback\n"
+                          "# per mix taps its AUX pair off the bus into the mix. The chain's cell gains come from the layout.\n"
                           "# ADR 0008: a channel/mix with effects gets a filter-chain instead of the plain sink; its capture node\n"
                           "# keeps the plain name, everything else targets that name unchanged.\n"
                           "# Every loopback has node.dont-fallback so a missing target never silently becomes the default sink (feedback).\n"
@@ -332,16 +432,27 @@ QString Layout::toPipewireConf() const {
         fxModule(m.fx, QStringLiteral("Mix: ") + m.name, QStringLiteral("kmixdeck.fx.mix.%1").arg(m.slug), QStringLiteral("kmixdeck.fx.mix.%1.out").arg(m.slug),
                  Names::mixNode(m.slug), Names::mixNode(m.slug), m.slug);
     }
+    // ADR 0013: the shared cell bus. PipeWire sums every channel chain's playback stream here (2 channels per
+    // mix: AUX2i/AUX2i+1). A summing BUS, not a device — priority.session = 0 keeps it out of the pickers, like
+    // every other kmixdeck sink (ADR 0007). >32 mixes spill onto kmixdeck.bus.k (SPA_AUDIO_MAX_CHANNELS = 64).
+    const int buses = mixes.isEmpty() ? 0 : ADR13::busCount(mixes.size());   // no mix → no bus (same rule as the daemon)
+    for (int b = 0; b < buses; ++b) {
+        out += QStringLiteral("  { factory = adapter args = { factory.name = support.null-audio-sink node.name = %1 media.class = Audio/Sink object.linger = true audio.position = [ %2 ] priority.session = 0 priority.driver = 0 } }\n")
+                   .arg(q(ADR13::busNode(b)), ADR13::busPositions(ADR13::kMixesPerBus).join(QLatin1Char(' ')));   // always 64: adding a mix never rebuilds the bus (measured 2026-09-27: 32x4 on a 64-ch bus = 75 nodes / 1314 fds, -12.0 dB)
+    }
     out += QStringLiteral("]\n\ncontext.modules = [\n");
     const auto mod = [&](const QString &args) { out += QStringLiteral("  { name = libpipewire-module-loopback args = %1 }\n").arg(args); };
+    // ADR 0013: the cell graph — one filter-chain per (channel, bus group) replaces the per-cell loopbacks,
+    // and one bus tap per mix reads the mix's AUX pair off the shared bus into the mix entry.
     for (const auto &c : channels)
-        for (const auto &m : mixes) {
-            const QString cell = Names::cellNode(c.slug, m.slug);
-            // cell capture sits on the PLAIN channel sink — that is where processed audio arrives (FX-3);
-            // only apps/inputs aim at channelEntry so the chain actually runs in front of everything.
-            mod(loopbackArgs(c.name + QStringLiteral(" → ") + m.name, cell + QStringLiteral(".in"), Names::channelNode(c.slug), true, {}, false,
-                             cell, mixEntry(m.slug), {}, false, true));
+        for (int b = 0; b < buses; ++b) {
+            const int first = b * ADR13::kMixesPerBus;
+            const int n = qMin(mixes.size() - first, ADR13::kMixesPerBus);
+            if (n <= 0) continue;
+            out += QStringLiteral("  { name = libpipewire-module-filter-chain args = %1 }\n").arg(ADR13::cellChainArgs(*this, c.slug, b, n));
         }
+    for (int i = 0; i < mixes.size(); ++i)
+        mod(ADR13::mixTapArgs(mixes[i].slug, i, mixEntry(mixes[i].slug)));
     for (const auto &v : virtualDevices)   // DV-29: .out port N → source port N; the loopback's playback half IS the source
         if (v.outputs > 0 && v.inputs > 0)
             mod(virtualPassArgs(v));

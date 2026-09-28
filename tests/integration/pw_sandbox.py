@@ -81,6 +81,41 @@ class PwDaemon:
             f"nodes never appeared within {timeout}s: {len(fehlt)} of {len(want)} missing: {fehlt}\n"
             f"  graph has {len(da)} nodes, {len([n for n in da if n.startswith('kmixdeck.')])} of them kmixdeck.*")
 
+    # ---- ADR 0013 cells: a cell is the "Gain 1" pair L<mix>/R<mix> inside the channel's chain kmixdeck.cells.<ch>
+    def cell_gains(self, ch: str) -> dict:
+        """All cell gains of one channel, {"<mix>": linear} (L side; R is written identically). {} if the chain is absent."""
+        n = self.node(f"kmixdeck.cells.{ch}")
+        if n is None: return {}
+        for p in n["info"].get("params", {}).get("Props", []):
+            ps = p.get("params") or []
+            g = {ps[i][1:-len(":Gain 1")]: ps[i + 1] for i in range(0, len(ps) - 1, 2)
+                 if str(ps[i]).startswith("L") and str(ps[i]).endswith(":Gain 1")}
+            if g: return g        # the first Props with params is audioconvert's channelmix block
+        return {}
+
+    def cell_gain(self, ch: str, mix: str) -> float:
+        g = self.cell_gains(ch)
+        assert mix in g, f"cell {ch}×{mix} not in kmixdeck.cells.{ch} ({sorted(g)})"
+        return g[mix]
+
+    def wait_cell(self, ch: str, mix: str, timeout: float = 30.0, gain: float | None = None) -> float:
+        """Wait until the cell exists (chain up, its control published) — and, with gain=, until it carries that value.
+        The chain publishes its controls a moment after the node appears (every gain reads 0.0 first, 2026-09-28)."""
+        t0 = time.time(); last = None
+        while time.time() - t0 < timeout:
+            last = self.cell_gains(ch).get(mix)
+            if last is not None and (gain is None or abs(last - gain) < 1e-3):
+                return last
+            time.sleep(0.1)
+        raise AssertionError(f"cell {ch}×{mix} never {'appeared' if last is None else f'became {gain}'} within {timeout}s (last: {last})")
+
+    def set_cell(self, ch: str, mix: str, linear: float) -> None:
+        """A foreign writer on one cell (what pw-cli would do) — the daemon must put the layout value back."""
+        subprocess.run(["pw-cli", "set-param", str(self.node_id(f"kmixdeck.cells.{ch}")), "Props",
+                        f'{{ params = [ "L{mix}:Gain 1" {linear} "R{mix}:Gain 1" {linear} ] }}'],
+                       env=self.env, check=True, capture_output=True)
+        time.sleep(0.3)
+
     def node_id(self, name: str) -> int:
         n = self.node(name)
         assert n is not None, f"node {name} not found"

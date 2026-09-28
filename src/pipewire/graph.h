@@ -6,6 +6,7 @@
 #include <QString>
 #include <QHash>
 #include <QVector>
+#include <QMap>
 #include <memory>
 #include <functional>
 #include <optional>
@@ -37,6 +38,7 @@ struct NodeInfo {
     bool mute = false;
     QString state;         // suspended / idle / running
     QStringList positions; // audio.position of the node's ports (e.g. FL FR, or AUX0..AUX31 in Pro Audio) — DV-13
+    QHash<QString, double> controls;   // filter-chain controls from Props.params ("Lstream:Gain 1" → 0.25) — ADR 0013 cells
 };
 
 /// One audio port of a device node (DV-13/DV-20): what the picker shows and what a DeviceRef::positions entry names.

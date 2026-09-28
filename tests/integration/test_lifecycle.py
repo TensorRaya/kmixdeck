@@ -59,11 +59,11 @@ def test_add_channel_creates_sink_cells_and_persists(stack):
     assert r.stdout.strip() == "/org/kmixdeck1/channel/music"
     assert wait(lambda: len(status(stack)["cells"]) == 8)
     stack.pw.wait_node("kmixdeck.channel.music")
-    stack.pw.wait_node("kmixdeck.link.music.monitor"); stack.pw.wait_node("kmixdeck.link.music.stream")
+    stack.pw.wait_cell("music", "monitor"); stack.pw.wait_cell("music", "stream")
     assert [c["slug"] for c in layout(stack)["channels"]] == ["game", "system", "voice", "music"]
     assert 'node.name = "kmixdeck.channel.music"' in conf(stack)
     # fresh cells are unity, unmuted — never inherit anything
-    assert stack.pw.props("kmixdeck.link.music.stream")["volume"] == pytest.approx(1.0)
+    assert stack.pw.wait_cell("music", "stream", gain=1.0) == pytest.approx(1.0)
 
 
 def test_add_channel_with_umlauts_and_spaces_slugs_cleanly(stack):
@@ -143,9 +143,9 @@ def test_remove_channel_that_has_an_input_device_drops_the_input(stack):
 def test_add_mix_gets_output_edge_capture_source_and_parks(stack):
     stack.cli("mix", "add", "Recording")
     assert wait(lambda: len(status(stack)["cells"]) == 9)
-    for n in ["kmixdeck.mix.recording", "kmixdeck.out.recording", "kmixdeck.source.recording",
-              "kmixdeck.link.game.recording", "kmixdeck.link.system.recording", "kmixdeck.link.voice.recording"]:
+    for n in ["kmixdeck.mix.recording", "kmixdeck.out.recording", "kmixdeck.source.recording", "kmixdeck.tap.recording"]:
         stack.pw.wait_node(n)
+    for ch in ("game", "system", "voice"): stack.pw.wait_cell(ch, "recording")
     assert wait(lambda: out_link_target(stack, "recording") == "kmixdeck.null"), "new mix must start parked, never on the default sink"
     m = next(m for m in stack.cli("mix", "list", json_out=True) if m["Slug"] == "recording")
     assert m["OutputDevice"] == "" and m["CaptureSource"] == "kmixdeck.source.recording" and m["OutputPresent"] is True
@@ -220,7 +220,7 @@ def test_remove_last_mix_and_last_channel_is_allowed_and_matrix_is_empty_but_ali
 def test_rebuild_from_empty_and_default_layout_on_missing_file(stack):
     stack.cli("channel", "add", "Game"); stack.cli("mix", "add", "Monitor"); stack.cli("mix", "add", "Stream")
     assert wait(lambda: len(status(stack)["cells"]) == 2)
-    stack.pw.wait_node("kmixdeck.link.game.stream")
+    stack.pw.wait_cell("game", "stream")
     assert wait(lambda: out_link_target(stack, "stream") == "kmixdeck.null")
     # delete the layout file under the running daemon → next Save must recreate it, not crash
     (Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").unlink()
@@ -366,7 +366,7 @@ def test_ch9_undo_restores_channel_with_faders_links_input_and_default(fresh):
     assert "Voice" in stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", "UndoDescription").stdout
     assert stack.cli("channel", "default").stdout.strip() == "none"
     r = stack.cli("undo"); assert "Voice" in r.stdout
-    assert wait(lambda: "kmixdeck.channel.voice" in node_names(stack) and "kmixdeck.link.voice.stream" in node_names(stack) and "kmixdeck.in.voice" in node_names(stack), tries=80)
+    assert wait(lambda: "kmixdeck.channel.voice" in node_names(stack) and "stream" in stack.pw.cell_gains("voice") and "kmixdeck.in.voice" in node_names(stack), tries=80)
     def cell(ch, mx): return stack.cli("cell", "get", ch, mx, json_out=True)
     assert wait(lambda: abs(cell("voice", "stream")["Volume"] - 10 ** (-18 / 20)) < 0.003, tries=60), cell("voice", "stream")
     assert wait(lambda: cell("voice", "monitor")["Muted"] is True, tries=30)

@@ -27,7 +27,9 @@ private Q_SLOTS:
     void names() {
         QCOMPARE(Names::channelNode(QStringLiteral("game")), QStringLiteral("kmixdeck.channel.game"));
         QCOMPARE(Names::mixNode(QStringLiteral("stream")), QStringLiteral("kmixdeck.mix.stream"));
-        QCOMPARE(Names::cellNode(QStringLiteral("game"), QStringLiteral("stream")), QStringLiteral("kmixdeck.link.game.stream"));
+        QCOMPARE(ADR13::chainNode(QStringLiteral("game")), QStringLiteral("kmixdeck.cells.game"));        // ADR 0013
+        QCOMPARE(ADR13::chainNode(QStringLiteral("game"), 1), QStringLiteral("kmixdeck.cells.game@1"));   // MX-1: >32 mixes
+        QCOMPARE(ADR13::tapNode(QStringLiteral("stream")), QStringLiteral("kmixdeck.tap.stream"));
     }
 
     // UX-7: the UI fader is cubic like Plasma/PulseAudio; PipeWire wants linear. Round-trips and known points.

@@ -1,6 +1,6 @@
 # ADR 0012 — Was ein 32×32-Pult den Graph kostet (gemessen)
 
-Datum: 2026-09-20 · Status: akzeptiert (Befund), Konsequenz offen
+Datum: 2026-09-20 · Status: akzeptiert (Befund) · Konsequenz 3 entschieden in ADR 0013 (2026-09-28)
 
 ## Anlass
 

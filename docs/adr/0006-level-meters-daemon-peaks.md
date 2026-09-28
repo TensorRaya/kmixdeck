@@ -60,6 +60,7 @@ the same order as pavucontrol's meters and far from a reason to break the archit
 - Peaks are *per node*, not per cell. A cell meter is the channel's meter scaled by the cell volume — the
   frontend can draw that without more streams. If real per-cell metering is ever wanted, the same mechanism
   works on `kmixdeck.link.<c>.<m>` nodes (24 more streams ≈ +2 %).
+  *Superseded by ADR 0013 (2026-09-28): cells have no node any more; `cell/<c>/<m>` = channel peak × cell gain, computed in the daemon.*
 - Test: subscribe → tone into `game` → signal carries ≈ −41 dB on `channel/game`, `mix/stream`, `mix/monitor`
   and 0 on the others; unsubscribe → meter nodes disappear from the graph.
 

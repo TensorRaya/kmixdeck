@@ -287,6 +287,14 @@ LevelsAdaptor::LevelsAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdapt
             p.insert(QStringLiteral("gr-src/") + slug, qMax(0.0f, *bus - *edge));
         }
 
+        // ADR 0013 / UX-13: cell/<c>/<m> is post-fader = what the channel delivers × the cell gain. The chain's
+        // input IS the channel sink's monitor, so this is the exact signal the old per-cell loopback metered.
+        for (const auto &c : m_mixer->channelSlugs()) {
+            const auto ch = raw.constFind(Names::channelNode(c));
+            if (ch == raw.constEnd()) continue;
+            for (const auto &m : m_mixer->mixSlugs())
+                p.insert(QStringLiteral("cell-src/%1/%2").arg(c, m), *ch * static_cast<float>(m_mixer->layout().cellGain(c, m)));
+        }
         if (m_subscribers.isEmpty()) return;
         QVariantMap out;
         for (auto it = p.cbegin(); it != p.cend(); ++it) out.insert(meterKey(it.key()), static_cast<double>(it.value()));
@@ -338,7 +346,7 @@ void LevelsAdaptor::onNameOwnerChanged(const QString &name, const QString &, con
 }
 // UX-13: one meter per visible entity. Node name → bus key:
 //   kmixdeck.channel.<s>      → channel/<s>          kmixdeck.mix.<s>          → mix/<s>
-//   kmixdeck.link.<c>.<m>     → cell/<c>/<m>  (post-fader: the cell loopback's playback side)
+//   (computed)                → cell/<c>/<m>  (post-fader: channel peak × cell gain, ADR 0013)
 //   kmixdeck.in.<s>           → in/<s>        (what the hardware input delivers)
 //   kmixdeck.out.<m>[.n]      → out/<m>       (what leaves towards the device, post master)
 //   <app node, by id>         → app/<id>      (the application's own output — "who is talking")
@@ -349,7 +357,7 @@ QString LevelsAdaptor::meterKey(const QString &n) const {
     if (n.startsWith(QLatin1String("gr-src/"))) return QStringLiteral("gr/") + n.mid(7);
     if (n.startsWith(QLatin1String("kmixdeck.channel."))) return QStringLiteral("channel/") + n.mid(17);
     if (n.startsWith(QLatin1String("kmixdeck.mix.")))     return QStringLiteral("mix/") + n.mid(13);
-    if (n.startsWith(QLatin1String("kmixdeck.link.")))    { const auto p = n.mid(14).split(QLatin1Char('.')); if (p.size() == 2) return QStringLiteral("cell/%1/%2").arg(p[0], p[1]); }
+    if (n.startsWith(QLatin1String("cell-src/")))          return QStringLiteral("cell/") + n.mid(9);   // ADR 0013: computed above
     if (n.startsWith(QLatin1String("kmixdeck.in.")))      return QStringLiteral("in/") + n.mid(12);
     if (n.startsWith(QLatin1String("kmixdeck.out.")))     return QStringLiteral("out/") + n.mid(13).section(QLatin1Char('.'), 0, 0);
     if (const uint32_t id = m_appNodes.value(n, 0)) return QStringLiteral("app/%1").arg(id);
@@ -374,7 +382,7 @@ void LevelsAdaptor::syncTargets() {
             if (!m_mixer->ducking(c).value(QStringLiteral("duckedBy")).toString().isEmpty())
                 t << fx::duckerNode(c) + QStringLiteral(".out");
         for (const auto &m : m_mixer->mixSlugs()) { t << Names::mixNode(m); t << EdgeNames::outputNode(m, 0); }
-        for (const auto &c : m_mixer->channelSlugs()) for (const auto &m : m_mixer->mixSlugs()) t << Names::cellNode(c, m);
+        // ADR 0013: cells are no nodes any more — their meter is computed from the channel's (see Peaks below)
         for (const auto &i : m_mixer->inputSlugs()) t << EdgeNames::inputNode(i);
         for (uint32_t id : m_mixer->appIds()) if (const auto a = m_mixer->app(id); a && !a->nodeName.isEmpty()) { t << a->nodeName; m_appNodes.insert(a->nodeName, id); }
     }

@@ -77,6 +77,8 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
     // AR-4: PipeWire restarted under us → drop everything (nodeRemoved for each → layout/app objects vanish on
     // the bus), then reconnect with backoff; the registry replays the graph and objects reappear.
     QObject::connect(&m_edgeWatch, &QTimer::timeout, this, &Mixer::checkPendingEdges);
+    m_cellSave.setSingleShot(true); m_cellSave.setInterval(300);
+    QObject::connect(&m_cellSave, &QTimer::timeout, this, [this] { saveLayout(); });
     QObject::connect(&m_graph, &pw::Graph::moduleLoadFailed, this, [this](const QString &args) {
         // args start with `{ node.description = "Input: Talk ← …" capture.props = …` — the quoted description is the name a user knows
         static const QRegularExpression rx(QStringLiteral(R"rx(node\.description\s*=\s*"((?:[^"\\]|\\.)*)")rx"));
@@ -84,11 +86,14 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
         m_lastError = QStringLiteral("edge could not be created: ") + (m.hasMatch() ? m.captured(1) : args.left(80)) + QStringLiteral(" (see journal)");
         qCCritical(lcMixer) << m_lastError;
         Q_EMIT lastErrorChanged();
+        // the module never came up → its node will never register; forget the request so the next pass retries
+        for (auto it = m_nodeRequested.begin(); it != m_nodeRequested.end();) it = m_graph.node(*it) ? std::next(it) : m_nodeRequested.erase(it);
     });
     QObject::connect(&m_graph, &pw::Graph::disconnected, this, [this](const QString &why) {
         qCWarning(lcMixer) << "PipeWire disconnected:" << why;
         m_graph.teardown();
-        m_channels.clear(); m_mixes.clear(); m_cells.clear(); m_sinks.clear(); m_devices.clear(); m_edges.clear(); m_idToName.clear();
+        m_channels.clear(); m_mixes.clear(); m_sinks.clear(); m_devices.clear(); m_edges.clear(); m_idToName.clear();
+        m_nodeRequested.clear();   // nothing requested survives a lost core — the replay must be allowed to ask again (AR-4)
         Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged();
         for (auto id : m_apps.keys()) Q_EMIT appRemoved(id);
         m_apps.clear();
@@ -288,23 +293,14 @@ void Mixer::reconcile() {
     // when the 400 ms start-up reconcile ran after a SetFx).
     for (const auto &c : m_layout.channels) if (c.fx.isActive() && !m_graph.node(QStringLiteral("kmixdeck.fx.%1").arg(c.slug))) applyFx(c.slug);
     for (const auto &m : m_layout.mixes)     if (m.fx.isActive() && !m_graph.node(QStringLiteral("kmixdeck.fx.mix.%1").arg(m.slug))) applyFx(m.slug);
-    for (const auto &c : m_layout.channels)
-        for (const auto &m : m_layout.mixes) {
-            const QString cell = Names::cellNode(c.slug, m.slug);
-            if (m_graph.node(cell)) continue;
-            m_graph.loadLoopback(loopbackArgs(c.name + QStringLiteral(" → ") + m.name,
-                                              cell + QStringLiteral(".in"), Names::channelNode(c.slug), true, {}, false,
-                                              cell, m_layout.mixEntry(m.slug), {}, false, true));
-        }
+    ensureCellGraph();
     ensureEdgeLoopbacks();
     for (const auto &a : m_layout.apps) ensureAppRelays(a);   // CH-12 relays are layout, so they come back like cells
     // Capture sides are plumbing, not faders. WirePlumber restores whatever volume it last saw on them (it did:
-    // a test left kmixdeck.link.game.stream.in at 0.0156 → the stream mix was 36 dB down with the fader at 0 dB).
-    for (const auto &n : m_graph.nodes())
-        if (n.name.startsWith(QLatin1String("kmixdeck.")) && n.name.endsWith(QLatin1String(".in")) && (n.volume != 1.0f || n.mute)) {
-            qCInfo(lcMixer) << "resetting capture side" << n.name << "to 1.0/unmuted (was" << n.volume << n.mute << ")";
-            m_graph.setVolume(n.id, 1.0f, false);
-        }
+    // a test left the old per-cell loopback kmixdeck.link.game.stream.in at 0.0156 → the stream mix was 36 dB down with the fader at 0 dB).
+    // healPlumbing() also runs in onNode(): a chain this daemon loaded at runtime is ITS module, dies with it and comes
+    // back AFTER this sweep — WirePlumber restores the old volume onto the new node (test_vf7, 2026-09-28).
+    for (const auto &n : m_graph.nodes()) healPlumbing(n);
     // Config fragment on disk must match what THIS binary renders — a stale one (older renderer, or written by
     // hand) would rebuild a different graph at next login. Compare content, write only on drift (idempotent).
     if (!m_pwConfPath.isEmpty()) {
@@ -317,20 +313,92 @@ void Mixer::reconcile() {
     Q_EMIT layoutChanged();
 }
 
+// ADR 0013: the cell graph — bus sink(s), one chain per (channel, bus group), one tap per mix. Same arg renderers
+// as Layout::toPipewireConf (ADR13::cellChainArgs / mixTapArgs), so runtime and conf fragment cannot drift.
+// A chain or tap whose node.description no longer matches the layout (a mix was added/removed/reordered, or the
+// conf fragment at login was rendered for another mix set) is destroyed; onNodeRemoved() calls back in here and
+// the fresh one is loaded. Cell gains come from the layout, so a rebuilt chain comes up at the right level.
+void Mixer::ensureCellGraph() {
+    if (!m_connected) return;
+    // no mix → no bus (an empty desk leaves nothing but the parking sink, test_remove_last_mix_and_last_channel)
+    const int buses = m_layout.mixes.isEmpty() ? 0 : ADR13::busCount(m_layout.mixes.size());
+    for (int b = 0; b < buses; ++b)
+        requestNullNode(ADR13::busNode(b), [&] {
+            m_graph.createNullNode(ADR13::busNode(b), QStringLiteral("kmixdeck cell bus"), QStringLiteral("Audio/Sink"), ADR13::busPositions(ADR13::kMixesPerBus)); });
+    QList<uint32_t> stale;
+    for (const auto &c : m_layout.channels)
+        for (int b = 0; b < buses; ++b) {
+            const int n = qMin(int(m_layout.mixes.size()) - b * ADR13::kMixesPerBus, ADR13::kMixesPerBus);
+            if (n <= 0) continue;
+            const QString name = ADR13::chainNode(c.slug, b);
+            const QString want = QStringLiteral("cells ") + c.slug + QLatin1Char(' ') + ADR13::chainSignature(m_layout, b);
+            if (const auto node = m_graph.node(name)) { if (node->description != want) stale << node->id; continue; }
+            requestNullNode(name, [&] { m_graph.loadLoopback(ADR13::cellChainArgs(m_layout, c.slug, b, n), "libpipewire-module-filter-chain"); });
+            expectEdge(name, QStringLiteral("cells ") + c.name);
+        }
+    for (int i = 0; i < m_layout.mixes.size(); ++i) {
+        const QString &slug = m_layout.mixes[i].slug;
+        const QString name = ADR13::tapNode(slug);
+        const int k = i % ADR13::kMixesPerBus;
+        const QString want = QStringLiteral("mix %1 AUX%2 AUX%3").arg(slug).arg(2 * k).arg(2 * k + 1);
+        if (const auto node = m_graph.node(name)) { if (node->description != want) stale << node->id; continue; }
+        requestNullNode(name, [&] { m_graph.loadLoopback(ADR13::mixTapArgs(slug, i, m_layout.mixEntry(slug))); });
+        expectEdge(name, QStringLiteral("Mix: ") + m_layout.mixes[i].name + QStringLiteral(" (bus tap)"));
+    }
+    // leftovers of channels/mixes that are gone — and twins: two modules for one name (a retry whose first attempt
+    // arrived late) keep the older node, the newer is surplus
+    QHash<QString, uint32_t> firstOf;
+    for (const auto &n : m_graph.nodes()) {
+        if (!n.name.startsWith(QLatin1String("kmixdeck.cells.")) && !n.name.startsWith(QLatin1String("kmixdeck.tap."))) continue;
+        auto f = firstOf.find(n.name);
+        if (f == firstOf.end()) { firstOf.insert(n.name, n.id); continue; }
+        stale << std::max(*f, n.id); *f = std::min(*f, n.id);
+    }
+    for (const auto &n : m_graph.nodes()) {
+        if (n.name.startsWith(QLatin1String("kmixdeck.cells."))) {
+            QString ch = n.name.mid(15); if (ch.endsWith(QLatin1String(".out"))) ch.chop(4); ch = ch.section(QLatin1Char('@'), 0, 0);
+            const int b = n.name.contains(QLatin1Char('@')) ? n.name.section(QLatin1Char('@'), 1).section(QLatin1Char('.'), 0, 0).toInt() : 0;
+            if (!m_layout.channel(ch) || b >= buses) stale << n.id;
+        } else if (n.name.startsWith(QLatin1String("kmixdeck.tap."))) {
+            QString mx = n.name.mid(13); if (mx.endsWith(QLatin1String(".in"))) mx.chop(3);
+            if (!m_layout.mix(mx)) stale << n.id;
+        } else if (n.name == QLatin1String("kmixdeck.bus") || n.name.startsWith(QLatin1String("kmixdeck.bus."))) {
+            const int b = n.name == QLatin1String("kmixdeck.bus") ? 0 : n.name.mid(13).toInt();
+            if (b >= buses) stale << n.id;
+        }
+    }
+    // One destroy per module (2026-09-28): destroying either stream of a filter-chain/loopback unloads the module and
+    // takes its partner along, so destroying the partner too only earned "no global N" (157 in a 3-channel run).
+    QSet<QString> staleNames; for (uint32_t id : stale) staleNames.insert(m_idToName.value(id));
+    for (uint32_t id : stale) {
+        const QString nm = m_idToName.value(id);
+        if (!nm.isEmpty()) m_nodeRequested.remove(nm);
+        if (nm.endsWith(QLatin1String(".out")) && staleNames.contains(nm.chopped(4))) continue;
+        if (nm.endsWith(QLatin1String(".in"))  && staleNames.contains(nm.chopped(3))) continue;
+        m_graph.destroyObject(id);
+    }
+}
 void Mixer::expectEdge(const QString &playbackNode, const QString &description) {
     m_edgePending.insert(playbackNode, {description, QDateTime::currentMSecsSinceEpoch()});
     if (!m_edgeWatch.isActive()) m_edgeWatch.start(500);
 }
 void Mixer::checkPendingEdges() {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    bool retry = false;
     for (auto it = m_edgePending.begin(); it != m_edgePending.end();) {
         if (m_graph.node(it.key())) { it = m_edgePending.erase(it); continue; }          // arrived
         if (now - it.value().second < 3000) { ++it; continue; }                           // still within grace
         m_lastError = QStringLiteral("edge could not be created: ") + it.value().first + QStringLiteral(" (see journal)");
         qCCritical(lcMixer).noquote() << m_lastError << "- node" << it.key() << "never appeared (the module's own PipeWire client failed; EMFILE shows as 'Protocol error' — check the open-files limit)";
         Q_EMIT lastErrorChanged();
+        // ...and ask again: the comment above onNodeRemoved promised this, the code never did it — one lost module
+        // under load left kmixdeck.cells.d13 missing for good (fail.L5, 2026-09-28). A late arrival of the first one
+        // is caught by the twin sweep in ensureCellGraph / onNode.
+        m_nodeRequested.remove(it.key());
+        retry = true;
         it = m_edgePending.erase(it);
     }
+    if (retry) QTimer::singleShot(0, this, [this] { ensureCellGraph(); ensureEdgeLoopbacks(); });
     if (m_edgePending.isEmpty()) m_edgeWatch.stop();
 }
 void Mixer::requestNullNode(const QString &name, const std::function<void()> &create) {
@@ -702,21 +770,41 @@ QStringList Mixer::mixSlugs() const     { QStringList l; for (const auto &m : m_
 QString Mixer::channelName(const QString &slug) const { for (const auto &c : m_channels) if (c.slug == slug) return c.name; return slug; }
 QString Mixer::mixName(const QString &slug) const     { for (const auto &m : m_mixes) if (m.slug == slug) return m.name; return slug; }
 
-bool   Mixer::cellPresent(const QString &ch, const QString &mix) const { return m_cells.contains(Names::cellNode(ch, mix)); }
+// ADR 0013: a cell is the "Gain 1" of the mixer nodes L<mix>/R<mix> inside the channel's cell chain. The layout owns
+// volume + mute (WirePlumber does not persist filter controls); the chain's capture node carries the Props.
+bool Mixer::cellPresent(const QString &ch, const QString &mix) const {
+    // Layout, not graph: adding a mix rebuilds every channel chain (one gain pair per mix), and the cells of the OLD
+    // mixes must not blink off the bus meanwhile (test_ar7: guide adds a mix, then sets game×stream at once — "no
+    // cell"). A write in that gap lands in the layout; the chain renders it, onNode re-applies it (isNew).
+    return m_layout.channel(ch) && m_layout.mix(mix);
+}
+int Mixer::cellBus(const QString &mix) const {
+    for (int i = 0; i < m_layout.mixes.size(); ++i) if (m_layout.mixes[i].slug == mix) return ADR13::busIndex(i);
+    return 0;
+}
 double Mixer::cellVolume(const QString &ch, const QString &mix) const {
-    auto it = m_cells.constFind(Names::cellNode(ch, mix)); return it == m_cells.constEnd() ? 0.0 : linearToCubic(it->volume);
+    const LayoutCell *c = m_layout.cell(ch, mix); return linearToCubic(static_cast<float>(c ? c->volume : 1.0));
 }
 bool Mixer::cellMuted(const QString &ch, const QString &mix) const {
-    auto it = m_cells.constFind(Names::cellNode(ch, mix)); return it == m_cells.constEnd() ? true : it->mute;
+    const LayoutCell *c = m_layout.cell(ch, mix); return c && c->mute;
+}
+void Mixer::applyCellGain(const QString &ch, const QString &mix) {
+    const auto node = m_graph.node(ADR13::chainNode(ch, cellBus(mix)));
+    if (!node) return;   // the chain renders the layout value when it comes up
+    const double g = m_layout.cellGain(ch, mix);
+    m_graph.setControl(node->id, QStringLiteral("L") + mix + QStringLiteral(":Gain 1"), g);
+    m_graph.setControl(node->id, QStringLiteral("R") + mix + QStringLiteral(":Gain 1"), g);
+}
+void Mixer::writeCellState(const QString &ch, const QString &mix, double linear, bool mute) {
+    m_layout.setCell(ch, mix, linear, mute);
+    applyCellGain(ch, mix);
+    m_cellSave.start();   // a fader drag is dozens of writes; the layout (and conf) is written once it settles
+    Q_EMIT cellChanged(ch, mix);
 }
 void Mixer::setCellVolume(const QString &ch, const QString &mix, double cubic) {
-    auto it = m_cells.find(Names::cellNode(ch, mix)); if (it == m_cells.end()) return;
+    if (!m_layout.channel(ch) || !m_layout.mix(mix)) return;
     breakLink(ch, mix);                       // MX-7: a direct write to a follower unlinks it
-    const float lin = cubicToLinear(std::clamp(cubic, 0.0, 1.0));
-    it->volume = lin;                         // optimistic; PipeWire echoes via nodeChanged
-    writeCell(Names::cellNode(ch, mix), it->id, lin, it->mute);
-    // WirePlumber's restore-stream may overwrite this later; onNode() compares the echo with the intent (writeCell) and puts it back.
-    Q_EMIT cellChanged(ch, mix);
+    writeCellState(ch, mix, cubicToLinear(std::clamp(cubic, 0.0, 1.0)), cellMuted(ch, mix));
     propagateLinks(ch, mix);
 }
 QString Mixer::cellFollows(const QString &ch, const QString &mix) const {
@@ -739,22 +827,20 @@ void Mixer::breakLink(const QString &ch, const QString &mix) {
     if (n) { saveLayout(); qCInfo(lcMixer) << "cell" << ch << mix << "unlinked (touched directly)"; }
 }
 void Mixer::propagateLinks(const QString &ch, const QString &sourceMix) {
-    const auto src = m_cells.constFind(Names::cellNode(ch, sourceMix)); if (src == m_cells.constEnd()) return;
+    const LayoutCell *s = m_layout.cell(ch, sourceMix);
+    const double vol = s ? s->volume : 1.0; const bool mute = s && s->mute;
     for (const auto &l : m_layout.links) {
         if (l.channel != ch || l.follows != sourceMix) continue;
-        auto it = m_cells.find(Names::cellNode(ch, l.mix)); if (it == m_cells.end()) continue;
-        if (it->volume == src->volume && it->mute == src->mute) continue;
-        it->volume = src->volume; it->mute = src->mute;
-        writeCell(Names::cellNode(ch, l.mix), it->id, it->volume, it->mute);
-        Q_EMIT cellChanged(ch, l.mix);
+        const LayoutCell *t = m_layout.cell(ch, l.mix);
+        if ((t ? t->volume : 1.0) == vol && (t && t->mute) == mute) continue;
+        writeCellState(ch, l.mix, vol, mute);
     }
 }
 void Mixer::setCellMuted(const QString &ch, const QString &mix, bool muted) {
-    auto it = m_cells.find(Names::cellNode(ch, mix)); if (it == m_cells.end()) return;
+    if (!m_layout.channel(ch) || !m_layout.mix(mix)) return;
     breakLink(ch, mix);
-    it->mute = muted;
-    writeCell(Names::cellNode(ch, mix), it->id, it->volume, muted);
-    Q_EMIT cellChanged(ch, mix);
+    const LayoutCell *cur = m_layout.cell(ch, mix);
+    writeCellState(ch, mix, cur ? cur->volume : 1.0, muted);
     propagateLinks(ch, mix);
 }
 
@@ -1347,35 +1433,46 @@ void Mixer::ensureEdgeLoopbacks() {
     for (const auto &v : m_layout.virtualDevices) {   // DV-29
         if (v.outputs <= 0 || v.inputs <= 0) continue;
         if (m_graph.node(v.inputNode()) || !m_graph.node(v.outputNode())) continue;   // sink side first; the loopback brings the source
-        m_graph.loadLoopback(virtualPassArgs(v)); expectEdge(v.inputNode(), v.name + QStringLiteral(" (virtual) pass-through"));
+        requestNullNode(v.inputNode(), [&] { m_graph.loadLoopback(virtualPassArgs(v)); }); expectEdge(v.inputNode(), v.name + QStringLiteral(" (virtual) pass-through"));
     }
     for (const auto &m : m_layout.mixes) {
         // Output edge, index 0, exists ALWAYS — parked on kmixdeck.null when nothing is configured. It carries
         // node.linger in both cases: it is retargeted onto real devices later and must outlive their absence (D3).
         // (Found by test DV-9/12: without linger the stream died on unplug and never came back.)
+        // 🔴 Every loopback goes through requestNullNode() (2026-09-26, DV-21): the rebuild after a destroy is queued
+        // once per removed node (edge AND its .in), and each run loaded ANOTHER module before the first registered.
+        // Measured: two kmixdeck.out.stream nodes in 5 of 7 runs (0 of 4 after the fix); a later setMixOutputs()
+        // destroyed one, the rebuild saw the twin and skipped, the twin kept its old positions → -inf on the port.
+        // That was the red DV-21 in the gates of 09-19, 09-21, 09-22 and 09-26.
         const QString out0 = EdgeNames::outputNode(m.slug, 0);
-        if (!m_graph.node(out0)) {
+        if (!m_graph.node(out0)) requestNullNode(out0, [&] {
             const QString target = m.outputs.isEmpty() ? QStringLiteral("kmixdeck.null") : m.outputs.first().node;
             const QString what = m.outputs.isEmpty() ? QStringLiteral("output") : m.outputs.first().description;
             m_graph.loadLoopback(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + what,
                                               out0 + QStringLiteral(".in"), m_layout.mixExit(m.slug), !m.fx.isActive(), m.outputs.isEmpty() ? QStringList{} : m.outputs.first().channelSidePositions(), false,
                                               out0, target, m.outputs.isEmpty() ? QStringList{} : m.outputs.first().positions, true, false));
-        }
+        });
+        if (!m_graph.node(out0)) expectEdge(out0, QStringLiteral("Mix: ") + m.name + QStringLiteral(" → output"));   // DV-30: a mix edge can die too
         for (int n = 1; n < m.outputs.size(); ++n) {   // additional outputs (MX-9)
             const QString out = EdgeNames::outputNode(m.slug, n);
             if (m_graph.node(out)) continue;
             const DeviceRef &d = m.outputs[n];
-            m_graph.loadLoopback(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + d.description,
-                                              out + QStringLiteral(".in"), m_layout.mixExit(m.slug), !m.fx.isActive(), d.channelSidePositions(), false,
-                                              out, d.node, d.positions, true, false));
+            requestNullNode(out, [&] {
+                m_graph.loadLoopback(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + d.description,
+                                                  out + QStringLiteral(".in"), m_layout.mixExit(m.slug), !m.fx.isActive(), d.channelSidePositions(), false,
+                                                  out, d.node, d.positions, true, false));
+            });
+            expectEdge(out, QStringLiteral("Mix: ") + m.name + QStringLiteral(" → ") + d.description);
         }
         const QString src = EdgeNames::sourceNode(m.slug);   // virtual capture source for OBS/Discord (MX-3b)
-        if (!m_graph.node(src))
+        if (!m_graph.node(src)) requestNullNode(src, [&] {
             m_graph.loadLoopback(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" (capture)"),
                                               src + QStringLiteral(".in"), m_layout.mixExit(m.slug), !m.fx.isActive(), {}, false,
                                               src, QString(), {}, false, false,
                                               QStringLiteral("node.description = %1 media.class = Audio/Source ")
                                                   .arg(QLatin1Char('"') + QStringLiteral("kmixdeck ") + m.name + QStringLiteral(" Mix\""))));
+        });
+        if (!m_graph.node(src)) expectEdge(src, QStringLiteral("Mix: ") + m.name + QStringLiteral(" (capture)"));
     }
 }
 void Mixer::ensureEdgeLoopbackForInput(const QString &slug) {
@@ -1383,9 +1480,11 @@ void Mixer::ensureEdgeLoopbackForInput(const QString &slug) {
     if (!in || in->device.node.isEmpty() || in->channel.isEmpty()) return;
     const QString node = EdgeNames::inputNode(slug);
     if (m_graph.node(node)) return;
-    m_graph.loadLoopback(loopbackArgs(QStringLiteral("Input: ") + in->name,
-                                      node + QStringLiteral(".in"), in->device.node, false, in->device.positions, true,
-                                      node, Names::channelNode(in->channel), in->device.channelSidePositions(), false, true));
+    requestNullNode(node, [&] {   // one module per edge, even when called again before the registry caught up (DV-21)
+        m_graph.loadLoopback(loopbackArgs(QStringLiteral("Input: ") + in->name,
+                                          node + QStringLiteral(".in"), in->device.node, false, in->device.positions, true,
+                                          node, Names::channelNode(in->channel), in->device.channelSidePositions(), false, true));
+    });
     expectEdge(EdgeNames::inputNode(slug), QStringLiteral("Input: ") + in->channel);
 }
 
@@ -1821,7 +1920,7 @@ QString Mixer::duplicateMix(const QString &from, const QString &displayName, QSt
     // reconcile before the pending entries exist and the copy came up at unity).
     if (auto s = m_sinks.constFind(Names::mixNode(from)); s != m_sinks.constEnd()) m_pendingCellState.insert(Names::mixNode(slug), {s->volume, s->mute});
     for (const auto &c : m_layout.channels)
-        if (auto cell = m_cells.constFind(Names::cellNode(c.slug, from)); cell != m_cells.constEnd()) m_pendingCellState.insert(Names::cellNode(c.slug, slug), {cell->volume, cell->mute});
+        if (const LayoutCell *cell = m_layout.cell(c.slug, from)) m_layout.setCell(c.slug, slug, cell->volume, cell->mute);   // ADR 0013: layout state, rendered into the rebuilt chain
     LayoutMix dst; dst.slug = slug; dst.name = displayName.trimmed(); dst.icon = src.icon; dst.color = src.color; dst.fx = src.fx;
     m_layout.mixes.push_back(dst);
     if (!m_undo.isEmpty()) { m_undo = {}; Q_EMIT undoChanged(); }
@@ -1836,10 +1935,9 @@ void Mixer::snapshotForUndo(const QString &kind, const QString &slug) {
     const bool isCh = kind == QLatin1String("channel");
     QString name = isCh ? channelName(slug) : mixName(slug);
     u.insert(QStringLiteral("what"), (isCh ? QStringLiteral("channel “%1”") : QStringLiteral("mix “%1”")).arg(name));
-    for (auto it = m_cells.cbegin(); it != m_cells.cend(); ++it) {
-        const QStringList parts = it.key().mid(14).split(QLatin1Char('.'));   // "kmixdeck.link." is 14 chars
-        if (parts.size() != 2 || parts[isCh ? 0 : 1] != slug) continue;
-        cells.append(QJsonObject{{QStringLiteral("channel"), parts[0]}, {QStringLiteral("mix"), parts[1]}, {QStringLiteral("volume"), it->volume}, {QStringLiteral("mute"), it->mute}});
+    for (const auto &lc : m_layout.cells) {
+        if ((isCh ? lc.channel : lc.mix) != slug) continue;
+        cells.append(QJsonObject{{QStringLiteral("channel"), lc.channel}, {QStringLiteral("mix"), lc.mix}, {QStringLiteral("volume"), lc.volume}, {QStringLiteral("mute"), lc.mute}});
     }
     for (const auto &l : m_layout.links)
         if ((isCh && l.channel == slug) || (!isCh && (l.mix == slug || l.follows == slug)))
@@ -1887,11 +1985,11 @@ bool Mixer::undo() {
     for (const auto &v : u.value(QStringLiteral("links")).toArray()) { const auto j = v.toObject(); m_layout.links.push_back({j.value(QStringLiteral("channel")).toString(), j.value(QStringLiteral("mix")).toString(), j.value(QStringLiteral("follows")).toString()}); }
     for (const auto &v : u.value(QStringLiteral("inputs")).toArray()) { const auto j = v.toObject(); m_layout.inputs.push_back({j.value(QStringLiteral("slug")).toString(), j.value(QStringLiteral("name")).toString(), DeviceRef::fromJson(j.value(QStringLiteral("device")).toObject()), j.value(QStringLiteral("channel")).toString()}); }
     if (isCh && u.value(QStringLiteral("wasDefault")).toBool()) m_layout.defaultChannel = slug;
-    // fader/mute per cell: the loopbacks do not exist yet — apply as soon as each node shows up (onNode)
+    // fader/mute per cell: layout state (ADR 0013) — the chains rebuilt by reconcile() render it
     for (const auto &v : u.value(QStringLiteral("cells")).toArray()) {
         const auto j = v.toObject();
-        m_pendingCellState.insert(Names::cellNode(j.value(QStringLiteral("channel")).toString(), j.value(QStringLiteral("mix")).toString()),
-                                  {static_cast<float>(j.value(QStringLiteral("volume")).toDouble(1.0)), j.value(QStringLiteral("mute")).toBool()});
+        m_layout.setCell(j.value(QStringLiteral("channel")).toString(), j.value(QStringLiteral("mix")).toString(),
+                         j.value(QStringLiteral("volume")).toDouble(1.0), j.value(QStringLiteral("mute")).toBool());
     }
     if (u.contains(QStringLiteral("trim")))
         m_pendingCellState.insert(isCh ? Names::channelNode(slug) : Names::mixNode(slug), {static_cast<float>(u.value(QStringLiteral("trim")).toDouble(1.0)), u.value(QStringLiteral("muted")).toBool()});
@@ -1913,7 +2011,7 @@ QJsonObject Mixer::exportSettings() const {
     doc.insert(QStringLiteral("kmixdeck.export"), 1);
     QJsonArray levels;
     auto put = [&](const QString &node, const pw::NodeInfo &n) { levels.append(QJsonObject{{QStringLiteral("node"), node}, {QStringLiteral("volume"), n.volume}, {QStringLiteral("mute"), n.mute}}); };
-    for (auto it = m_cells.cbegin(); it != m_cells.cend(); ++it) put(it.key(), *it);
+    // ADR 0013: cells are in the layout document itself ("cells"), not per-node levels any more
     for (auto it = m_sinks.cbegin(); it != m_sinks.cend(); ++it) if (it.key().startsWith(QLatin1String("kmixdeck."))) put(it.key(), *it);
     doc.insert(QStringLiteral("levels"), levels);
     return doc;
@@ -1942,8 +2040,12 @@ bool Mixer::importSettings(const QJsonObject &doc, QString *error) {
 void Mixer::restorePendingCellStates() {
     for (auto it = m_pendingCellState.begin(); it != m_pendingCellState.end();) {
         const pw::NodeInfo *n = nullptr;
-        if (auto c = m_cells.constFind(it.key()); c != m_cells.constEnd()) n = &*c;
-        else if (auto s = m_sinks.constFind(it.key()); s != m_sinks.constEnd()) n = &*s;
+        if (it.key().startsWith(QLatin1String("kmixdeck.link."))) {   // pre-ADR-0013 export: kmixdeck.link.<ch>.<mix>
+            const QStringList p = it.key().mid(14).split(QLatin1Char('.'));
+            if (p.size() == 2 && m_layout.channel(p[0]) && m_layout.mix(p[1])) writeCellState(p[0], p[1], it->first, it->second);
+            it = m_pendingCellState.erase(it); continue;
+        }
+        if (auto s = m_sinks.constFind(it.key()); s != m_sinks.constEnd()) n = &*s;
         if (!n) { ++it; continue; }
         if (it.key().startsWith(QLatin1String("kmixdeck.channel."))) {
             // a channel sink carries trim × pan (DV-22): write the pair, then let applyChannelGain() split it L/R —
@@ -1964,9 +2066,10 @@ void Mixer::removeChannel(const QString &slug) {
     m_layout.inputs.removeIf([&](const LayoutInput &i) { return i.channel == slug || i.slug == slug; });   // no orphan inputs
     if (m_layout.defaultChannel == slug) { m_layout.defaultChannel.clear(); Q_EMIT defaultChannelChanged(); }
     m_layout.links.removeIf([&](const LayoutLink &l) { return l.channel == slug; });
+    m_layout.cells.removeIf([&](const LayoutCell &c) { return c.channel == slug; });   // undo snapshot has them
     saveLayout();
     destroyOurNodes([&](const QString &n) {
-        return n.startsWith(Names::cellNode(slug, QString())) || n == Names::channelNode(slug)
+        return n == ADR13::chainNode(slug) || n.startsWith(ADR13::chainNode(slug) + QLatin1Char('.')) || n.startsWith(ADR13::chainNode(slug) + QLatin1Char('@')) || n == Names::channelNode(slug)
             || n == EdgeNames::inputNode(slug) || n == EdgeNames::inputNode(slug) + QStringLiteral(".in");
     });
     m_edges.remove(EdgeNames::inputNode(slug));
@@ -1980,18 +2083,27 @@ void Mixer::removeMix(const QString &slug) {
     saveLayout();
     const QString out = QStringLiteral("kmixdeck.out.") + slug, src = EdgeNames::sourceNode(slug);
     destroyOurNodes([&](const QString &n) {
-        if (n.startsWith(QLatin1String("kmixdeck.link.")) && n.section(QLatin1Char('.'), 3, 3) == slug) return true;   // cells incl. .in
+        if (n == ADR13::tapNode(slug) || n == ADR13::tapNode(slug) + QStringLiteral(".in")) return true;   // ADR 0013 bus tap
         return n == Names::mixNode(slug) || n == out || n.startsWith(out + QLatin1Char('.')) || n == src || n.startsWith(src + QLatin1Char('.'));
     });
     for (auto it = m_edges.begin(); it != m_edges.end();) (it.key() == out || it.key().startsWith(out + QLatin1Char('.')) || it.key() == src) ? it = m_edges.erase(it) : ++it;
+    m_layout.cells.removeIf([&](const LayoutCell &c) { return c.mix == slug; });   // undo snapshot has them
+    ensureCellGraph();   // chains carry one gain pair per mix: they are rebuilt for the new mix set
     m_mixes.removeIf([&](const Mix &m) { return m.slug == slug; }); Q_EMIT layoutChanged();
 }
 // Destroying a loopback's playback node tears the whole module down (both streams); capture nodes are
 // listed too so nothing is missed when the graph is in a half state. Snapshot first: destroy mutates m_graph.
 void Mixer::destroyOurNodes(const std::function<bool(const QString &)> &match) {
     QList<uint32_t> ids;
-    for (const auto &n : m_graph.nodes()) if (n.name.startsWith(QLatin1String("kmixdeck.")) && match(n.name)) { ids << n.id; m_nodeRequested.remove(n.name); }
-    for (uint32_t id : ids) m_graph.destroyObject(id);
+    QSet<QString> names;
+    for (const auto &n : m_graph.nodes()) if (n.name.startsWith(QLatin1String("kmixdeck.")) && match(n.name)) { ids << n.id; names.insert(n.name); m_nodeRequested.remove(n.name); }
+    // one destroy per module: the partner half goes with it, a second destroy only earns "no global N"
+    for (uint32_t id : ids) {
+        const QString nm = m_idToName.value(id);
+        if (nm.endsWith(QLatin1String(".out")) && names.contains(nm.chopped(4))) continue;
+        if (nm.endsWith(QLatin1String(".in"))  && names.contains(nm.chopped(3))) continue;
+        m_graph.destroyObject(id);
+    }
 }
 
 // Discover our objects from the live graph — the graph is the source of truth (DV-1).
@@ -2011,9 +2123,23 @@ bool Mixer::enforceIntent(const pw::NodeInfo &n) {
     m_graph.setVolume(n.id, in->volume, in->mute);
     return true;
 }
+bool Mixer::isPlumbing(const QString &name) {   // ADR 0013: both sides of a cell chain are plumbing too
+    return name.startsWith(QLatin1String("kmixdeck.")) && (name.endsWith(QLatin1String(".in")) || name.startsWith(QLatin1String("kmixdeck.cells.")));
+}
+void Mixer::healPlumbing(const pw::NodeInfo &n) {
+    if (!isPlumbing(n.name) || (n.volume == 1.0f && !n.mute)) return;
+    qCInfo(lcMixer) << "resetting capture side" << n.name << "to 1.0/unmuted (was" << n.volume << n.mute << ")";
+    m_graph.setVolume(n.id, 1.0f, false);
+}
 void Mixer::onNode(const pw::NodeInfo &n) {
+    const bool arrived = !m_idToName.contains(n.id);
     m_idToName[n.id] = n.name;
-    static const QString chP = QStringLiteral("kmixdeck.channel."), mxP = QStringLiteral("kmixdeck.mix."), lkP = QStringLiteral("kmixdeck.link.");
+    if (m_connected) healPlumbing(n);   // VF-7: whenever plumbing reports a volume, not only at start-up
+    // The requested node is here → a later removal may request it again. 🔴 Only its FIRST appearance (2026-09-28,
+    // dv30c): onNode also fires for every param echo, and the OLD chain of the same name echoes until its removal
+    // is back — that cleared the flag of the NEW chain still loading, the next pass loaded it twice (221 nodes, h1/T6).
+    if (arrived) m_nodeRequested.remove(n.name);
+    static const QString chP = QStringLiteral("kmixdeck.channel."), mxP = QStringLiteral("kmixdeck.mix."), ckP = QStringLiteral("kmixdeck.cells.");
     bool layout = false;
     if (n.name.startsWith(chP)) {
         const QString slug = n.name.mid(chP.size());
@@ -2047,13 +2173,39 @@ void Mixer::onNode(const pw::NodeInfo &n) {
         bool found = false; for (auto &m : m_mixes) if (m.slug == slug) { found = true; if (m.name.isEmpty()) m.name = disp; }
         if (!found) { m_mixes.push_back({slug, disp, {}, true}); layout = true; }
         Q_EMIT mixChanged(slug);
-    } else if (n.name.startsWith(lkP) && !n.name.endsWith(QLatin1String(".in")) && n.mediaClass.startsWith(QLatin1String("Stream/Output"))) {
-        const bool isNew = !m_cells.contains(n.name);
-        m_cells[n.name] = n;
-        if (enforceIntent(n)) { auto &c = m_cells[n.name]; c.volume = m_intent[n.name].volume; c.mute = m_intent[n.name].mute; }
-        const QStringList parts = n.name.mid(lkP.size()).split(QLatin1Char('.'));
-        if (parts.size() == 2) { Q_EMIT cellChanged(parts[0], parts[1]); if (!isNew) propagateLinks(parts[0], parts[1]); }
-        if (isNew) { layout = true; if (!m_pendingCellState.isEmpty()) restorePendingCellStates(); }
+    } else if (n.name.startsWith(ckP) && !n.name.endsWith(QLatin1String(".out"))) {
+        // ADR 0013: a channel's cell chain arrived — its cells exist now (cellPresent). Gains were rendered from
+        // the layout; write them once more in case the layout moved while the module was loading.
+        const QString ch = n.name.mid(ckP.size()).section(QLatin1Char('@'), 0, 0);
+        const bool isNew = !m_cellChains.contains(n.name);
+        m_cellChains.insert(n.name);
+        if (isNew) {
+            for (const auto &m : m_layout.mixes) { applyCellGain(ch, m.slug); Q_EMIT cellChanged(ch, m.slug); }
+            layout = true;
+        } else if (!m_cellArmed.contains(n.name)) {
+            // 🔴 A fresh chain's echo is not evidence yet (2026-09-28, dv30c). filter-graph.c impl_get_props() reports
+            // control_data[0]; until the graph is first set up that is 0.0 for every gain (measured with pw-mon: a new
+            // chain echoed 0.0 up to 9 times before its first echo of the rendered value). Judging those restored 2578
+            // cells in one 32x32 run and flooded the core connection. Armed = it echoed the layout once; from then
+            // on the guard below is live, suspended or not (the foreign-writer test drives a chain that never runs).
+            bool all = true;
+            for (const auto &m : m_layout.mixes) {
+                const auto e = n.controls.constFind(QStringLiteral("L") + m.slug + QStringLiteral(":Gain 1"));
+                if (e == n.controls.constEnd() || std::abs(*e - m_layout.cellGain(ch, m.slug)) > 1e-4) { all = false; break; }
+            }
+            if (all) m_cellArmed.insert(n.name);
+        } else {
+            // MX-2 foreign writer: the layout owns every cell. A gain echoed back that is not the layout value (pw-cli,
+            // a script, a stale write still in flight) is put back — the rewrite is idempotent, so an echo of our
+            // own older write during a fader drag just re-sends the newest value.
+            for (const auto &m : m_layout.mixes) {
+                const auto e = n.controls.constFind(QStringLiteral("L") + m.slug + QStringLiteral(":Gain 1"));
+                if (e != n.controls.constEnd() && std::abs(*e - m_layout.cellGain(ch, m.slug)) > 1e-4) {
+                    qCInfo(lcMixer) << "cell" << ch << m.slug << "was written behind our back (" << *e << "), restoring" << m_layout.cellGain(ch, m.slug);
+                    applyCellGain(ch, m.slug);
+                }
+            }
+        }
     }
     else if (n.name.startsWith(QLatin1String("kmixdeck.in.")) || n.name.startsWith(QLatin1String("kmixdeck.out.")) || n.name.startsWith(QLatin1String("kmixdeck.source."))) {
         const bool edgeNew = !m_edges.contains(n.name);
@@ -2116,7 +2268,12 @@ void Mixer::onNode(const pw::NodeInfo &n) {
 void Mixer::onNodeRemoved(uint32_t id) {
     const QString name = m_idToName.take(id);
     m_pendingAutoRoute.remove(id);
-    m_nodeRequested.remove(name);   // gone for real → may be requested again (CH-9 undo re-creates a removed mix)
+    // 🔴 NOT m_nodeRequested.remove(name) here (2026-09-26, DV-21). The request is for the NEXT node of that name, and
+    // this removal is usually the OLD one: setMixOutputs() destroys the edge, ensureEdgeLoopbacks() requests the
+    // new one at once, then this event arrives — clearing the flag here let the queued rebuild load a SECOND module
+    // before the first one registered. Two kmixdeck.out.stream nodes, one retargeted with the wrong positions →
+    // -inf on the port. The flag is cleared when the requested node ARRIVES (onNode) or when it never does
+    // (checkPendingEdges / moduleLoadFailed); CH-9 undo still works because the removed mix's node had arrived.
     if (m_apps.remove(id)) Q_EMIT appRemoved(id);
     if (name.isEmpty()) return;
     // CH-12 relays follow the app node: gone → tear the relay down (see ensureAppRelays for why a lingering one hurts)
@@ -2128,7 +2285,11 @@ void Mixer::onNodeRemoved(uint32_t id) {
         QTimer::singleShot(0, this, [this] { ensureEdgeLoopbacks(); applyFallbacks(); });
     if (m_devices.remove(name)) { Q_EMIT outputDevicesChanged(); Q_EMIT inputDevicesChanged(); applyFallbacks(); notifyPresence(); }   // DV-9: absence → grey out + park outputs
     bool layout = false;
-    if (m_cells.remove(name)) layout = true;
+    if (m_cellChains.remove(name)) layout = true;
+    m_cellArmed.remove(name);
+    // ADR 0013: a stale chain/tap was destroyed on purpose (or died) → load the current one
+    if (m_connected && (name.startsWith(QLatin1String("kmixdeck.cells.")) || name.startsWith(QLatin1String("kmixdeck.tap."))))
+        QTimer::singleShot(0, this, [this] { ensureCellGraph(); });
     m_sinks.remove(name);
     for (int i = 0; i < m_channels.size(); ++i) if (Names::channelNode(m_channels[i].slug) == name) { m_channels.remove(i); layout = true; break; }
     for (int i = 0; i < m_mixes.size(); ++i) if (Names::mixNode(m_mixes[i].slug) == name) { m_mixes.remove(i); layout = true; break; }

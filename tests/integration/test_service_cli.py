@@ -180,7 +180,7 @@ def test_cl8_errors_are_diagnosable(stack):
 def test_ar1_cli_set_reaches_pipewire_and_is_audible(stack):
     """The whole chain: CLI → D-Bus → kmixdeckd → PipeWire → audio. −12 dB requested, −12 dB measured."""
     stack.cli("cell", "set", "game", "stream", "0.25"); stack.cli("cell", "set", "game", "monitor", "1.0")
-    assert stack.pw.props("kmixdeck.link.game.stream")["volume"] == pytest.approx(0.25)
+    assert stack.pw.wait_cell("game", "stream", gain=0.25) == pytest.approx(0.25, abs=1e-3)
     play = stack.pw.play_into("kmixdeck.channel.game")
     try:
         mon, strm = stack.pw.level_at("kmixdeck.mix.monitor"), stack.pw.level_at("kmixdeck.mix.stream")
@@ -188,7 +188,7 @@ def test_ar1_cli_set_reaches_pipewire_and_is_audible(stack):
         play.kill(); play.wait()
     assert strm - mon == pytest.approx(-12.04, abs=0.5)
     stack.cli("cell", "mute", "game", "stream", "on")
-    assert stack.pw.props("kmixdeck.link.game.stream")["mute"] is True
+    assert stack.pw.wait_cell("game", "stream", gain=0.0) == 0.0, "ADR 0013: a muted cell is gain 0 on its pair"
     stack.cli("cell", "mute", "game", "stream", "off"); stack.cli("cell", "set", "game", "stream", "1.0")
 
 
@@ -197,7 +197,7 @@ def test_ar2_third_party_client_needs_none_of_our_code(stack):
     r = stack.busctl("set-property", "org.kmixdeck1", "/org/kmixdeck1/cell/voice/monitor", "org.kmixdeck1.Cell", "Volume", "d", "0.5")
     assert r.returncode == 0, r.stderr
     time.sleep(0.3)
-    assert stack.pw.props("kmixdeck.link.voice.monitor")["volume"] == pytest.approx(0.5)
+    assert stack.pw.wait_cell("voice", "monitor", gain=0.5) == pytest.approx(0.5, abs=1e-3)   # D-Bus Volume is linear (service.cpp)
     r = stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1/cell/voice/monitor", "org.kmixdeck1.Cell", "Volume")
     assert r.stdout.strip() == "d 0.5"
     stack.busctl("set-property", "org.kmixdeck1", "/org/kmixdeck1/cell/voice/monitor", "org.kmixdeck1.Cell", "Volume", "d", "1.0")
@@ -330,11 +330,11 @@ def test_mx1_add_mix_at_runtime_creates_cells_and_persists(stack):
         time.sleep(0.1)
     assert {m["Slug"] for m in st["mixes"]} == {"monitor", "stream", "recording"}
     assert len(st["cells"]) == 9
-    stack.pw.wait_node("kmixdeck.link.voice.recording")
+    stack.pw.wait_cell("voice", "recording")
     layout = json.loads((Path(stack.pw.runtime_dir) / "config" / "kmixdeck" / "layout.json").read_text())
     assert [m["slug"] for m in layout["mixes"]] == ["monitor", "stream", "recording"]
     conf = (Path(stack.pw.runtime_dir) / "pipewire.conf.d" / "90-kmixdeck.conf").read_text()
-    assert 'node.name = "kmixdeck.link.game.recording"' in conf and "node.dont-fallback = true" in conf
+    assert 'node.name = "kmixdeck.tap.recording"' in conf and "name = Lrecording control" in conf and "node.dont-fallback = true" in conf
 
 
 def test_dv1_layout_survives_without_the_daemon(stack):
@@ -343,8 +343,7 @@ def test_dv1_layout_survives_without_the_daemon(stack):
     # remove the hand-written prototype so ONLY the generated conf defines the graph
     (Path(stack.pw.runtime_dir) / "pipewire.conf.d" / "90-kmixdeck.conf").exists()
     stack.pw.restart()
-    stack.pw.wait_node("kmixdeck.link.voice.recording")
-    assert stack.pw.props("kmixdeck.link.voice.recording")["volume"] == pytest.approx(1.0)
+    assert stack.pw.wait_cell("voice", "recording", gain=1.0) == pytest.approx(1.0)
     # daemon comes back, sees the graph, exports it — nothing recreated twice
     stack.daemon = subprocess.Popen([str(BIN / "kmixdeckd")], env=stack.env, stdout=subprocess.DEVNULL, stderr=open(stack.daemon_log_path, "a"), text=True)
     wait_for(lambda: stack.cli("status", check=False).returncode == 0, timeout=5.0, what="stack.cli('status', check=False).returncode == 0")
@@ -435,7 +434,7 @@ def test_ct1_toggle_mute_is_atomic_on_the_bus(stack):
     assert stack.cli("cell", "get", "game", "stream", json_out=True)["Muted"] is False
     stack.busctl("call", "org.kmixdeck1", "/org/kmixdeck1/cell/game/stream", "org.kmixdeck1.Cell", "ToggleMute")
     assert stack.cli("cell", "get", "game", "stream", json_out=True)["Muted"] is True
-    assert stack.pw.props("kmixdeck.link.game.stream")["mute"] is True
+    assert stack.pw.wait_cell("game", "stream", gain=0.0) == 0.0
     stack.cli("cell", "mute", "game", "stream", "off")
     # channel-wide toggle mutes the channel null sink (every mix)
     stack.busctl("call", "org.kmixdeck1", "/org/kmixdeck1/channel/voice", "org.kmixdeck1.Channel", "ToggleMute")
@@ -465,13 +464,30 @@ def test_ct1_kde_frontend_registers_global_shortcuts(stack):
 
 # ---------------------------------------------------------------- capture sides are plumbing (found on the laptop 2026-09-15)
 def test_vf7_capture_side_volume_is_healed_on_start(stack):
-    """WirePlumber restores volumes per node name — including the *capture* side of a cell loopback, which
-    is never a fader. A stale 0.0156 there silently cut the stream mix by 36 dB. The daemon must heal it."""
-    stack.pw.set_volume("kmixdeck.link.game.stream.in", 0.0156)
-    assert abs(stack.pw.props("kmixdeck.link.game.stream.in")["volume"] - 0.0156) < 1e-3
+    """WirePlumber restores volumes per node name — including the plumbing streams, which are never a fader. A stale
+    0.0156 there silently cut the stream mix by 36 dB. The daemon must heal it. ADR 0013: the plumbing is the cell
+    chain's capture + playback side and the bus tap's capture side."""
+    plumbing = ["kmixdeck.cells.game", "kmixdeck.cells.game.out", "kmixdeck.tap.stream.in"]
+    # the stale value lands while the daemon is away (WirePlumber restore at login) — a running daemon heals it on
+    # the spot (onNode), which would make the precondition below unobservable
+    # (login: PipeWire builds the graph from the conf before kmixdeckd runs — chains the daemon rebuilt at runtime
+    # were its own modules and left with it, DV-1 holds through the conf)
+    stack.daemon.terminate(); stack.daemon.wait(timeout=5)
+    had_headphones = stack.pw.node("fake.headphones") is not None
+    stack.pw.restart()
+    if had_headphones: make_fake_sink(stack, "fake.headphones", "Fake Headphones")   # later tests plug it out/in (DV-9)
+    wait_for(lambda: all(stack.pw.node(n) is not None for n in plumbing), timeout=10.0, what="plumbing present without the daemon")
+    for n in plumbing:
+        stack.pw.set_volume(n, 0.0156)
+        assert abs(stack.pw.props(n)["volume"] - 0.0156) < 1e-3, n
     stack.restart_daemon()
-    wait_for(lambda: stack.pw.props("kmixdeck.link.game.stream.in")["volume"] > 0.99, timeout=4.0, what="stack.pw.props('kmixdeck.link.game.stream.in')['volume'] > 0.99")
-    assert stack.pw.props("kmixdeck.link.game.stream.in")["volume"] > 0.99
+    for n in plumbing:
+        # a chain the daemon rebuilt at runtime (mix add/remove earlier in this module) is its client's module and
+        # comes back with the daemon — wait for the node, then for the healed value
+        def healed(n=n):
+            try: return stack.pw.props(n)["volume"] > 0.99
+            except AssertionError: return False   # between the old chain going and the new one registering
+        wait_for(healed, timeout=6.0, what=f"{n} healed to 1.0")
     # and the fader itself was not touched
     assert stack.cli("cell", "get", "game", "stream", json_out=True)["Volume"] == 1.0
 
@@ -524,9 +540,10 @@ def test_ux6_levels_signal_carries_peaks_of_the_tone(stack):
 def test_ux6_subscriber_that_dies_is_forgotten(stack):
     """A client that exits without Unsubscribe must not leave meters running (NameOwnerChanged)."""
     p = subprocess.Popen(["/usr/bin/python3", "-c", METER_LISTENER, "30"], env=stack.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    # UX-13: 3 channels + 2 mixes + 6 cells + 2 mix outputs (+ one per running app, none here)
-    wait_for(lambda: meter_nodes(stack) >= 13, timeout=5.0, what="meter_nodes(stack) >= 13")
-    assert meter_nodes(stack) == 13, "one meter stream per channel, mix, cell and mix output"
+    # UX-13: 3 channels + 2 mixes + 2 mix outputs (+ one per running app, none here). ADR 0013: a cell has no node
+    # of its own any more — its level is the channel peak × the cell gain, computed in the daemon, no stream.
+    wait_for(lambda: meter_nodes(stack) >= 7, timeout=5.0, what="meter_nodes(stack) >= 7")
+    assert meter_nodes(stack) == 7, "one meter stream per channel, mix and mix output — none per cell"
     assert stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Subscribers").stdout.strip() == "u 1"
     p.kill(); p.wait()
     wait_for(lambda: meter_nodes(stack) == 0, timeout=8.0, what="meter_nodes(stack) == 0")

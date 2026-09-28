@@ -1,6 +1,6 @@
 # ADR 0002 — Audio graph: where the (channel × mix) gain lives
 
-- Status: **accepted** (2026-09-14, validated with `prototype/` — measurements below)
+- Status: **accepted** (2026-09-14, validated with `prototype/` — measurements below) · **cell part superseded by ADR 0013** (2026-09-28: a cell is a gain on a bus, not a loopback)
 - Date: 2026-09-14
 - Depends on: `docs/research/pipewire-kde-technical-notes.md` §1–2
 

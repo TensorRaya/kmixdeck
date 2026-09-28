@@ -113,6 +113,13 @@ struct LayoutMix     {
 /// MX-7: cell (channel, mix) mirrors volume+mute of cell (channel, follows). Broken by touching the follower.
 struct LayoutLink    { QString channel, mix, follows; };
 
+/// ADR 0013: the fader state of one (channel × mix) cell. A cell is NO LONGER a PipeWire node — it is the
+/// "Gain 1" of the channel's per-mix mixer nodes inside one filter-chain that feeds the shared bus. WirePlumber
+/// does not persist filter controls, so the cell's volume (linear 0..1) and mute are stored HERE (layout.json),
+/// and rendered as the chain's initial control values in the conf fragment and re-applied live by the daemon.
+/// Mute keeps the stored volume; the live gain is 0 while muted.
+struct LayoutCell    { QString channel, mix; double volume = 1.0; bool mute = false; };
+
 /// CH-4/CH-12: what we remembered about one application stream. Key = appKey (application.name, else node.name).
 /// channels[0] is the primary target (WirePlumber restore-target); the rest are carried by relay loopbacks so
 /// every assigned channel hears the app. nodeName = last seen node.name of the stream (relay capture side).
@@ -137,6 +144,7 @@ struct Layout {
     QVector<LayoutInput> inputs;
     QVector<LayoutApp> apps;                       // CH-12: remembered per-app channel assignments
     QVector<LayoutVirtualDevice> virtualDevices;   // DV-23
+    QVector<LayoutCell> cells;                     // ADR 0013: per-cell fader state (volume linear 0..1 + mute)
     LayoutVirtualDevice *virtualDevice(const QString &slug) { for (auto &v : virtualDevices) if (v.slug == slug) return &v; return nullptr; }
     /// CH-5: where a never-seen application lands. Empty = leave it on the system default (no auto-routing).
     QString defaultChannel = QStringLiteral("system");
@@ -167,6 +175,13 @@ struct Layout {
     const LayoutChannel *channel(const QString &slug) const;
     const LayoutMix *mix(const QString &slug) const;
     const LayoutInput *input(const QString &slug) const;
+    /// ADR 0013: cell state. Null when the cell is at the default (volume 1.0, unmuted) — layout.json stores
+    /// only non-default cells, like every other piece of state here.
+    LayoutCell *cell(const QString &ch, const QString &mix);
+    const LayoutCell *cell(const QString &ch, const QString &mix) const;
+    void setCell(const QString &ch, const QString &mix, double volume, bool mute);
+    /// ADR 0013: the linear gain the cell runs at right now — 0.0 when muted, else the stored volume.
+    double cellGain(const QString &ch, const QString &mix) const;
     /// CH-12 lookup by appKey (application.name / node.name), not by node id (CH-6).
     LayoutApp *app(const QString &key);
     const LayoutApp *app(const QString &key) const;
@@ -198,6 +213,44 @@ inline QString virtualPassNode(const QString &virtSlug) { return QStringLiteral(
 inline QString relayNode(const QString &appKey, const QString &channelSlug) {
     return QStringLiteral("kmixdeck.relay.%1.%2").arg(appKey, channelSlug);
 }
+}
+
+/// ADR 0013: cells are no longer per-cell module-loopbacks. One libpipewire-module-filter-chain per channel
+/// ("kmixdeck.cells.<ch>") captures the channel sink's monitor and fans it out to a builtin "mixer" node per
+/// (mix, side) — its "Gain 1" IS the cell fader — whose outputs land on a shared multichannel bus
+/// ("kmixdeck.bus[,k]"); PipeWire sums the channels there. One loopback per mix then reads the bus'
+/// AUX2m/AUX2m+1 monitor into the (unchanged) mix sink. This collapses 4×N×M loopback clients into
+/// N chains + M loopbacks. The bus is a null sink (summing bus, not a device — ADR 0007 keeps kmixdeck sinks
+/// out of the pickers); MX-1 forbids a hard mix cap, so for >32 mixes the mixes spill onto additional buses
+/// (SPA_AUDIO_MAX_CHANNELS = 64 = 2×32). Names and args live HERE — shared by the config renderer and the
+/// runtime path — so the two can never drift (the ADR 0002 invariant, carried over to the new shape).
+namespace ADR13 {
+constexpr int kMixesPerBus = 32;                        // SPA_AUDIO_MAX_CHANNELS / 2
+inline int busCount(const int mixes) { return mixes <= 0 ? 1 : (mixes + kMixesPerBus - 1) / kMixesPerBus; }
+inline int busIndex(const int mixIdx) { return mixIdx / kMixesPerBus; }                        // 0-based
+inline int channelMixIndex(const int bus, const int mixIdx) { return mixIdx - bus * kMixesPerBus; }   // 0-based in the bus
+inline QString busNode(const int bus) { return bus <= 0 ? QStringLiteral("kmixdeck.bus") : QStringLiteral("kmixdeck.bus.%1").arg(bus); }
+/// ADR 0013: the bus carries 2 channels per mix (left+right), so a bus with `mixes` mixes has 2*mixes
+/// channels AUX0..AUX(2*mixes-1); mix i's pair is AUX2i / AUX2i+1. This is the position list of a chain's
+/// playback side (one AUX per (mix,side), left before right — the prototype's exact ordering).
+inline QStringList busPositions(const int mixes) { QStringList p; for (int i = 0; i < mixes; ++i) { p << QStringLiteral("AUX") + QString::number(2 * i) << QStringLiteral("AUX") + QString::number(2 * i + 1); } return p; }
+/// Chain per (channel, bus group). Group 0 keeps the short name. The CAPTURE node carries the filter controls
+/// ("L<mix>:Gain 1"); the playback node is <chain>.out and lands on the bus.
+inline QString chainNode(const QString &ch, const int bus = 0) { return QStringLiteral("kmixdeck.cells.") + ch + (bus > 0 ? QStringLiteral("@%1").arg(bus) : QString()); }
+inline QString chainPlaybackNode(const QString &ch, const int bus = 0) { return chainNode(ch, bus) + QStringLiteral(".out"); }
+/// Per-mix bus tap, a loopback: capture half <tap>.in reads the bus monitor, playback half <tap> plays into the mix.
+/// NOT under kmixdeck.mix.* — that prefix is how the daemon recognises mix sinks.
+inline QString tapNode(const QString &mix) { return QStringLiteral("kmixdeck.tap.") + mix; }
+/// What a chain was built for: its node.description carries the mix slugs of its group, so the daemon can tell a
+/// chain rendered for an older mix set (conf.d at login, or before an AddMix) and rebuild it.
+QString chainSignature(const Layout &l, const int bus);
+/// ADR 0013: the per-channel cell filter-chain. `mixes` = how many (mix,side) pairs this channel feeds
+/// (usually M; the bus-grouping split is applied by the caller, one chain per (channel, bus group)).
+/// Cell gain comes from the layout (mute → 0, else the stored volume). Returns the module args string.
+QString cellChainArgs(const Layout &l, const QString &ch, const int bus, const int nMixesOnBus);
+/// ADR 0013: the per-mix bus tap. `mixIdx` is the 0-based mix index in the layout; captures the bus'
+/// AUX2i/AUX2i+1 monitor (stream.dont-remix: the pair, not the whole bus) and plays into the mix entry.
+QString mixTapArgs(const QString &mix, const int mixIdx, const QString &mixEntry);
 }
 
 /// One loopback = one module-loopback args string. Shared by the config renderer and the runtime path so the

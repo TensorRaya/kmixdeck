@@ -9,6 +9,7 @@ The fake source is `Audio/Source/Virtual`: that null-sink variant has `input_<PO
 and `capture_<POS>` ports the daemon captures from — a plain `Audio/Source` null-sink has no inputs at all (and
 drops its first position, PipeWire 1.x quirk)."""
 import os
+import json
 import subprocess
 import time
 from pathlib import Path
@@ -321,13 +322,30 @@ def test_dv21_side_bound_output_sends_only_that_side_of_the_mix(stack):
     stack.cli("cell", "set", "game", "stream", "1.0")
     p = stack.pw.play_into("kmixdeck.channel.game")
     try:
-        a5 = wait_level(lambda: stack.pw.level_at_port(node + ".out", "monitor_AUX5"), lambda v: v > HOT, tries=12)
+        try:
+            a5 = wait_level(lambda: stack.pw.level_at_port(node + ".out", "monitor_AUX5"), lambda v: v > HOT, tries=12)
+        except AssertionError:
+            # 🔴 This dump sat behind `if not a5 > HOT` from 528c321 on — but wait_level RAISES since 2026-09-20,
+            # so it never printed once in four red gates. It has to run on the exception path.
+            a5 = float("-inf")
         if not a5 > HOT:
+            dump = subprocess.run(["pw-dump"], env=stack.pw.env, capture_output=True, text=True).stdout
+            print("DAEMON LOG (stream/output/edge):\n" + "\n".join(
+                l for l in open(stack.daemon_log_path, errors="replace").read().splitlines()[-400:]
+                if any(k in l for k in ("stream", "output", "edge", "loopback", "destroy", "warn", "Warn")))[-4000:])
+            print("OUT.STREAM LINKS:\n" + subprocess.run(
+                ["sh", "-c", "pw-link -l | grep -A3 '^kmixdeck.out.stream:'"], env=stack.pw.env, capture_output=True, text=True).stdout)
             links = subprocess.run(["pw-link", "-l"], env=stack.pw.env, capture_output=True, text=True).stdout
             nodes = subprocess.run(["pw-cli", "ls", "Node"], env=stack.pw.env, capture_output=True, text=True).stdout
             print("OUT LINKS:\n" + "\n".join(l for l in links.splitlines() if "kmixdeck.out.stream" in l or "|->" in l or "|<-" in l)[:3000])
             print("STREAM MIX OUTPUTS:", stack.cli("mix", "outputs", "stream", json_out=True))
             print("OUT NODES:", [l.strip() for l in nodes.splitlines() if "kmixdeck.out" in l or "out_ui24r" in l])
+            import json as _j
+            for o in _j.loads(dump or "[]"):
+                pr = o.get("info", {}).get("props", {}) or {}
+                nm = pr.get("node.name", "")
+                if o.get("type") == "PipeWire:Interface:Node" and ("kmixdeck.out.stream" in nm or "out_ui24r" in nm):
+                    print("NODE", o["id"], nm, o["info"].get("state"), {k: pr.get(k) for k in ("audio.position", "target.object", "node.passive", "stream.capture.sink")})
         assert a5 > HOT, f"stereo mix into one port must be audible there: AUX5={a5}"
     finally:
         p.kill(); p.wait()
@@ -783,7 +801,7 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
             vols = {}
             for o in stack.pw.dump():
                 n = o.get("info", {}).get("props", {}).get("node.name", "")
-                if n.startswith(("kmixdeck.in.mic", "kmixdeck.channel.mic", "kmixdeck.link.mic.stream", "kmixdeck.mix.stream", "kmixdeck.out.stream")):
+                if n.startswith(("kmixdeck.in.mic", "kmixdeck.channel.mic", "kmixdeck.cells.mic", "kmixdeck.mix.stream", "kmixdeck.out.stream")):
                     vols[n] = [p.get("channelVolumes") for p in o["info"].get("params", {}).get("Props", []) if "channelVolumes" in p]
             chain = {n: round(stack.pw.level_at(n), 1) for n in ("kmixdeck.channel.mic", "kmixdeck.channel.voice", "kmixdeck.channel.game", "kmixdeck.channel.system", "kmixdeck.mix.stream", "fake.speakers")}
             chain["voice/stream cell"] = [(round(c["Volume"], 3), c["Muted"]) for c in stack.cli("status", json_out=True)["cells"] if c["Path"].endswith("/voice/stream")]
@@ -804,7 +822,7 @@ def test_dv6_sleep_wake_every_device_gone_and_back_routing_intact_no_restart(sta
         assert next(c for c in st["channels"] if c["Slug"] == "game")["Muted"] is True, "mute lost over sleep/wake"
         cellv = next(c for c in st["cells"] if c["Path"].endswith("/mic/stream"))["Volume"]
         if abs(cellv - 10 ** (-6 / 20)) >= 0.02:
-            pwv = [(o["id"], [p.get("channelVolumes") for p in o["info"].get("params", {}).get("Props", []) if "channelVolumes" in p]) for o in stack.pw.dump() if o.get("info", {}).get("props", {}).get("node.name", "") == "kmixdeck.link.mic.stream"]
+            pwv = stack.pw.cell_gains("mic")
             log = subprocess.run(["grep", "-a", "-n", "-i", "mic", stack.daemon_log_path], capture_output=True, text=True).stdout[-1500:]
             raise AssertionError(f"cell fader lost: status {cellv:.3f}, pipewire {pwv}\n daemon log (mic): {log}")
         assert next(a for a in stack.cli("app", "list", json_out=True) if a["Name"] == "FakeGame")["Channels"] == ["voice"], "app assignment lost"
@@ -948,7 +966,22 @@ def test_dv30c_thirtytwo_by_thirtytwo_desk_never_loses_an_edge(stack):
             stack.cli("channel", "add", f"d{i}"); stack.cli("channel", "input", f"d{i}", f"{din}:AUX{i}")
         for k in range(4):
             stack.cli("mix", "add", f"r{k}"); stack.cli("mix", "output", f"r{k}", f"{dout}:AUX{2*k+1},AUX{2*k+2}")
-        stack.pw.wait_nodes([f"kmixdeck.in.d{i}.in" for i in range(1, 33)] + [f"kmixdeck.out.r{k}" for k in range(4)], timeout=180)
+        want = [f"kmixdeck.in.d{i}.in" for i in range(1, 33)] + [f"kmixdeck.out.r{k}" for k in range(4)]
+        try:
+            stack.pw.wait_nodes(want, timeout=180)
+        except AssertionError:
+            # the daemon log names what happened to a missing edge (load failure, EMFILE, never requested) — without
+            # it a red dv30c only says "missing", which is how it stayed flaky for a week (2026-09-26)
+            log = open(stack.daemon_log_path, errors="replace").read().splitlines()
+            print("DAEMON LOG (edge-related, last 60):\n" + "\n".join(
+                l for l in log if any(k in l for k in ("kmixdeck.out.r", "failed", "Protocol", "edge", "Too many open files", "Broken pipe")))[-6000:])
+            dump = json.loads(subprocess.run(["pw-dump"], env=stack.pw.env, capture_output=True, text=True).stdout or "[]")
+            for o in dump:
+                info = o.get("info") or {}
+                blob = json.dumps(info.get("props") or info.get("args") or "")
+                if "kmixdeck.out.r" in blob:
+                    print("GRAPH", o["id"], o.get("type"), info.get("state"), info.get("error"), blob[:300])
+            raise
         st = stack.cli("status", json_out=True)
         assert st["lastError"] == "", st["lastError"]
         fds = len(os.listdir(f"/proc/{stack.daemon.pid}/fd"))

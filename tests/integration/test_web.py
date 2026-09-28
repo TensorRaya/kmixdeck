@@ -335,7 +335,7 @@ def test_ux14_web_mix_end_to_end_from_the_browser_alone(stack):
             ch.wait(_q("outMenu/" + slug), 5)
             ch.eval("[...document.querySelectorAll('[data-probe=\"outMenu/%s\"] label')].find(l => l.textContent.includes('Web Speakers')).querySelector('input').click()" % slug, False)
             assert wait_for(lambda: sink in _mix(stack, slug)["Outputs"], 8), "AddOutput from the picker"
-            stack.pw.wait_nodes(["kmixdeck.link.game." + slug])
+            stack.pw.wait_cell("game", slug)
             ch.wait(_q("cellFader/game/" + slug), 8); time.sleep(0.3)
             _slide(ch, "cellFader/game/" + slug, 0.5)
             assert wait_for(lambda: abs(_cell(stack, "game", slug)["Volume"] - 0.125) < 0.02, 8), "pointer drag → cubic 0.5 = lin 0.125, got %s" % _cell(stack, "game", slug)["Volume"]

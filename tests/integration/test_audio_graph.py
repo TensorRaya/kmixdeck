@@ -19,29 +19,67 @@ def pw():
     d.close()
 
 
-def cell(ch, mix): return f"kmixdeck.link.{ch}.{mix}"
+def chain(ch): return f"kmixdeck.cells.{ch}"
+
+
+def gains(pw, ch) -> dict:
+    """ADR 0013: a cell is the "Gain 1" pair L<mix>/R<mix> of the channel's cell chain — read it from the Props params."""
+    n = pw.node(chain(ch)); assert n is not None, f"cell chain of {ch} missing"
+    for p in n["info"].get("params", {}).get("Props", []):
+        ps = p.get("params") or []
+        g = {ps[i]: ps[i + 1] for i in range(0, len(ps) - 1, 2) if str(ps[i]).endswith(":Gain 1")}
+        if g: return g                              # the first Props with params is audioconvert's channelmix block
+    raise AssertionError(f"{chain(ch)}: no control params")
+
+
+def wait_gains(pw, ch, timeout=5.0, **want) -> dict:
+    """The chain publishes its control values a moment after the node appears (the first Props read 0.0 for every
+    gain, measured 2026-09-28) — wait for the VALUES, like wait_props() does for volumes."""
+    import time
+    t0 = time.time(); g = {}
+    while time.time() - t0 < timeout:
+        g = gains(pw, ch)
+        if all(abs(g.get(k.replace("_", ":").replace(":Gain1", ":Gain 1"), -1) - v) < 1e-3 for k, v in want.items()): return g
+        time.sleep(0.1)
+    raise AssertionError(f"{chain(ch)}: gains never became {want} (last: {g})")
+
+
+def chain_block(conf: str, ch: str) -> str:
+    """The filter-chain module block of one channel in the rendered fragment."""
+    return next(b for b in conf.split("libpipewire-module-filter-chain") if f'node.name = "{chain(ch)}"' in b)
+
+
+def set_cell(pw, ch, mix, linear):
+    """What the daemon's writeCell does (Graph::setControl) — here straight via pw-cli, no app running."""
+    subprocess.run(["pw-cli", "set-param", str(pw.node_id(chain(ch))), "Props",
+                    f'{{ params = [ "L{mix}:Gain 1" {linear} "R{mix}:Gain 1" {linear} ] }}'],
+                   env=pw.env, check=True, capture_output=True)
+    import time; time.sleep(0.3)
 
 
 def test_graph_comes_up_from_config_alone(pw):
-    """DV-1: the graph exists without any app running — it's pure PipeWire config."""
+    """DV-1: the graph exists without any app running — it's pure PipeWire config. ADR 0013: one cell chain per
+    channel, one bus, one tap per mix — and no per-cell loopback anywhere."""
     names = {o.get("info", {}).get("props", {}).get("node.name") for o in pw.dump()}
     for ch in CHANNELS: assert f"kmixdeck.channel.{ch}" in names
     for mx in MIXES: assert f"kmixdeck.mix.{mx}" in names
-    for ch in CHANNELS:
-        for mx in MIXES: assert cell(ch, mx) in names, f"cell {ch}×{mx} missing"
+    assert "kmixdeck.bus" in names, "ADR 0013: the cell bus is missing"
+    for ch in CHANNELS: assert chain(ch) in names, f"cell chain of {ch} missing"
+    for mx in MIXES: assert f"kmixdeck.tap.{mx}" in names, f"bus tap of {mx} missing"
+    assert not [n for n in names if n and n.startswith("kmixdeck.link.")], "ADR 0013: no per-cell loopback may exist"
     assert "kmixdeck.source.stream" in names, "MX-3: stream mix must be exposed as a capture source"
 
 
 def test_all_cells_default_to_unity(pw):
     for ch in CHANNELS:
+        g = wait_gains(pw, ch, **{f"{s}{mx}_Gain1": 1.0 for mx in MIXES for s in "LR"})
         for mx in MIXES:
-            p = pw.props(cell(ch, mx))
-            assert p["volume"] == pytest.approx(1.0) and p["mute"] is False
+            assert g[f"L{mx}:Gain 1"] == pytest.approx(1.0) and g[f"R{mx}:Gain 1"] == pytest.approx(1.0), (ch, mx, g)
 
 
 def test_mx2_per_mix_level_is_independent(pw):
     """MX-2: the same channel at different levels in two mixes. Expect −12 dB for linear 0.25."""
-    pw.set_volume(cell("game", "monitor"), 1.0); pw.set_volume(cell("game", "stream"), 0.25)
+    set_cell(pw, "game", "monitor", 1.0); set_cell(pw, "game", "stream", 0.25)
     play = pw.play_into("kmixdeck.channel.game")
     try:
         mon, strm = pw.level_at("kmixdeck.mix.monitor"), pw.level_at("kmixdeck.mix.stream")
@@ -49,23 +87,24 @@ def test_mx2_per_mix_level_is_independent(pw):
         play.kill(); play.wait()
     assert mon > -40, f"monitor mix silent ({mon} dB) — routing broken"
     assert strm - mon == pytest.approx(-12.04, abs=0.5), f"monitor={mon} stream={strm}"
-    pw.set_volume(cell("game", "stream"), 1.0)
+    set_cell(pw, "game", "stream", 1.0)
 
 
 def test_mx2_other_direction(pw):
-    pw.set_volume(cell("game", "monitor"), 0.5); pw.set_volume(cell("game", "stream"), 1.0)
+    set_cell(pw, "game", "monitor", 0.5); set_cell(pw, "game", "stream", 1.0)
     play = pw.play_into("kmixdeck.channel.game")
     try:
         mon, strm = pw.level_at("kmixdeck.mix.monitor"), pw.level_at("kmixdeck.mix.stream")
     finally:
         play.kill(); play.wait()
     assert strm - mon == pytest.approx(6.02, abs=0.5)
-    pw.set_volume(cell("game", "monitor"), 1.0)
+    set_cell(pw, "game", "monitor", 1.0)
 
 
 def test_ch4_mute_is_per_cell(pw):
-    """CH-4: muting Game→Stream silences only that cell; Game→Monitor and System→Stream unaffected."""
-    pw.set_volume(cell("game", "stream"), 1.0, mute=True)
+    """CH-4: muting Game→Stream silences only that cell; Game→Monitor and System→Stream unaffected.
+    ADR 0013: a muted cell is gain 0 on its pair (the daemon keeps the fader value in the layout)."""
+    set_cell(pw, "game", "stream", 0.0)
     play = pw.play_into("kmixdeck.channel.game")
     try:
         mon, strm = pw.level_at("kmixdeck.mix.monitor"), pw.level_at("kmixdeck.mix.stream")
@@ -78,35 +117,48 @@ def test_ch4_mute_is_per_cell(pw):
     finally:
         play.kill(); play.wait()
     assert strm2 > -40, "System→Stream must be unaffected by Game→Stream mute"
-    pw.set_volume(cell("game", "stream"), 1.0, mute=False)
+    set_cell(pw, "game", "stream", 1.0)
 
 
-def test_dv7_levels_and_mute_survive_daemon_restart(pw):
-    """DV-7: cell volume + mute persist across pipewire/wireplumber restart without the app."""
-    pw.set_volume(cell("voice", "stream"), 0.25, mute=False)
-    pw.set_volume(cell("voice", "monitor"), 1.0, mute=True)
-    # WirePlumber flushes stream-properties on a ~1 s timer; wait for the VALUE on disk, not for a clock
-    # (ctest16: 1.0 s of sleep was not enough under full-suite load — the restart then read the old file).
+def test_dv7_levels_and_mute_survive_daemon_restart():
+    """DV-7: cell volume + mute survive a pipewire/wireplumber restart WITHOUT the app. ADR 0013: WirePlumber does not
+    persist filter controls, so the daemon writes them into the config fragment; with kmixdeckd stopped, a restart
+    must come back with exactly those gains (−12 dB in voice→stream, voice→monitor silent)."""
     import time
-    for _ in range(80):
-        f = next((pw.runtime_dir / "state").rglob("stream-properties"), None)
-        if f and f"media.name:{cell('voice', 'stream')}=" in f.read_text() and "0.25" in f.read_text(): break
-        time.sleep(0.1)
-    else: pytest.fail("WirePlumber never persisted the volume to stream-properties")
-    pw.restart()
-    # Auf den WERT warten, nicht auf die Existenz des Nodes (B6): wait_props statt props direkt.
-    pw.wait_props(cell("voice", "stream"), volume=0.25, mute=False)
-    pw.wait_props(cell("voice", "monitor"), volume=1.0, mute=True)
-    assert pw.props(cell("voice", "stream")) == {"volume": pytest.approx(0.25), "mute": False}
-    assert pw.props(cell("voice", "monitor")) == {"volume": pytest.approx(1.0), "mute": True}
-    pw.set_volume(cell("voice", "stream"), 1.0); pw.set_volume(cell("voice", "monitor"), 1.0, mute=False)
+    from test_service_cli import Stack
+    d = start_private_pipewire(); d.wait_node("kmixdeck.mix.stream")
+    try:
+        s = Stack(d)
+        try:
+            s.cli("cell", "set", "voice", "stream", "-12.0412dB")      # = linear 0.25
+            s.cli("cell", "mute", "voice", "monitor", "on")
+            conf = d.runtime_dir / "pipewire.conf.d" / "90-kmixdeck.conf"
+            for _ in range(80):   # the fader write is debounced; wait for the VALUE in the fragment, not a clock
+                if 'name = Lmonitor control = { "Gain 1" = 0 }' in chain_block(conf.read_text(), "voice"): break
+                time.sleep(0.1)
+            else: pytest.fail("the daemon never wrote the cell into the config fragment")
+        finally:
+            s.close()                                   # the app is GONE from here on
+        d.restart()
+        d.wait_node(chain("voice"))
+        g = wait_gains(d, "voice", Lstream_Gain1=0.25, Lmonitor_Gain1=0.0)
+        assert g["Lstream:Gain 1"] == pytest.approx(0.25, abs=0.002) and g["Lmonitor:Gain 1"] == 0.0, g
+        play = d.play_into("kmixdeck.channel.voice")
+        try:
+            mon, strm = d.level_at("kmixdeck.mix.monitor"), d.level_at("kmixdeck.mix.stream")
+        finally:
+            play.kill(); play.wait()
+        assert mon == -math.inf and strm > -40, f"monitor={mon} stream={strm}"
+    finally:
+        d.close()
 
 
 def test_dv7_state_is_keyed_by_stable_name_not_display_name(pw):
-    """The WirePlumber state key must be media.name == node.name so renames don't lose levels."""
-    state = next((pw.runtime_dir / "state").rglob("stream-properties")).read_text()
-    assert f"Output/Audio:media.name:{cell('game','stream')}=" in state, state[:600]
-    assert "Game\\s→\\sStream" not in state.split("kmixdeck.link")[0]  # no description-keyed entries for our links
+    """Cell state is keyed by the stable slugs (chain node.name = channel slug, control = mix slug), never by the
+    display name — renaming "Stream" in the UI must not lose a single cell."""
+    conf = (pw.runtime_dir / "pipewire.conf.d" / "90-kmixdeck.conf").read_text()
+    assert f'node.name = "{chain("game")}"' in conf and 'name = Lstream control = { "Gain 1" =' in conf
+    assert "Game → Stream" not in conf and "L Stream" not in conf
 
 
 def test_cell_nodes_run_in_one_graph_cycle(pw):

@@ -26,7 +26,6 @@ namespace kmixdeck {
 struct Names {
     static QString channelNode(const QString &slug) { return QStringLiteral("kmixdeck.channel.") + slug; }
     static QString mixNode(const QString &slug)     { return QStringLiteral("kmixdeck.mix.") + slug; }
-    static QString cellNode(const QString &ch, const QString &mix) { return QStringLiteral("kmixdeck.link.%1.%2").arg(ch, mix); }
     static QString slugify(const QString &display);
 };
 
@@ -374,7 +373,16 @@ private:
     bool m_connected = false;
     QVector<Channel> m_channels;
     QVector<Mix> m_mixes;
-    QHash<QString, pw::NodeInfo> m_cells;      // key: cell node name
+    // ADR 0013: cells are layout state (m_layout.cells) applied as filter controls — no per-cell node any more
+    int cellBus(const QString &mix) const;
+    void applyCellGain(const QString &ch, const QString &mix);
+    void writeCellState(const QString &ch, const QString &mix, double linear, bool mute);
+    QTimer m_cellSave;
+    QSet<QString> m_cellChains;   // capture nodes of the cell chains that are up
+    QSet<QString> m_cellArmed;    // chains that echoed the layout once — only their echoes are judged (MX-2)
+    void ensureCellGraph();
+    static bool isPlumbing(const QString &name);
+    void healPlumbing(const pw::NodeInfo &n);
     QHash<QString, pw::NodeInfo> m_sinks;
     QHash<QString, pw::NodeInfo> m_devices;    // foreign Audio/Sink + Audio/Source nodes, key: node name
     QHash<QString, pw::NodeInfo> m_edges;      // kmixdeck.in.* / kmixdeck.out.* playback streams, key: node name

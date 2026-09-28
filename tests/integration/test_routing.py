@@ -376,21 +376,21 @@ def test_mx2_cell_state_survives_a_foreign_writer(stack):
     (ctest35: CT-7 lost a mute and DV-6 a volume seconds after a timed retry had fired). A later user change still wins."""
     stack.cli("channel", "add", "Probe"); time.sleep(0.3)
     stack.cli("cell", "set", "probe", "stream", "-6dB")
-    nid = stack.pw.node_id("kmixdeck.link.probe.stream")
+    # ADR 0013: the cell is the "Gain 1" pair Lstream/Rstream in kmixdeck.cells.probe — the foreign write goes there
+    stack.pw.wait_cell("probe", "stream", gain=10 ** (-6 / 20))
     def cell(): return next(c for c in stack.cli("status", json_out=True)["cells"] if c["Path"].endswith("/probe/stream"))
-    def foreign(props):
-        r = subprocess.run(["pw-cli", "set-param", str(nid), "Props", props], env=stack.env, capture_output=True, text=True)
-        assert r.returncode == 0, r.stderr
     try:
         time.sleep(1.0)
-        foreign("{ volume: 1.0, channelVolumes: [1.0, 1.0], mute: false }"); time.sleep(1.0)
+        stack.pw.set_cell("probe", "stream", 1.0); time.sleep(1.0)
         assert abs(cell()["Volume"] - 10 ** (-6 / 20)) < 0.01, cell()
+        assert stack.pw.wait_cell("probe", "stream", gain=10 ** (-6 / 20), timeout=4.0) == pytest.approx(10 ** (-6 / 20), abs=1e-3), "the graph must be put back, not only the report"
         time.sleep(2.0)   # a second event later — not the same burst
-        foreign("{ volume: 1.0, channelVolumes: [1.0, 1.0], mute: true }"); time.sleep(1.0)
+        stack.pw.set_cell("probe", "stream", 0.0); time.sleep(1.0)
         c = cell(); assert abs(c["Volume"] - 10 ** (-6 / 20)) < 0.01 and c["Muted"] is False, c
+        stack.pw.wait_cell("probe", "stream", gain=10 ** (-6 / 20), timeout=4.0)
         stack.cli("cell", "set", "probe", "stream", "-12dB"); time.sleep(0.8)
         assert abs(cell()["Volume"] - 10 ** (-12 / 20)) < 0.01, "the user's newer intent must win over the guard"
         log = open(stack.daemon_log_path).read()
-        assert log.count("rewriting") >= 2, "the daemon must log what it undid"
+        assert log.count("written behind our back") >= 2, "the daemon must log what it undid"
     finally:
         stack.cli("channel", "remove", "probe", check=False)

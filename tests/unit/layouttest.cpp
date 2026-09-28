@@ -126,7 +126,13 @@ private Q_SLOTS:
         const Layout l = full(); const QString conf = l.toPipewireConf();
         for (const auto &c : l.channels) QVERIFY2(conf.contains(QStringLiteral("kmixdeck.channel.") + c.slug), qPrintable(c.slug));
         for (const auto &m : l.mixes) { QVERIFY(conf.contains(QStringLiteral("kmixdeck.mix.") + m.slug)); QVERIFY(conf.contains(QStringLiteral("kmixdeck.source.") + m.slug)); }
-        for (const auto &c : l.channels) for (const auto &m : l.mixes) QVERIFY(conf.contains(QStringLiteral("kmixdeck.link.%1.%2").arg(c.slug, m.slug)));
+        // ADR 0013: one chain per channel with one gain pair per mix, one tap per mix, no per-cell loopback left
+        for (const auto &c : l.channels) {
+            QVERIFY(conf.contains(QStringLiteral("node.name = \"kmixdeck.cells.%1\"").arg(c.slug)));
+            for (const auto &m : l.mixes) QVERIFY(conf.contains(QStringLiteral("name = L%1 ").arg(m.slug)));
+        }
+        for (const auto &m : l.mixes) QVERIFY(conf.contains(QStringLiteral("node.name = \"kmixdeck.tap.%1\"").arg(m.slug)));
+        QVERIFY(!conf.contains(QStringLiteral("kmixdeck.link.")));
         QVERIFY(conf.contains(QStringLiteral("kmixdeck.virt.desk")));
     }
 };

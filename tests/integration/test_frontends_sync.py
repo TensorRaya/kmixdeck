@@ -277,7 +277,7 @@ def test_ct7_export_import_round_trip_cli_and_window_and_garbage_is_refused(stac
     from test_service_cli import make_fake_sink, start_fake_app
     make_fake_sink(stack, "fake.spk", "Speakers")
     stack.cli("channel", "add", "Music"); stack.cli("mix", "output-add", "stream", "fake.spk")
-    stack.pw.wait_nodes(["kmixdeck.channel.music", "kmixdeck.link.music.stream", "kmixdeck.link.music.monitor"]); time.sleep(0.5)
+    stack.pw.wait_nodes(["kmixdeck.channel.music"]); stack.pw.wait_cell("music", "stream"); stack.pw.wait_cell("music", "monitor"); time.sleep(0.5)
     stack.cli("cell", "set", "music", "stream", "-9dB"); stack.cli("cell", "mute", "music", "monitor", "on")
     stack.cli("channel", "trim", "music", "-4dB"); stack.cli("channel", "pan", "music", "-0.5"); stack.cli("mix", "mute", "monitor", "on")
     p, app = start_fake_app(stack); stack.cli("app", "assign", "FakeGame", "music,voice")
@@ -301,7 +301,7 @@ def test_ct7_export_import_round_trip_cli_and_window_and_garbage_is_refused(stac
         # export via CLI
         f = tmp_path / "backup.kmixdeck.json"
         assert stack.cli("export", str(f)).stdout.startswith("exported")
-        doc = _json.loads(f.read_text()); assert doc["kmixdeck.export"] == 1 and any(l["node"] == "kmixdeck.link.music.stream" for l in doc["levels"]), list(doc)
+        doc = _json.loads(f.read_text()); assert doc["kmixdeck.export"] == 1 and any(c["channel"] == "music" and c["mix"] == "stream" for c in doc["cells"]), list(doc)
         # wreck it
         stack.cli("channel", "remove", "music"); stack.cli("mix", "mute", "monitor", "off"); stack.cli("mix", "output-remove", "stream", "fake.spk")
         stack.cli("channel", "trim", "voice", "-20dB"); stack.cli("listen", "none", check=False)
@@ -318,7 +318,7 @@ def test_ct7_export_import_round_trip_cli_and_window_and_garbage_is_refused(stac
         assert out[0].endswith("-> ok"), out
         wait_for(lambda: picture() == before, timeout=12.0, what="picture() == before")
         after = picture()
-        stack.pw.wait_nodes(["kmixdeck.channel.music", "kmixdeck.link.music.stream"]); time.sleep(1.0)   # nodes up AND levels applied
+        stack.pw.wait_nodes(["kmixdeck.channel.music"]); stack.pw.wait_cell("music", "stream"); time.sleep(1.0)   # nodes up AND levels applied
         assert after == before, "\n".join(f"{k}: {before[k]} -> {after[k]}" for k in before if before[k] != after[k])
         # measured, not just read: mute the app so only music plays into stream, then the mix sits −9 dB under the channel
         stack.cli("channel", "mute", "voice", "on"); stack.cli("channel", "mute", "game", "on")
@@ -424,7 +424,7 @@ def test_mx8_duplicate_mix_copies_levels_fx_colour_not_outputs_from_cli_and_wind
                 assert kde(stack, "--gesture", f"duplicate:stream|{name}")[0].endswith("-> ok")
                 slug = next(m["Slug"] for m in stack.cli("status", json_out=True)["mixes"] if m["Name"] == name)
             created.append(slug)
-            stack.pw.wait_nodes([f"kmixdeck.mix.{slug}", f"kmixdeck.link.game.{slug}", f"kmixdeck.link.system.{slug}"])
+            stack.pw.wait_nodes([f"kmixdeck.mix.{slug}", f"kmixdeck.tap.{slug}"]); stack.pw.wait_cell("game", slug); stack.pw.wait_cell("system", slug)
             for _ in range(50):   # levels are applied as the nodes come up
                 st = stack.cli("status", json_out=True)
                 if abs(next(x for x in st["mixes"] if x["Slug"] == slug)["Volume"] - 10 ** (-6 / 20)) < 0.01: break

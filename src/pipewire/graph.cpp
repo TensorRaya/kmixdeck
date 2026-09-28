@@ -40,6 +40,7 @@ struct NodeProxy {
     spa_hook proxyListener{};
     NodeInfo info;
     bool announced = false;
+    bool destroying = false;   // registry destroy sent, removal not back yet (destroyObject)
 };
 
 struct Graph::Impl {
@@ -101,7 +102,7 @@ struct Graph::Impl {
         if (info->change_mask & PW_NODE_CHANGE_MASK_PARAMS) {
             for (uint32_t i = 0; i < info->n_params; ++i) {
                 if (info->params[i].id == SPA_PARAM_Props && (info->params[i].flags & SPA_PARAM_INFO_READ)) {
-                    pw_node_enum_params(reinterpret_cast<pw_node *>(np->proxy), 0, SPA_PARAM_Props, 0, 1, nullptr);
+                    pw_node_enum_params(reinterpret_cast<pw_node *>(np->proxy), 0, SPA_PARAM_Props, 0, 0, nullptr);   // ALL Props objects: a filter-chain puts its controls in the 2nd (ADR 0013)
                 }
             }
         }
@@ -133,6 +134,20 @@ struct Graph::Impl {
                 // side (= trim), otherwise a hard-right pan would read back as trim 0 and the next write mutes both.
                 float v = 0.f; for (uint32_t i = 0; i < n; i++) v = std::max(v, vols[i]);
                 if (n > 0 && v != np->info.volume) { np->info.volume = v; changed = true; }
+                break;
+            }
+            case SPA_PROP_params: {
+                // filter-chain controls: a Struct of (String name, Float/Double value) pairs — "Lstream:Gain 1" 0.25
+                if (!spa_pod_is_struct(&p->value)) break;
+                const spa_pod *it; const char *key = nullptr;
+                SPA_POD_STRUCT_FOREACH(reinterpret_cast<const spa_pod_struct *>(&p->value), it) {
+                    if (!key) { if (spa_pod_get_string(it, &key) < 0) key = nullptr; continue; }
+                    float f; double d; bool ok = false; double v = 0;
+                    if (spa_pod_get_float(it, &f) == 0) { v = f; ok = true; } else if (spa_pod_get_double(it, &d) == 0) { v = d; ok = true; }
+                    if (ok) { const QString k = QString::fromUtf8(key); auto c = np->info.controls.constFind(k);
+                              if (c == np->info.controls.constEnd() || *c != v) { np->info.controls.insert(k, v); changed = true; } }
+                    key = nullptr;
+                }
                 break;
             }
             default: break;
@@ -360,7 +375,7 @@ void Graph::setVolume(uint32_t nodeId, float linear, bool mute) { setVolumeLR(no
 void Graph::setVolumeLR(uint32_t nodeId, float left, float right, bool mute) {
     pw_thread_loop_lock(d->loop);
     auto it = d->nodes.find(nodeId);
-    if (it != d->nodes.end()) {
+    if (it != d->nodes.end() && !(*it)->destroying) {
         uint8_t buffer[1024];
         spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
         float vols[2] = {left, right};
@@ -376,7 +391,7 @@ void Graph::setVolumeLR(uint32_t nodeId, float left, float right, bool mute) {
 void Graph::setControl(uint32_t nodeId, const QString &control, double value) {
     pw_thread_loop_lock(d->loop);
     auto it = d->nodes.find(nodeId);
-    if (it != d->nodes.end()) {
+    if (it != d->nodes.end() && !(*it)->destroying) {   // a node on its way out only earns "unknown resource N op:3"
         uint8_t buffer[1024];
         spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
         const QByteArray key = control.toUtf8();
@@ -526,6 +541,12 @@ bool Graph::moveStream(uint32_t streamId, const QString &sinkNodeName) {
 
 void Graph::destroyObject(uint32_t id) {
     pw_thread_loop_lock(d->loop);
+    // One destroy per mirrored node (2026-09-28, dv30c): the Qt side re-runs its reconcilers before the removal has
+    // come back and asked for every stale chain twice — the second request only earned "no global N" (72 in one run).
+    if (auto it = d->nodes.find(id); it != d->nodes.end()) {
+        if ((*it)->destroying) { pw_thread_loop_unlock(d->loop); return; }
+        (*it)->destroying = true;
+    }
     pw_registry_destroy(d->registry, id);
     pw_thread_loop_unlock(d->loop);
 }
