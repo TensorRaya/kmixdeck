@@ -117,7 +117,7 @@ written by the audit that fails the build otherwise. Why it is built this way: [
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && ninja -C build
 pip install pytest pulsectl                     # integration tests
 sudo apt install pipewire wireplumber pipewire-pulse ffmpeg gettext chromium swh-plugins libebur128-dev   # what the suites need
-ctest --test-dir build --output-on-failure      # ~18 min serial, ~6 min with -j4: 140 integration tests against a
+ctest --test-dir build --output-on-failure      # ~32 min serial: 199 integration tests in 14 suites against a
                                                 # private PipeWire per suite, real audio measured, four frontends driven
 ruff check .                                    # Python; the C++ build is -Werror
 ```

@@ -78,10 +78,10 @@ Rules for such tests:
   true" is not proof that anything is audible (UX-12 headphone bug, 2026-09-16).
 - **One test per feature, all six steps in it.** Spreading the life cycle over several tests hides the ordering
   bugs (replug after restart while absent is where things break).
-- **Two gates, and the full one goes LAST.** `ctest -L fast` is 13 tests in **12 s**: unit tests, the label
-  check, sot-audit, the QML smoke tests, the doc and CLI-help checks. The full gate takes **~25 min per run**,
-  because 96 % of the runtime sits in nine PipeWire suites (`integration-frontends_sync` 460 s,
-  `integration-ports` 453 s, `integration-routing` 210 s) — a factor of **~120x**.
+- **Two gates, and the full one goes LAST.** `ctest -L fast` is 17 tests in **13 s**: unit tests, the label
+  check, sot-audit, the QML smoke tests, the doc and CLI-help checks. The full gate takes **~32 min per run** (1882 s serial, measured 2026-09-28),
+  because 96 % of the runtime sits in nine PipeWire suites (`integration-frontends_sync` 581 s,
+  `integration-ports` 360 s, `integration-routing` 202 s) — a factor of **~150x**.
   Working order, not negotiable: build → `-L fast` → next change. The full gate runs **once, at the end**, when
   the feature is otherwise finished and you are about to commit. Never between two edits of the same feature,
   never after a comment or doc change. On 2026-09-21 I ran it after doc edits, twice with two passes each, and

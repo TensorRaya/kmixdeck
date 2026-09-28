@@ -90,7 +90,7 @@ carries a `data-probe` attribute; that is what the integration tests drive.
 
 ## Proven by
 
-`tests/integration/test_web.py` — 13 tests in headless Chrome, every step checked at the CLI: bridge + allowlist + token +
+`tests/integration/test_web.py` — 16 tests in headless Chrome, every step checked at the CLI: bridge + allowlist + token +
 origin, meters at 25 Hz, static-file jail, mix end-to-end (add → rename → output → fader → mute → link → remove → undo), app
 chips, patchbay menu and drag, FX drawer, export/import round trip, reconnect. The six `tier:core` rows of the requirements
 are additionally proven in the browser by `test_frontends_sync.py` next to CLI, window and tray.
