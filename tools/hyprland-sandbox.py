@@ -88,6 +88,14 @@ rt = pw.runtime_dir
 env = dict(pw.env)
 for k in ("WAYLAND_DISPLAY", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "QT_QPA_PLATFORMTHEME", "XDG_CURRENT_DESKTOP"):
     env.pop(k, None)
+# xdg-desktop-portal resolves a host app id through its .desktop file ("App info not found" otherwise); an installed
+# kmixdeck has it in /usr/share/applications, this one from data/ via a private applications dir. Set BEFORE the bus
+# starts: bus-activated services (the portals) inherit the bus's environment, not ours.
+apps = rt / "share" / "applications"
+apps.mkdir(parents=True)
+(apps / "org.kmixdeck.kmixdeck.desktop").write_text(
+    (REPO / "data" / "org.kmixdeck.kmixdeck.desktop").read_text().replace("Exec=kmixdeck-kde", f"Exec={BIN}/kmixdeck-kde"))
+env["XDG_DATA_DIRS"] = f"{rt / 'share'}:" + env.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share")
 env["DBUS_SESSION_BUS_ADDRESS"] = session_bus(env, f"unix:dir={rt}")
 
 if args.session == "kwin":
