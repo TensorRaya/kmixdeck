@@ -1,6 +1,6 @@
 # ADR 0014 — Hyprland (and any non-KDE Wayland session) as a first-class desktop
 
-**Status:** proposed 2026-09-28 · **Owner:** project owner · **Drives:** CT-1, UX-17, new HY-1..HY-8 (draft below)
+**Status:** proposed 2026-09-28, phase 0 measured 2026-10-05 · **Owner:** project owner · **Drives:** CT-1, UX-17, new HY-1..HY-8 (draft below)
 
 ## Context
 
@@ -76,6 +76,27 @@ a platform theme set.
 - HY-8 `test_hyprland.py` in the integration suites: shortcut key press → channel mute on the PipeWire node,
   tray SNI registered, popover is a layer surface (`hyprctl layers`) and not a client (`hyprctl clients`),
   window rules applied. Runs only where Hyprland is installed (skip otherwise, like the Chrome tests).
+
+## Phase 0 result (measured 2026-10-05, Hyprland 0.56.2, laptop, nested)
+
+Setup: a private `kwin_wayland --virtual` (own session bus, so its `org.kde.kglobalaccel` cannot leak into the
+measurement) serves only as the monitor; Hyprland runs as its Wayland client with a private `XDG_RUNTIME_DIR`, session
+bus, PipeWire, XDPH, Waybar (`tray` module) and mako. The harness is `tools/hyprland-sandbox.py`. Hyprland's own
+headless backend does not work for this: without a seat aquamarine has no allocator (`CBackend::create() failed`),
+and weston's headless backend offers `wl_compositor` v5 where Hyprland binds v6.
+
+| Piece | Predicted | Measured |
+|---|---|---|
+| App id | (not in the table) | **Wrong: `org.kde.kmixdeck`**, not the `.desktop` basename. `KAboutData::setApplicationData()` overwrote `QGuiApplication::desktopFileName`. No window rule, `.desktop` match or portal id could have worked. Fixed, guarded by `test_wayland_app_id_is_the_desktop_file_name` (red without the fix). |
+| Global shortcuts | dead | **Dead, as predicted.** `org.kde.kglobalaccel` is not on the bus; `kf.globalaccel: Failed to get dbus path for component "kmixdeck"` once per action (10×). `hyprctl globalshortcuts`: none. |
+| Tray | icon present | **Present.** Waybar owns `org.kde.StatusNotifierWatcher`, one item registered (`Id kmixdeck_kmixdeck`, `Status Active`), icon visible in the bar. |
+| Tray popover | tiled like a window | **Worse: never appears.** After `Activate` no new client and no new layer; Qt logs `Failed to create grabbing popup. Ensure popup TrayOverview has a transientParent set and that parent window has received input.` An `xdg_popup` needs an input serial of the app's own surface; a click on Waybar belongs to Waybar. Layer shell (decision 3) is therefore required, not optional. |
+| Notifications | fine | **Not measured.** They are only sent from shortcut actions, which are dead here; re-measure with HY-1. mako answers `GetServerInformation`. |
+| Look | right only with a platform theme | **Wrong prediction: right without one.** `QT_QPA_PLATFORMTHEME` unset, Breeze controls and icons render, no missing glyphs. HY-4 shrinks to "also check with `kde`/`hyprqt6engine`". |
+| Main window | — | Tiled by Hyprland (`floating false`, 1878×1008), as expected for a normal toplevel; HY-3 window rules decide. |
+
+The laptop has `layer-shell-qt` 6.7.5 but neither `wtype` nor `hyprqt6engine` installed; the synthetic-key question
+for HY-8 is still open.
 
 ## Open points
 
