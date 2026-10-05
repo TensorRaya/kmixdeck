@@ -21,15 +21,23 @@ jobs:
             libkf6coreaddons-dev libkf6config-dev libkf6i18n-dev libkf6globalaccel-dev \
             libkf6statusnotifieritem-dev libkf6notifications-dev libkf6dbusaddons-dev libkf6crash-dev \
             libkf6iconthemes-dev libkf6qqc2desktopstyle-dev libkf6colorscheme-dev \
-            libpipewire-0.3-dev pipewire pipewire-audio wireplumber pipewire-bin \
-            ffmpeg python3-pytest python3-gi python3-websockets chromium appstream dbus dbus-daemon systemd swh-plugins ruff
+            libpipewire-0.3-dev ladspa-sdk libebur128-dev libavformat-dev libavcodec-dev libswresample-dev pipewire pipewire-audio wireplumber pipewire-bin \
+            ffmpeg python3-pytest python3-gi python3-websockets appstream dbus dbus-daemon systemd swh-plugins \
+            python3-venv ca-certificates curl
+          # Ubuntu 26.04 has neither as a .deb: `chromium` does not exist, `chromium-browser` is a snap stub (no snapd
+          # in a container), `ruff` has no candidate. apt exited 100 on every run since 2026-09-18, so CI never built.
+          # Chrome: Google's own .deb, same browser as the dev box. ruff: pinned to the dev box's version.
+          curl -fsSLo /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          apt-get install -y -qq /tmp/chrome.deb
+          python3 -m venv /opt/lint && /opt/lint/bin/pip install -q ruff==0.15.22
+          echo /opt/lint/bin >> "$GITHUB_PATH"
       - name: Lint (BP-4 — the build is -Werror, this is the same gate for Python and the workflow itself)
         run: |
           ruff check .
           python3 tools/sot-audit.py
           python3 tools/dbus-doc.py
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
       - name: Build
         run: ninja -C build
       - name: Unit tests

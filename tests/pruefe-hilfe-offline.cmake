@@ -13,9 +13,13 @@ if(NOT CLI)
 endif()
 
 set(KAPUTTER_BUS "unix:path=/nonexistent/kmixdeck-cl2-test")
+# The test asks "does the CLI touch the bus", and judges that by an empty stderr. Qt itself writes a warning to stderr
+# when the caller's locale is not UTF-8 (measured 2026-09-28 in the ubuntu:26.04 CI container, which has no LANG at
+# all) — that is the caller's environment, not a bus call, so pin a UTF-8 locale for the child.
+set(OFFLINE_ENV DBUS_SESSION_BUS_ADDRESS=${KAPUTTER_BUS} LC_ALL=C.UTF-8)
 
 foreach(argument "--help" "-h" "help" "--version")
-    execute_process(COMMAND ${CMAKE_COMMAND} -E env DBUS_SESSION_BUS_ADDRESS=${KAPUTTER_BUS} ${CLI} ${argument}
+    execute_process(COMMAND ${CMAKE_COMMAND} -E env ${OFFLINE_ENV} ${CLI} ${argument}
                     OUTPUT_VARIABLE ausgabe
                     ERROR_VARIABLE fehler
                     RESULT_VARIABLE rc
@@ -53,7 +57,7 @@ foreach(argument "--help" "-h" "help" "--version")
 endforeach()
 
 # The help must actually list the commands, otherwise it is not help (CL-3).
-execute_process(COMMAND ${CMAKE_COMMAND} -E env DBUS_SESSION_BUS_ADDRESS=${KAPUTTER_BUS} ${CLI} --help
+execute_process(COMMAND ${CMAKE_COMMAND} -E env ${OFFLINE_ENV} ${CLI} --help
                 OUTPUT_VARIABLE hilfe TIMEOUT 10)
 foreach(kommando status mix cell channel scene fx app devices)
     if(NOT hilfe MATCHES "[ \n]${kommando}[ \n]")
@@ -66,7 +70,7 @@ endforeach()
 foreach(kommando status levels loudness watch undo setup export import channel mix cell app devices listen
         audition fx scene streamdeck)
     foreach(schreibweise "help;${kommando}" "${kommando};--help")
-        execute_process(COMMAND ${CMAKE_COMMAND} -E env DBUS_SESSION_BUS_ADDRESS=${KAPUTTER_BUS}
+        execute_process(COMMAND ${CMAKE_COMMAND} -E env ${OFFLINE_ENV}
                                 ${CLI} ${schreibweise}
                         OUTPUT_VARIABLE hilfe_k ERROR_VARIABLE fehler_k RESULT_VARIABLE rc_k TIMEOUT 10)
         if(NOT rc_k EQUAL 0)
@@ -83,7 +87,7 @@ foreach(kommando status levels loudness watch undo setup export import channel m
 endforeach()
 
 # A typo must be a usage error, not a silent full help: otherwise the user hunts their mistake in 54 lines.
-execute_process(COMMAND ${CMAKE_COMMAND} -E env DBUS_SESSION_BUS_ADDRESS=${KAPUTTER_BUS} ${CLI} help mixx
+execute_process(COMMAND ${CMAKE_COMMAND} -E env ${OFFLINE_ENV} ${CLI} help mixx
                 OUTPUT_VARIABLE tippfehler_out ERROR_VARIABLE tippfehler_err RESULT_VARIABLE rc_t TIMEOUT 10)
 if(rc_t EQUAL 0)
     message(FATAL_ERROR "`kmixdeck help mixx` succeeded — an unknown command must exit non-zero (CL-8).")
