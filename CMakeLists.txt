@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(kmixdeck VERSION 0.3.0 LANGUAGES CXX)
 
 set(QT_MIN_VERSION 6.6.0)
-set(KF_MIN_VERSION 6.0.0)
+set(KF_MIN_VERSION 6.8.0)   # KLocalizedQmlContext (KI18nQml) appeared in 6.8
 
 find_package(ECM ${KF_MIN_VERSION} REQUIRED NO_MODULE)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
@@ -10,7 +10,10 @@ set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
 include(KDEInstallDirs)
 include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
-set(CMAKE_COMPILE_WARNING_AS_ERROR ON)   # review 2026-09-18 CC-2: the build is warning-free; keep it that way
+# Warnings are errors in CI and in the developer build (README, "Develop"), NOT for someone building a release.
+# Measured 2026-09-28 on CachyOS (KF 6.30): a hard-coded ON broke a plain user build over a deprecation that the
+# development box (KF 6.24) does not warn about yet. CMake's own switch, so `-DCMAKE_COMPILE_WARNING_AS_ERROR=ON`
+# or `cmake --compile-no-warning-as-error` work as documented.
 include(ECMSetupVersion)
 include(ECMQmlModule)
 include(FeatureSummary)
@@ -48,6 +51,9 @@ endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PipeWire REQUIRED IMPORTED_TARGET libpipewire-0.3>=1.0)
+# FX (src/fx.cpp) reads LADSPA port names via the plugin's descriptor. Header only, no library to link.
+# Debian/Ubuntu: ladspa-sdk, Arch: ladspa, Fedora: ladspa-devel. Found via CMAKE_PREFIX_PATH like everything else.
+find_path(LADSPA_INCLUDE_DIR ladspa.h REQUIRED)
 # UX-18: EBU R128 loudness (libebur128). Required, not optional: a loudness meter that silently is not there
 # is worse than a build error — the streamer would trust an empty reading.
 pkg_check_modules(EBUR128 REQUIRED IMPORTED_TARGET libebur128>=1.2)
@@ -76,16 +82,12 @@ install(DIRECTORY web/static/ DESTINATION ${KDE_INSTALL_DATADIR}/kmixdeck/web)
 # list drifts silently: `tree` and `patch` arrived on 2026-09-21 and no test would have caught a stale list, because a
 # missing completion is invisible.
 #
-# Paths: bash-completion's own pkg-config variable when the package is installed (that is where the distro wants it),
-# otherwise the documented fallback share/bash-completion/completions. zsh has no pkg-config file, so site-functions
-# under the install prefix is the only correct answer; a file named `_kmixdeck` there is picked up by compinit.
-find_package(bash-completion QUIET)
-if(BASH_COMPLETION_COMPLETIONSDIR)
-    set(_kmixdeck_bashdir "${BASH_COMPLETION_COMPLETIONSDIR}")
-else()
-    set(_kmixdeck_bashdir "${KDE_INSTALL_DATADIR}/bash-completion/completions")
-endif()
-install(FILES shell/kmixdeck.bash DESTINATION ${_kmixdeck_bashdir} RENAME kmixdeck)
+# Paths: always relative to the install prefix. bash-completion >= 2.12 looks in <prefix>/share/bash-completion/
+# completions next to <prefix>/bin (upstream README, Q4/Q10); Ubuntu 26.04 ships 2.16, Arch 2.18. Its cmake variable
+# BASH_COMPLETION_COMPLETIONSDIR is an absolute /usr path and broke `cmake --install` into a prefix under $HOME
+# (measured 2026-09-28: Permission denied on /usr/share/bash-completion). For prefix /usr both are the same directory.
+# zsh has no pkg-config file either, so site-functions under the prefix; compinit picks up a file named `_kmixdeck`.
+install(FILES shell/kmixdeck.bash DESTINATION ${KDE_INSTALL_DATADIR}/bash-completion/completions RENAME kmixdeck)
 install(FILES shell/_kmixdeck DESTINATION ${KDE_INSTALL_DATADIR}/zsh/site-functions)
 
 # CL-1: kmixdeck.1 is GENERATED from docs/kmixdeck.md, never edited by hand and not checked in — one source for the

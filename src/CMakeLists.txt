@@ -9,6 +9,7 @@ add_library(kmixdeck_core STATIC
     pipewire/sampler.cpp pipewire/sampler.h
 )
 target_include_directories(kmixdeck_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(kmixdeck_core SYSTEM PRIVATE ${LADSPA_INCLUDE_DIR})
 target_link_libraries(kmixdeck_core PUBLIC Qt6::Core PkgConfig::PipeWire PkgConfig::EBUR128 PkgConfig::FFMPEG)
 target_compile_options(kmixdeck_core PRIVATE -Wall -Wextra)
 
@@ -96,7 +97,7 @@ ecm_add_qml_module(kmixdeck-kde
 target_include_directories(kmixdeck-kde PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/.. frontend)
 target_link_libraries(kmixdeck-kde PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Svg Qt6::DBus
-    KF6::CoreAddons KF6::ConfigCore KF6::I18n KF6::IconThemes KF6::IconWidgets
+    KF6::CoreAddons KF6::ConfigCore KF6::I18n KF6::I18nQml KF6::IconThemes KF6::IconWidgets
     KF6::GlobalAccel KF6::StatusNotifierItem KF6::Notifications KF6::DBusAddons KF6::Crash
 )
 target_compile_options(kmixdeck-kde PRIVATE -Wall -Wextra)

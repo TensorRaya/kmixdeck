@@ -20,7 +20,7 @@
 #include <KAboutData>
 #include <KCrash>
 #include <KDBusService>
-#include <KLocalizedContext>
+#include <KLocalizedQmlContext>
 #include <KLocalizedString>
 #include <KIconTheme>
 
@@ -98,9 +98,9 @@ int main(int argc, char *argv[])
         // tun haben und den Test sofort dauerhaft rot faerben (auch gemessen). Also praezise diese Signatur.
         else if (e.url().toString().contains(QLatin1String("/kirigami/controls/PageRow.qml"))
                  && e.description().contains(QLatin1String("Value is null"))) ++qmlWarnings; } });
-    auto *l10n = new KLocalizedContext(&engine);
+    // KLocalizedContext is deprecated since KF 6.8; this one also re-evaluates bindings when the language changes.
+    auto *l10n = KLocalization::setupLocalizedContext(&engine);
     l10n->setTranslationDomain(QStringLiteral("kmixdeck"));   // UX-5: without this the QML i18n() calls look in the empty default domain
-    engine.rootContext()->setContextObject(l10n);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.loadFromModule("org.kmixdeck", "Main");
     if (!engine.rootObjects().isEmpty()) kde.setMainWindow(qobject_cast<QQuickWindow *>(engine.rootObjects().first()));

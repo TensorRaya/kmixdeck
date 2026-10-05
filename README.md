@@ -56,9 +56,10 @@ never solved independent per-mix levels ([#72](https://codeberg.org/sonusmix/son
 ## Install
 
 Build dependencies: CMake ≥ 3.20, a C++20 compiler, Qt ≥ 6.6 (Core, Gui, Widgets, Qml, Quick, QuickControls2, Svg,
-DBus), KDE Frameworks ≥ 6.0 (CoreAddons, Config, I18n, Kirigami, KirigamiAddons, QQC2DesktopStyle, IconThemes,
+DBus), KDE Frameworks ≥ 6.8 (CoreAddons, Config, I18n, Kirigami, KirigamiAddons, QQC2DesktopStyle, IconThemes,
 GlobalAccel, StatusNotifierItem, Notifications, DBusAddons, Crash), `libpipewire-0.3 ≥ 1.0`, `libebur128 ≥ 1.2`
-(EBU R128 loudness metering, UX-18 — `libebur128-dev` on Debian/Ubuntu, `libebur128` on Arch).
+(EBU R128 loudness metering, UX-18 — `libebur128-dev` on Debian/Ubuntu, `libebur128` on Arch), the LADSPA header
+(`ladspa-sdk` on Debian/Ubuntu, `ladspa` on Arch, `ladspa-devel` on Fedora).
 Runtime: PipeWire + WirePlumber (any distro of 2024 or later). Optional: `swh-plugins`/`rnnoise` for LADSPA effects;
 `python3-gi` + `python3-websockets` for the web UI.
 
@@ -114,9 +115,10 @@ written by the audit that fails the build otherwise. Why it is built this way: [
 ## Developing
 
 ```sh
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && ninja -C build
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_COMPILE_WARNING_AS_ERROR=ON && ninja -C build
 pip install pytest pulsectl                     # integration tests
-sudo apt install pipewire wireplumber pipewire-pulse ffmpeg gettext chromium swh-plugins libebur128-dev   # what the suites need
+sudo apt install pipewire wireplumber pipewire-pulse ffmpeg gettext swh-plugins libebur128-dev ladspa-sdk   # what the suites need
+# plus Google Chrome or Chromium for the browser tests — Ubuntu 26.04 has no chromium .deb (see .github/workflows/ci.yml)
 ctest --test-dir build --output-on-failure      # ~32 min serial: 199 integration tests in 14 suites against a
                                                 # private PipeWire per suite, real audio measured, four frontends driven
 ruff check .                                    # Python; the C++ build is -Werror
