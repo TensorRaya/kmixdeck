@@ -968,11 +968,11 @@ def test_dv30c_thirtytwo_by_thirtytwo_desk_never_loses_an_edge(stack):
         for k in range(4):
             stack.cli("mix", "add", f"r{k}"); stack.cli("mix", "output", f"r{k}", f"{dout}:AUX{2*k+1},AUX{2*k+2}")
         want = [f"kmixdeck.in.d{i}.in" for i in range(1, 33)] + [f"kmixdeck.out.r{k}" for k in range(4)]
-        try:
-            stack.pw.wait_nodes(want, timeout=180)
-        except AssertionError:
-            # the daemon log names what happened to a missing edge (load failure, EMFILE, never requested) — without
-            # it a red dv30c only says "missing", which is how it stayed flaky for a week (2026-09-26)
+
+        def explain():
+            # the daemon log names what happened to an edge (load failure, EMFILE, never appeared, late) — without
+            # it a red dv30c only says "missing", which is how it stayed flaky for a week (2026-09-26). Also when
+            # every node is there but LastError is set (CI run 37369020745: "Mix: r1 → output", log not printed).
             log = open(stack.daemon_log_path, errors="replace").read().splitlines()
             print("DAEMON LOG (edge-related, last 60):\n" + "\n".join(
                 l for l in log if any(k in l for k in ("kmixdeck.out.r", "failed", "Protocol", "edge", "Too many open files", "Broken pipe")))[-6000:])
@@ -982,8 +982,14 @@ def test_dv30c_thirtytwo_by_thirtytwo_desk_never_loses_an_edge(stack):
                 blob = json.dumps(info.get("props") or info.get("args") or "")
                 if "kmixdeck.out.r" in blob:
                     print("GRAPH", o["id"], o.get("type"), info.get("state"), info.get("error"), blob[:300])
+        try:
+            stack.pw.wait_nodes(want, timeout=180)
+        except AssertionError:
+            explain()
             raise
         st = stack.cli("status", json_out=True)
+        if st["lastError"]:
+            explain()
         assert st["lastError"] == "", st["lastError"]
         fds = len(os.listdir(f"/proc/{stack.daemon.pid}/fd"))
         assert fds > 500, f"the desk should cost >500 fds (the reason this test exists), got {fds}"
