@@ -72,8 +72,10 @@ class WaylandShortcutStack:
         self.socket = f"kmixdeck-ct1-{os.getpid()}"
         self.env = dict(self.stack.env)
         self.env.pop("DISPLAY", None)
+        # QT_FORCE_STDERR_LOGGING: the assertions read KWin's log. A Qt built with journald support (Arch, CachyOS)
+        # sends qCDebug to the journal when stderr is not a terminal; the log file stayed empty (measured 2026-10-05).
         self.env.update(XDG_CONFIG_HOME=str(cfg), XDG_SESSION_TYPE="wayland",
-                        WAYLAND_DISPLAY=self.socket)
+                        WAYLAND_DISPLAY=self.socket, QT_FORCE_STDERR_LOGGING="1")
 
         # KWin hides restricted interfaces (fake_input among them) from any client whose .desktop file
         # does not list them in X-KDE-Wayland-Interfaces. A test helper has no .desktop file, so the
