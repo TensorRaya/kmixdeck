@@ -79,7 +79,7 @@ class WaylandShortcutStack:
         # does not list them in X-KDE-Wayland-Interfaces. A test helper has no .desktop file, so the
         # check is switched off for this private compositor only — it never touches the user's session.
         kenv = dict(self.env, KWIN_COMPOSE="Q", KWIN_WAYLAND_NO_PERMISSION_CHECKS="1",
-                    QT_LOGGING_RULES="kf.globalaccel*=true")
+                    QT_LOGGING_RULES="kf.globalaccel*=true;kwin_scripting=true")
         self._start([KWIN, "--virtual", "--width", "1280", "--height", "800",
                      "--no-lockscreen", "--socket", self.socket], env=kenv, log=self.kwin_log)
         # the sandbox has its own XDG_RUNTIME_DIR; the socket appears there, not in /run/user
@@ -106,6 +106,23 @@ class WaylandShortcutStack:
         self._start([str(BIN / "kmixdeck-kde")], env=dict(self.env, QT_QPA_PLATFORM="wayland"))
         _wait(lambda: 'Registering key "Ctrl+Alt+Shift+F9" for "kmixdeck" : "mute-channel-game"' in self.log(),
               30, "KWin registering the kmixdeck shortcut")
+
+    def window_ids(self, tmp_path) -> list[str]:
+        """desktopFileName|resourceClass of every normal window, read by a KWin script (print() lands in the log)."""
+        js = tmp_path / "window-ids.js"
+        js.write_text('print("WINDOW-IDS " + workspace.windowList().filter(w => w.normalWindow)'
+                      '.map(w => w.desktopFileName + "|" + w.resourceClass).join(","));\n')
+        bus = ["busctl", "--user", "--no-pager"]
+        r = subprocess.run([*bus, "call", "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting", "loadScript", "ss",
+                            str(js), f"window-ids-{time.monotonic_ns()}"], env=self.env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        sid = r.stdout.split()[-1]
+        r = subprocess.run([*bus, "call", "org.kde.KWin", f"/Scripting/Script{sid}", "org.kde.kwin.Script", "run"],
+                           env=self.env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        _wait(lambda: "WINDOW-IDS " in self.log(), 5, "the KWin script's output")
+        line = [z for z in self.log().splitlines() if "WINDOW-IDS " in z][-1]
+        return [x for x in line.split("WINDOW-IDS ", 1)[1].strip().strip('"').split(",") if x]
 
     def press(self, keys):
         r = subprocess.run([str(FAKE_KEY), *keys], env=self.env, capture_output=True, text=True)
@@ -163,3 +180,11 @@ def test_ct1_wayland_an_unassigned_key_does_nothing(wl):
     wl.press(CTRL_SHIFT_ALT_F10)
     time.sleep(2.0)   # the positive test sees the change in well under 1 s
     assert wl.mute() == vorher, "an unassigned key changed the mute state"
+
+
+def test_wayland_app_id_is_the_desktop_file_name(wl, tmp_path):
+    """The Wayland app id must equal the .desktop basename. Compositors match .desktop files, window rules
+    (Hyprland `class`), task-bar icons and portal app ids (GlobalShortcuts) on it. KAboutData::setApplicationData()
+    silently replaced it with "org.kde.kmixdeck" (measured in Hyprland 2026-09-28)."""
+    _wait(lambda: wl.window_ids(tmp_path), 10, "a kmixdeck window")
+    assert wl.window_ids(tmp_path) == ["org.kmixdeck.kmixdeck|org.kmixdeck.kmixdeck"]

@@ -58,6 +58,12 @@ int main(int argc, char *argv[])
     about.setHomepage(QStringLiteral("https://github.com/TensorRaya/kmixdeck"));
     about.setBugAddress("https://github.com/TensorRaya/kmixdeck/issues");
     about.addAuthor(i18n("Raya Elena Solano"), i18n("Maintainer"));
+    // setApplicationData() overwrites QGuiApplication::desktopFileName with KAboutData's own, which defaults to the
+    // reversed organization domain + component name: "org.kde.kmixdeck". Measured 2026-09-28 in Hyprland: the window's
+    // app id was org.kde.kmixdeck, so no window rule, no portal shortcut id and no .desktop match worked. Set it here,
+    // where the KAboutData documentation says to.
+    about.setOrganizationDomain(QByteArrayLiteral("kmixdeck.org"));
+    about.setDesktopFileName(QStringLiteral("org.kmixdeck.kmixdeck"));
     KAboutData::setApplicationData(about);
     KCrash::initialize();
 
