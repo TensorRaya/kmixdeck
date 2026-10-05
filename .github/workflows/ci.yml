@@ -23,7 +23,10 @@ jobs:
             libkf6iconthemes-dev libkf6qqc2desktopstyle-dev libkf6colorscheme-dev liblayershellqtinterface-dev \
             libpipewire-0.3-dev ladspa-sdk libebur128-dev libavformat-dev libavcodec-dev libswresample-dev pipewire pipewire-audio wireplumber pipewire-bin \
             ffmpeg python3-pytest python3-gi python3-websockets appstream dbus dbus-daemon systemd swh-plugins \
-            python3-venv ca-certificates curl
+            python3-venv python3-pil locales ca-certificates curl
+          # UX-5 renders the window in German: needs the glibc locale, the image ships only C.UTF-8 (CI run 37369020745:
+          # "window did not switch to German"). python3-pil: test_presentation compares screenshots pixel by pixel.
+          locale-gen de_DE.UTF-8 en_US.UTF-8
           # Ubuntu 26.04 has neither as a .deb: `chromium` does not exist, `chromium-browser` is a snap stub (no snapd
           # in a container), `ruff` has no candidate. apt exited 100 on every run since 2026-09-18, so CI never built.
           # Chrome: Google's own .deb, same browser as the dev box. ruff: pinned to the dev box's version.
