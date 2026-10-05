@@ -15,6 +15,12 @@ import websockets
 CHROME = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
 NO_CHROME = "no google-chrome/chromium on PATH — the browser tests need one (apt install chromium)"
 
+# Chrome refuses to start as root without --no-sandbox ("Running as root without --no-sandbox is not supported",
+# crbug.com/638180) and exits before printing the DevTools port. GitHub's container jobs run as root, so every browser
+# test in CI failed with "chrome did not start" (run 37369020745: 26 tests in layout, frontends_sync, web). Only as
+# root: on a normal account the sandbox stays on.
+_ROOT_ONLY = ["--no-sandbox"] if os.geteuid() == 0 else []
+
 _LIVE = set()
 
 
@@ -33,7 +39,7 @@ class Chrome:
     def __init__(self, url, size=(1280, 800)):
         self.tmp = tempfile.mkdtemp(prefix="kmix-chrome-")
         self._closed = False
-        self.proc = subprocess.Popen([CHROME, "--headless=new", "--remote-debugging-port=0", f"--user-data-dir={self.tmp}", "--no-first-run",
+        self.proc = subprocess.Popen([CHROME, *_ROOT_ONLY, "--headless=new", "--remote-debugging-port=0", f"--user-data-dir={self.tmp}", "--no-first-run",
                                       "--disable-gpu", "--hide-scrollbars", "--force-dark-mode", "--enable-features=WebContentsForceDark:inversion_method/cielab_based/image_behavior/none", f"--window-size={size[0]},{size[1]}", "--remote-allow-origins=*", url],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, start_new_session=True)
         _LIVE.add(self)
