@@ -29,8 +29,11 @@ jobs:
           # Chrome: Google's own .deb, same browser as the dev box. ruff: pinned to the dev box's version.
           curl -fsSLo /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
           apt-get install -y -qq /tmp/chrome.deb
+          # Only the ruff binary goes on PATH, never the venv's bin/: with /opt/lint/bin first, `python3` was the venv's
+          # interpreter without python3-websockets, and the Stream Deck plugin (run.sh: `exec python3 plugin.py`)
+          # died on `import websockets` — test_ct3 timed out waiting for registerPlugin (CI run 37369020745).
           python3 -m venv /opt/lint && /opt/lint/bin/pip install -q ruff==0.15.22
-          echo /opt/lint/bin >> "$GITHUB_PATH"
+          ln -s /opt/lint/bin/ruff /usr/local/bin/ruff
       - name: Lint (BP-4 — the build is -Werror, this is the same gate for Python and the workflow itself)
         run: |
           ruff check .
