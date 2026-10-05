@@ -1,6 +1,6 @@
 # ADR 0014 — Hyprland (and any non-KDE Wayland session) as a first-class desktop
 
-**Status:** proposed 2026-09-28, phase 0 measured 2026-10-05, HY-2 done 2026-10-05 · **Owner:** project owner · **Drives:** CT-1, UX-17, new HY-1..HY-8 (draft below)
+**Status:** proposed 2026-09-28, phase 0 measured 2026-10-05, HY-2 and HY-1 done 2026-10-05 · **Owner:** project owner · **Drives:** CT-1, UX-17, new HY-1..HY-8 (draft below)
 
 ## Context
 
@@ -96,8 +96,8 @@ and weston's headless backend offers `wl_compositor` v5 where Hyprland binds v6.
 | Look | right only with a platform theme | **Wrong prediction: right without one.** `QT_QPA_PLATFORMTHEME` unset, Breeze controls and icons render, no missing glyphs. HY-4 shrinks to "also check with `kde`/`hyprqt6engine`". |
 | Main window | — | Tiled by Hyprland (`floating false`, 1878×1008), as expected for a normal toplevel; HY-3 window rules decide. |
 
-The laptop has `layer-shell-qt` 6.7.5 but neither `wtype` nor `hyprqt6engine` installed; the synthetic-key question
-for HY-8 is still open.
+The laptop has `layer-shell-qt` 6.7.5 but neither `wtype` nor `hyprqt6engine` installed. (HY-1 builds `wtype` 0.4
+from source for the test; Arch/CachyOS package it as `wtype`.)
 
 ## HY-2 result (2026-10-05)
 
@@ -121,10 +121,35 @@ no serial. So the layer surface is used under every Wayland compositor, KWin inc
 - LayerShellQt is a RECOMMENDED build dependency, not a required one: without it the build still works and the Wayland
   click opens the window.
 
+## HY-1 result (2026-10-05)
+
+- `PortalShortcuts` (frontend): when nobody owns or can activate `org.kde.kglobalaccel` and the portal is reachable,
+  the frontend binds the SAME QActions with the SAME ids through `org.freedesktop.portal.GlobalShortcuts`. Order:
+  `Registry.Register(desktopFileName)` (xdg-desktop-portal ≥ 1.19 refuses a host app without an app id),
+  `CreateSession`, `BindShortcuts`; `Activated(id)` triggers the action. All calls asynchronous. When the set of
+  actions changes (a channel added), the session is closed and a new one bound, debounced by 200 ms.
+- Under Plasma nothing changes: KWin owns `org.kde.kglobalaccel`, so no portal session is created.
+- Measured in nested Hyprland 0.56.2, XDPH 1.4.1, xdg-desktop-portal 1.22.1: `hyprctl globalshortcuts` lists all
+  ids as `org.kmixdeck.kmixdeck:<id>`; frontend log `global shortcuts bound through the portal: 10`.
+- The user binds a key in the Lua config: `hl.bind("CTRL + SHIFT + ALT + F9",
+  hl.dsp.global("org.kmixdeck.kmixdeck:mute-channel-game"))`. The trigger lives in Hyprland's config, not in XDPH, so
+  re-creating the portal session does not lose it: after `channel add Chat` the old F9 bind still toggled the game
+  channel, and the new `mute-channel-chat` worked with its own bind.
+- Synthetic key input: `wtype` works (Hyprland offers `zwp_virtual_keyboard_v1`), with one catch: wtype uploads its
+  own keymap with ad-hoc keycodes, and Hyprland resolves a bind's key by keycode through ITS layout. With the default
+  a bind on F8 stayed silent for `wtype -k F8`; with `input.resolve_binds_by_sym = true` it fired (and silent again
+  after switching back). A real keyboard needs neither; the test sets the option.
+- Guarded by `test_shortcuts_hyprland.py` (bound through the portal, real key mutes the PipeWire node, unbound key
+  does nothing, channel added later). Without `PortalShortcuts` 3 of 4 red (2/2 runs; the unbound-key probe stays
+  green by design), with it 4/4 green (4 runs on the laptop). On hosts without Hyprland/XDPH/Waybar/mako/wtype the
+  file skips itself.
+- Notifications are still not measured: the action fires, mako answers, but no assertion on the notification yet.
+
 ## Open points
 
 - **Version skew.** The laptop runs Hyprland 0.56.2 (Lua config). This build host offers 0.53.3 (Ubuntu package,
   hyprlang). Tests must run against the Lua API we ship, so either the test host gets ≥ 0.55 or Phase 3 runs on the
   laptop.
-- Synthetic key input for the test: Hyprland is expected to offer `zwp_virtual_keyboard_v1` (`wtype`); unverified.
-- Whether XDPH remembers triggers when a GlobalShortcuts session is re-created with more shortcuts.
+- ~~Synthetic key input for the test~~ — `wtype` works, see HY-1 result.
+- ~~Whether XDPH remembers triggers when a GlobalShortcuts session is re-created~~ — the trigger is in Hyprland's
+  config, not in XDPH; measured to survive the re-create (HY-1 result).

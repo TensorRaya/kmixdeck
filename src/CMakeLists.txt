@@ -66,7 +66,7 @@ install(TARGETS kmixdeck-cli ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
 
 if(BUILD_KDE_FRONTEND)
 # --- kmixdeck-kde: the Kirigami frontend. Pure D-Bus client, no PipeWire (AR-2/AR-6 enforced by the linker).
-add_executable(kmixdeck-kde main.cpp frontend/mixerclient.cpp frontend/mixerclient.h frontend/kdeintegration.cpp frontend/kdeintegration.h frontend/iconpicker.cpp frontend/iconpicker.h qmltypes.h)
+add_executable(kmixdeck-kde main.cpp frontend/mixerclient.cpp frontend/mixerclient.h frontend/kdeintegration.cpp frontend/kdeintegration.h frontend/portalshortcuts.cpp frontend/portalshortcuts.h frontend/iconpicker.cpp frontend/iconpicker.h qmltypes.h)
 ecm_add_qml_module(kmixdeck-kde
     URI org.kmixdeck
     VERSION 1.0

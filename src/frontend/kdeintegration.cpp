@@ -64,6 +64,8 @@ KdeIntegration::KdeIntegration(MixerClient *client, QObject *parent)
     connect(m_client, &MixerClient::mixChanged, this, [this](const QString &) { rebuildTrayMenu(); });   // mute state / listening mix
     connect(m_client, &MixerClient::cellChanged, this, [this](const QString &, const QString &) { updateTrayIcon(); });
     connect(m_client, &MixerClient::serviceAvailableChanged, this, [this] { updateTrayIcon(); });
+    // ADR 0014 HY-1: KGlobalAccel where KWin/kglobalacceld owns the grab (Plasma), the GlobalShortcuts portal elsewhere
+    if (!PortalShortcuts::kglobalaccelAvailable() && PortalShortcuts::portalAvailable()) m_portal = new PortalShortcuts(this);
     rebuildActions(); rebuildTrayMenu(); updateTrayIcon();
 }
 
@@ -200,6 +202,13 @@ void KdeIntegration::rebuildActions() {
         m_listenNextAction->setObjectName(QStringLiteral("listen-next-mix"));
         connect(m_listenNextAction, &QAction::triggered, this, &KdeIntegration::listenNext);
         KGlobalAccel::self()->setGlobalShortcut(m_listenNextAction, QList<QKeySequence>{});
+    }
+    if (m_portal) {   // same QActions, same ids: the portal path is a second transport, not a second set of actions
+        QList<QAction *> all;
+        for (auto *map : {&m_channelMuteActions, &m_mixMuteActions, &m_mixUpActions, &m_mixDownActions})
+            for (QAction *a : std::as_const(*map)) all << a;
+        all << m_listenNextAction;
+        m_portal->setActions(all);
     }
 }
 

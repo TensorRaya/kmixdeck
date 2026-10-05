@@ -215,6 +215,18 @@ if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMP
     else()
         message(STATUS "UX-17 Wayland tray test disabled (need kwin_wayland and LayerShellQt)")
     endif()
+
+    # ADR 0014 HY-1: shortcuts through the GlobalShortcuts portal in a nested Hyprland (tools/hyprland-sandbox.py).
+    # The test skips itself when Hyprland, XDPH, Waybar, mako or wtype are missing (Ubuntu CI has no Hyprland).
+    find_program(HYPRLAND_EXECUTABLE Hyprland)
+    if(HYPRLAND_EXECUTABLE AND KWIN_WAYLAND_EXECUTABLE)
+        add_test(NAME integration-shortcuts_hyprland
+            COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_shortcuts_hyprland.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
+        set_tests_properties(integration-shortcuts_hyprland PROPERTIES TIMEOUT 300 LABELS "integration")
+    else()
+        message(STATUS "HY-1 Hyprland shortcut test disabled (need Hyprland and kwin_wayland as its host)")
+    endif()
 else()
     message(STATUS "Integration tests disabled (need pytest, pipewire, wireplumber, ffmpeg)")
 endif()

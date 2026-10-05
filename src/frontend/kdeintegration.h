@@ -13,6 +13,7 @@
 #include <QMenu>
 #include <KStatusNotifierItem>
 #include "mixerclient.h"
+#include "portalshortcuts.h"
 
 class QQuickWindow;
 
@@ -45,6 +46,7 @@ private:
     QPointer<QQuickWindow> m_window;
     void showPopover(const QPoint &pos);   // UX-17: X11 popup, Wayland layer surface, or the window (ADR 0014 HY-2)
     int m_layerShell = -1;                 // compositor offers zwlr_layer_shell_v1: -1 not asked yet, 0 no, 1 yes
+    PortalShortcuts *m_portal = nullptr;   // ADR 0014 HY-1: only when nobody owns org.kde.kglobalaccel
 };
 
 } // namespace kmixdeck::frontend
