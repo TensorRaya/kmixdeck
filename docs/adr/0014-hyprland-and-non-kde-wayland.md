@@ -1,6 +1,6 @@
 # ADR 0014 — Hyprland (and any non-KDE Wayland session) as a first-class desktop
 
-**Status:** proposed 2026-09-28, phase 0 measured 2026-10-05 · **Owner:** project owner · **Drives:** CT-1, UX-17, new HY-1..HY-8 (draft below)
+**Status:** proposed 2026-09-28, phase 0 measured 2026-10-05, HY-2 done 2026-10-05 · **Owner:** project owner · **Drives:** CT-1, UX-17, new HY-1..HY-8 (draft below)
 
 ## Context
 
@@ -41,7 +41,8 @@ Upstream guidance this ADR follows (read 2026-09-28):
    once keeps working. Because `BindShortcuts` works once per session, adding a channel re-creates the session
    (measure first whether XDPH keeps the user's triggers across that).
 3. **The tray popover becomes a layer-shell surface** on compositors that offer `wlr-layer-shell` (Hyprland,
-   Sway…) via LayerShellQt, anchored to the corner the bar sits on. KWin keeps the current path. Fallback when
+   Sway…) via LayerShellQt, anchored to the corner the bar sits on. ~~KWin keeps the current path.~~ Amended
+   2026-10-05: KWin too — the current path fails there in exactly the same way (see HY-2 below). Fallback when
    neither works: double-click behaviour only (open the window) — never a tiled half-screen popover.
 4. **We ship config, not instructions.** `data/hyprland/kmixdeck.lua` (window rules + example binds via
    `hl.dsp.global`) to be `require()`d from the user's `hyprland.lua`, and a Waybar snippet. Installed under
@@ -97,6 +98,28 @@ and weston's headless backend offers `wl_compositor` v5 where Hyprland binds v6.
 
 The laptop has `layer-shell-qt` 6.7.5 but neither `wtype` nor `hyprqt6engine` installed; the synthetic-key question
 for HY-8 is still open.
+
+## HY-2 result (2026-10-05)
+
+The control group decided it: the same stack with KWin 6.7.5 as THE compositor (Waybar standing in for plasmashell)
+gives the same `Failed to create grabbing popup` and no window. The Qt.Popup path never worked under any Wayland
+compositor whose tray host is a separate process — the earlier tests ran it offscreen or under X11, where a popup needs
+no serial. So the layer surface is used under every Wayland compositor, KWin included.
+
+- `KdeIntegration::showPopover()`: X11 → the old popup; Wayland + `zwlr_layer_shell_v1` in the registry → layer surface,
+  namespace `kmixdeck-tray`, layer `top`, exclusive zone 0, keyboard on demand, anchored to the screen edge nearest the
+  click (top or bottom) with an 8 px gap, centred on the click and clamped on screen; a click with no usable position
+  falls back to the top right. Second click closes it (a layer surface has no grab, so "click elsewhere" cannot close
+  it). Wayland without layer shell → the window opens.
+- LayerShellQt cannot report a missing protocol (it warns and leaves a plain toplevel, which Hyprland would tile), so
+  the frontend asks the registry once, on a private event queue.
+- Measured in nested Hyprland 0.56.2: `hyprctl layers` shows `kmixdeck-tray` 396×343 at (1502, 38) under a 30 px
+  Waybar, `hyprctl clients` unchanged; second Activate removes the layer. Under KWin 6.7.5: layer 3 (above normal), at
+  (1524, 38).
+- Guarded by `test_tray_wayland.py` (KWin, both bar edges): red without the change (`a popover after the tray click did
+  not happen within 5s`, 2/2), green with it.
+- LayerShellQt is a RECOMMENDED build dependency, not a required one: without it the build still works and the Wayland
+  click opens the window.
 
 ## Open points
 

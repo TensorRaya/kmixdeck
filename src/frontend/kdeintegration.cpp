@@ -11,8 +11,43 @@
 #include <QProcess>
 #include <algorithm>
 #include <cmath>
+#ifdef KMIXDECK_LAYER_SHELL
+#include <LayerShellQt/Window>
+#include <QScreen>
+#include <wayland-client.h>
+#endif
 
 namespace kmixdeck::frontend {
+
+#ifdef KMIXDECK_LAYER_SHELL
+namespace {
+// LayerShellQt cannot be asked whether the compositor has wlr-layer-shell: without it, it logs a warning and the
+// window silently becomes a normal toplevel, which Hyprland tiles over half the screen. One registry round trip on a
+// private queue answers it without touching Qt's own event queue.
+bool compositorHasLayerShell() {
+    auto *wl = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
+    if (!wl || !wl->display()) return false;
+    wl_display *display = wl->display();
+    wl_event_queue *queue = wl_display_create_queue(display);
+    auto *wrapper = static_cast<wl_display *>(wl_proxy_create_wrapper(display));
+    wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wrapper), queue);
+    wl_registry *registry = wl_display_get_registry(wrapper);
+    static const wl_registry_listener listener = {
+        [](void *found, wl_registry *, uint32_t, const char *interface, uint32_t) {
+            if (qstrcmp(interface, "zwlr_layer_shell_v1") == 0) *static_cast<bool *>(found) = true;
+        },
+        [](void *, wl_registry *, uint32_t) {},
+    };
+    bool found = false;
+    wl_registry_add_listener(registry, &listener, &found);
+    wl_display_roundtrip_queue(display, queue);
+    wl_registry_destroy(registry);
+    wl_proxy_wrapper_destroy(wrapper);
+    wl_event_queue_destroy(queue);
+    return found;
+}
+} // namespace
+#endif
 
 KdeIntegration::KdeIntegration(MixerClient *client, QObject *parent)
     : QObject(parent), m_client(client),
@@ -40,7 +75,7 @@ void KdeIntegration::setMainWindow(QQuickWindow *w) {
     m_window = w;
     m_tray->setAssociatedWindow(nullptr);
     m_clickTimer.setSingleShot(true); m_clickTimer.setInterval(QGuiApplication::styleHints()->mouseDoubleClickInterval());
-    connect(&m_clickTimer, &QTimer::timeout, this, [this] { if (m_window) QMetaObject::invokeMethod(m_window, "showTrayOverview", Q_ARG(QVariant, m_clickPos.x()), Q_ARG(QVariant, m_clickPos.y())); });
+    connect(&m_clickTimer, &QTimer::timeout, this, [this] { showPopover(m_clickPos); });
     connect(m_tray, &KStatusNotifierItem::activateRequested, this, [this](bool, const QPoint &pos) {
         if (m_clickTimer.isActive()) { m_clickTimer.stop(); if (m_window) QMetaObject::invokeMethod(m_window, "raiseFromTray"); return; }
         m_clickPos = pos; m_clickTimer.start();
@@ -48,6 +83,54 @@ void KdeIntegration::setMainWindow(QQuickWindow *w) {
     connect(m_tray, &KStatusNotifierItem::secondaryActivateRequested, this, [this](const QPoint &) {   // middle click: mute/unmute the listening mix
         const QString cur = listeningMix(); if (!cur.isEmpty()) m_client->toggleMixMute(cur);
     });
+}
+// UX-17 on Wayland (ADR 0014 HY-2). The Qt.Popup path is an xdg_popup, and that needs an input serial of one of OUR
+// surfaces; a click on the tray belongs to the panel. QtWayland refuses ("Failed to create grabbing popup") and nothing
+// appears, measured 2026-10-05 under Hyprland 0.56 and KWin 6.7 alike. A wlr-layer-shell surface needs no serial.
+// Anchored to the screen edge nearest the click with exclusive zone 0, it is kept clear of the bar by the protocol
+// itself. Without layer-shell the click opens the window: never a tiled "popover".
+void KdeIntegration::showPopover(const QPoint &pos) {
+    if (!m_window) return;
+    if (QGuiApplication::platformName() != QLatin1String("wayland")) {
+        QMetaObject::invokeMethod(m_window, "showTrayOverview", Q_ARG(QVariant, pos.x()), Q_ARG(QVariant, pos.y()));
+        return;
+    }
+#ifdef KMIXDECK_LAYER_SHELL
+    if (m_layerShell < 0) m_layerShell = compositorHasLayerShell() ? 1 : 0;
+    auto *pop = m_window->property("trayOverview").value<QQuickWindow *>();
+    if (pop && m_layerShell == 1) {
+        if (pop->isVisible()) { pop->close(); return; }   // no grab on a layer surface: a second click closes it
+        QScreen *screen = QGuiApplication::screenAt(pos);
+        if (!screen) screen = QGuiApplication::primaryScreen();
+        const QRect g = screen->geometry();
+        const bool known = !pos.isNull() && g.contains(pos);   // some tray hosts send (0,0)
+        const bool bottom = known && pos.y() > g.center().y();
+        const int gap = 8;
+        using LS = LayerShellQt::Window;
+        LS::Anchors anchors = bottom ? LS::AnchorBottom : LS::AnchorTop;
+        QMargins margins(0, bottom ? 0 : gap, 0, bottom ? gap : 0);
+        if (known) {
+            anchors |= LS::AnchorLeft;
+            margins.setLeft(std::clamp(pos.x() - g.x() - pop->width() / 2, 0, std::max(0, g.width() - pop->width())));
+        } else {
+            anchors |= LS::AnchorRight;
+            margins.setRight(gap);
+        }
+        LS *ls = LS::get(pop);
+        ls->setScope(QStringLiteral("kmixdeck-tray"));   // the layer namespace: `hyprctl layers`, Hyprland layer rules
+        ls->setLayer(LS::LayerTop);
+        ls->setKeyboardInteractivity(LS::KeyboardInteractivityOnDemand);
+        ls->setExclusiveZone(0);
+        ls->setAnchors(anchors);
+        ls->setMargins(margins);
+        ls->setScreen(screen);
+        pop->setFlags(Qt::FramelessWindowHint);   // not Qt::Popup: that is the xdg_popup path that fails
+        pop->show();
+        pop->requestActivate();
+        return;
+    }
+#endif
+    QMetaObject::invokeMethod(m_window, "raiseFromTray");
 }
 void KdeIntegration::trayClick(const QPoint &pos) { m_tray->activate(pos); }
 QStringList KdeIntegration::trayMenuTexts() const {

@@ -43,6 +43,8 @@ private:
     QString listeningMix() const;
     QTimer m_clickTimer; QPoint m_clickPos;                     // the mix currently on the user's headphones (first with a present output), "" if none
     QPointer<QQuickWindow> m_window;
+    void showPopover(const QPoint &pos);   // UX-17: X11 popup, Wayland layer surface, or the window (ADR 0014 HY-2)
+    int m_layerShell = -1;                 // compositor offers zwlr_layer_shell_v1: -1 not asked yet, 0 no, 1 yes
 };
 
 } // namespace kmixdeck::frontend

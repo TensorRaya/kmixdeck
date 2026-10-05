@@ -204,6 +204,17 @@ if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMP
         message(STATUS "CT-1 Wayland shortcut test disabled (need kwin_wayland, wayland-scanner, "
                        "plasma-wayland-protocols, wayland-client)")
     endif()
+
+    # UX-17 / ADR 0014 HY-2: the tray popover under Wayland is a layer surface. Without LayerShellQt the frontend
+    # opens the window instead, by design, so the test only exists where the build has the layer-shell path.
+    if(KWIN_WAYLAND_EXECUTABLE AND LayerShellQt_FOUND)
+        add_test(NAME integration-tray_wayland
+            COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_tray_wayland.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
+        set_tests_properties(integration-tray_wayland PROPERTIES TIMEOUT 300 LABELS "integration")
+    else()
+        message(STATUS "UX-17 Wayland tray test disabled (need kwin_wayland and LayerShellQt)")
+    endif()
 else()
     message(STATUS "Integration tests disabled (need pytest, pipewire, wireplumber, ffmpeg)")
 endif()

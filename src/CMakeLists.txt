@@ -100,6 +100,11 @@ target_link_libraries(kmixdeck-kde PRIVATE
     KF6::CoreAddons KF6::ConfigCore KF6::I18n KF6::I18nQml KF6::IconThemes KF6::IconWidgets
     KF6::GlobalAccel KF6::StatusNotifierItem KF6::Notifications KF6::DBusAddons KF6::Crash
 )
+if(LayerShellQt_FOUND)
+    pkg_check_modules(WaylandClientFe REQUIRED IMPORTED_TARGET wayland-client)
+    target_link_libraries(kmixdeck-kde PRIVATE LayerShellQt::Interface PkgConfig::WaylandClientFe)
+    target_compile_definitions(kmixdeck-kde PRIVATE KMIXDECK_LAYER_SHELL=1)
+endif()
 target_compile_options(kmixdeck-kde PRIVATE -Wall -Wextra)
 install(TARGETS kmixdeck-kde ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
 endif()

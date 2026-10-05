@@ -44,6 +44,11 @@ if(BUILD_KDE_FRONTEND)
         GlobalAccel StatusNotifierItem Notifications DBusAddons Crash)
     find_package(KF6KirigamiAddons REQUIRED)
     find_package(KF6QQC2DesktopStyle REQUIRED)
+    # ADR 0014 HY-2: the tray popover as a wlr-layer-shell surface. Optional: without it the popover works on X11
+    # only, and a Wayland click opens the window instead.
+    find_package(LayerShellQt 6.0 CONFIG)
+    set_package_properties(LayerShellQt PROPERTIES TYPE RECOMMENDED
+        PURPOSE "tray popover on Wayland (KWin, Hyprland, Sway, ...)")
 else()
     find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core DBus)
     find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons I18n)

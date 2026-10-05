@@ -59,7 +59,9 @@ Build dependencies: CMake ≥ 3.20, a C++20 compiler, Qt ≥ 6.6 (Core, Gui, Wid
 DBus), KDE Frameworks ≥ 6.8 (CoreAddons, Config, I18n, Kirigami, KirigamiAddons, QQC2DesktopStyle, IconThemes,
 GlobalAccel, StatusNotifierItem, Notifications, DBusAddons, Crash), `libpipewire-0.3 ≥ 1.0`, `libebur128 ≥ 1.2`
 (EBU R128 loudness metering, UX-18 — `libebur128-dev` on Debian/Ubuntu, `libebur128` on Arch), the LADSPA header
-(`ladspa-sdk` on Debian/Ubuntu, `ladspa` on Arch, `ladspa-devel` on Fedora).
+(`ladspa-sdk` on Debian/Ubuntu, `ladspa` on Arch, `ladspa-devel` on Fedora). Recommended: LayerShellQt
+(`liblayershellqtinterface-dev` on Debian/Ubuntu, `layer-shell-qt` on Arch) — without it the tray popover exists on X11
+only, and a click on the tray under Wayland opens the window instead.
 Runtime: PipeWire + WirePlumber (any distro of 2024 or later). Optional: `swh-plugins`/`rnnoise` for LADSPA effects;
 `python3-gi` + `python3-websockets` for the web UI.
 
