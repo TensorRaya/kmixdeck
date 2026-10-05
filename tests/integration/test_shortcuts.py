@@ -95,6 +95,26 @@ class ShortcutStack:
         # a window that holds the focus; without one the X server drops the keys
         self._start(["xmessage", "-geometry", "200x80+5+5", "focus"])
         time.sleep(1.0)
+        self._settle_keyboard()
+
+    def _settle_keyboard(self):
+        """Take the keyboard switch before the measured press, not during it.
+
+        XTEST's first key makes the X server switch the core keyboard's source device and announce it with
+        XkbNewKeyboardNotify; kglobalacceld answers by ungrabbing and re-grabbing every key ("Re-mapping keys").
+        A key that lands in that window is lost. Measured 2026-10-05: 2 of 6 runs red, one with and one without
+        the app-id change; each red log has the notify between xdotool's releases and no XKeyPress at all.
+        Shift is grabbed by nobody, so this press changes nothing but the device.
+        """
+        remaps = self.log.read_text().count("Re-mapping keys")
+        subprocess.run(["xdotool", "key", "shift"], env=self.env, check=False)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and self.log.read_text().count("Re-mapping keys") == remaps:
+            time.sleep(0.1)
+        # the re-grab ends with the key registered again; after that a press is safe
+        while (time.monotonic() < deadline
+               and 'Registering key "Ctrl+Alt+Shift+F9"' not in self.log.read_text().rsplit("Re-mapping keys", 1)[-1]):
+            time.sleep(0.1)
 
     def kga(self, *args):
         r = subprocess.run(["busctl", "--user", "call", "org.kde.kglobalaccel", "/kglobalaccel",
