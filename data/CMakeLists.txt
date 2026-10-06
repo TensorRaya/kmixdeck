@@ -19,4 +19,6 @@ if(BUILD_KDE_FRONTEND)
     install(FILES org.kmixdeck.kmixdeck.desktop DESTINATION ${KDE_INSTALL_APPDIR})
     install(FILES org.kmixdeck.kmixdeck.metainfo.xml DESTINATION ${KDE_INSTALL_METAINFODIR})
     install(FILES kmixdeck.notifyrc DESTINATION ${KDE_INSTALL_KNOTIFYRCDIR})
+    # ADR 0014 HY-3: require()-able from the user's hyprland.lua; never written into the user's config by us.
+    install(FILES hyprland/kmixdeck.lua DESTINATION ${KDE_INSTALL_DATADIR}/kmixdeck/hyprland)
 endif()

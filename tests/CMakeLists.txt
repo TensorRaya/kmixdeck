@@ -235,8 +235,13 @@ if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMP
             COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_shortcuts_hyprland.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
         set_tests_properties(integration-shortcuts_hyprland PROPERTIES TIMEOUT 300 LABELS "integration")
+        # HY-3: data/hyprland/kmixdeck.lua require()d in the same nested session (window rules, kmixdeck.bind).
+        add_test(NAME integration-window_rules_hyprland
+            COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_window_rules_hyprland.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
+        set_tests_properties(integration-window_rules_hyprland PROPERTIES TIMEOUT 300 LABELS "integration")
     else()
-        message(STATUS "HY-1 Hyprland shortcut test disabled (need Hyprland and kwin_wayland as its host)")
+        message(STATUS "HY-1/HY-3 Hyprland tests disabled (need Hyprland and kwin_wayland as its host)")
     endif()
 else()
     message(STATUS "Integration tests disabled (need pytest, pipewire, wireplumber, ffmpeg)")

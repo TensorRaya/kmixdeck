@@ -2,6 +2,7 @@
 """A private Hyprland session with kmixdeck in it, for measuring the KDE frontend outside Plasma (ADR 0014).
 
 Usage: tools/hyprland-sandbox.py [--session hyprland|kwin] [--max-seconds N] [--theme NAME] [--ready-file PATH]
+                                [--require-kmixdeck]
 
 Starts, all private to this process and removed on exit (SIGTERM/SIGINT or after --max-seconds):
 PipeWire + WirePlumber (tests/integration/pw_sandbox.py), a session bus, a host compositor, Hyprland as its client,
@@ -39,6 +40,8 @@ ap.add_argument("--session", choices=("hyprland", "kwin"), default="hyprland")
 ap.add_argument("--max-seconds", type=int, default=1800)
 ap.add_argument("--theme", default="", help="QT_QPA_PLATFORMTHEME for kmixdeck-kde (default: unset)")
 ap.add_argument("--ready-file", type=Path, help="also write the runtime dir here once the session is up")
+ap.add_argument("--require-kmixdeck", action="store_true",
+                help="load data/hyprland/kmixdeck.lua the way a user does: require() from hyprland.lua (HY-3)")
 args = ap.parse_args()
 
 procs = []
@@ -131,7 +134,11 @@ hl.config({
     ecosystem = { no_update_news = true, no_donation_nag = true },
     xwayland = { enabled = false },
 })
-""")
+""" + (f"""
+-- HY-3: the two lines the header of data/hyprland/kmixdeck.lua tells a user to add, source tree for <prefix>/share
+package.path = "{REPO / 'data' / 'hyprland'}/?.lua;" .. package.path
+local kmixdeck = require("kmixdeck")
+""" if args.require_kmixdeck else ""))
 
 
 def hypr_socket():

@@ -40,11 +40,11 @@ UNCHORD = ["-m", "alt", "-m", "shift", "-m", "ctrl"]
 
 
 class HyprlandSession:
-    def __init__(self, tmp_path):
+    def __init__(self, tmp_path, *sandbox_args):
         ready = tmp_path / "ready"
         self.log = tmp_path / "sandbox.log"
         self.proc = subprocess.Popen([sys.executable, str(SANDBOX), "--session", "hyprland", "--max-seconds", "900",
-                                      "--ready-file", str(ready)],
+                                      "--ready-file", str(ready), *sandbox_args],
                                      stdout=open(self.log, "w"), stderr=subprocess.STDOUT)
         try:
             _wait(lambda: ready.exists() or self.proc.poll() is not None, 90, "the Hyprland sandbox")
@@ -106,8 +106,7 @@ class HyprlandSession:
                 self.proc.kill()
 
 
-@pytest.fixture(scope="module")
-def hy(tmp_path_factory):
+def skip_without_hyprland():
     missing = [t for t in NEEDED if not shutil.which(t)]
     if missing:
         pytest.skip(f"needs {', '.join(missing)}")
@@ -115,6 +114,11 @@ def hy(tmp_path_factory):
         pytest.skip("xdg-desktop-portal-hyprland not installed")
     if not (BIN / "kmixdeck-kde").exists():
         pytest.skip("kmixdeck-kde not built")
+
+
+@pytest.fixture(scope="module")
+def hy(tmp_path_factory):
+    skip_without_hyprland()
     s = HyprlandSession(tmp_path_factory.mktemp("hy1"))
     s.hypr_eval("hl.config({ input = { resolve_binds_by_sym = true } })")
     yield s

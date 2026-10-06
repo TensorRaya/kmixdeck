@@ -145,11 +145,44 @@ no serial. So the layer surface is used under every Wayland compositor, KWin inc
   file skips itself.
 - Notifications are still not measured: the action fires, mako answers, but no assertion on the notification yet.
 
+## HY-3 result (2026-10-06, Blade, nested Hyprland 0.56.2)
+
+- `data/hyprland/kmixdeck.lua`, installed to `share/kmixdeck/hyprland/`. The user adds two lines to `hyprland.lua`
+  (`package.path = "<prefix>/share/kmixdeck/hyprland/?.lua;" .. package.path`, `local kmixdeck = require("kmixdeck")`).
+  It adds one named window rule and a helper `kmixdeck.bind(keys, id)` (`hl.bind` + `hl.dsp.global` with the app id
+  filled in). It binds no key and writes nothing into the user's config.
+- Measured without any rule: main window tiled (as in phase 0). Dialogs (`--open duck/voice`, `--open soundboard`) are
+  separate toplevels with the SAME class and the SAME initial title `kmixdeck`, so neither prop tells them apart from
+  the main window; the rule covers both.
+- The rule is `float = true` on the class alone. Measured per variant, one at a time:
+  - `float` → the main window opens centred at the size it asks for (1152×648 = gridUnit 18 × 64×36);
+  - `float` + `center` → the same, so `center` is dropped;
+  - `float` + `center` + `initial_title = "^kmixdeck$"` → the SAME window floats at 1920×1080, the whole monitor. Not
+    understood why (the plain `title` match gives 1152×648); it is the mutant the test keeps red.
+- **Two things around it needed fixing, the rule itself did not**:
+  - The sandbox's IPC socket: Hyprland puts `.socket2.sock` 82 characters below `$XDG_RUNTIME_DIR`, and a unix socket
+    path has at most 107. With `TMPDIR=/var/tmp` the runtime dir was 4 characters too long, Hyprland logged `Socket2
+    path is too long. IPC will not work.` and every Hyprland suite timed out ("timeout waiting for Hyprland IPC
+    socket"). `tools/hyprland-sandbox.py` now makes its runtime dir under `/tmp` whatever `TMPDIR` says and checks
+    the budget before starting.
+  - **A headless `kmixdeck-kde --probe` stole the user's shortcuts.** It runs next to the user's instance
+    (`KDBusService::Multiple`), and it bound the same ids through the portal. After it exited, the user's instance
+    never saw a key again (F12: toggled before the run, nothing after, while the portal still listed all 10 ids).
+    The headless modes (`--probe`, `--screenshot`, `--gesture`, `--self-test`) now register no global shortcut,
+    neither KGlobalAccel nor portal. Guarded by `test_hy1_a_headless_run_leaves_the_shortcuts_alone`: red on the
+    build without the change, green with it.
+- Guarded by `test_window_rules_hyprland.py` (4 tests): main window floats inside the work area and centred; a
+  dialog floats inside the work area; `kmixdeck.rules.window:set_enabled(false)` tiles the next window;
+  `kmixdeck.bind()` reaches the action through the portal. Mutants of the shipped file: `initial_title` in the match
+  → 1 red; `float = false` → 2 red (each once, Blade). Green: 4 passed in 24 of 27 runs on the Blade. The 3 red
+  runs were Hyprland starts without a monitor (open points): two confirmed in the logs (no clients, configure 0×0,
+  `monitors all` empty), the third had the same "3 failed in 73.5 s". The sandbox now reports that at the start.
+
 ## Open points
 
 - **Version skew.** The laptop runs Hyprland 0.56.2 (Lua config). This build host offers 0.53.3 (Ubuntu package,
   hyprlang). Tests must run against the Lua API we ship, so either the test host gets ≥ 0.55 or Phase 3 runs on the
-  laptop.
+  laptop. As of HY-3 both Hyprland suites run on the Blade only; CI and this build host skip them.
 - **Nested Hyprland sometimes starts without a monitor** (10 of 109 sandbox starts on the Blade, aquamarine 0.15.1):
   IPC up, `hyprctl monitors all` empty, every window gets configure 0×0 and is never mapped, Hyprland's main thread
   idle in `epoll_wait`. A 2 s pause between the host KWin and Hyprland did not change it (3 of 40). Likely cause:
