@@ -23,6 +23,7 @@ import argparse
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -82,7 +83,16 @@ def session_bus(env, address):
     return p.stdout.readline().strip()
 
 
-pw = start_private_pipewire()
+# Hyprland puts its IPC sockets at $XDG_RUNTIME_DIR/hypr/<40 hex>_<10 digits>_<up to 10 digits>/.socket2.sock, 82
+# characters after the runtime dir, and a unix socket path has at most 107 (sun_path is 108 bytes with the NUL). Past
+# that Hyprland logs "Socket2 path is too long. IPC will not work." and the sandbox times out waiting for the socket.
+# Measured 2026-10-06 (Hyprland 0.56.2): /tmp/kmixdeck-pw-XXXXXXXX gave exactly 107, so a TMPDIR of /var/tmp broke it.
+# So the runtime dir comes from a short fixed parent, whatever TMPDIR says, and the budget is checked before starting.
+HYPR_SOCKET_TAIL = len("/hypr/") + 40 + 1 + 10 + 1 + 10 + len("/.socket2.sock")
+runtime = Path(tempfile.mkdtemp(prefix="kmx-hy-", dir="/tmp"))
+if len(str(runtime)) + HYPR_SOCKET_TAIL > 107:
+    sys.exit(f"runtime dir {runtime} is too long for Hyprland's IPC socket ({len(str(runtime)) + HYPR_SOCKET_TAIL} > 107)")
+pw = start_private_pipewire(runtime_dir=runtime)
 pw.wait_node("kmixdeck.mix.stream")
 rt = pw.runtime_dir
 env = dict(pw.env)

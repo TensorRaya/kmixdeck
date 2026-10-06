@@ -476,9 +476,12 @@ class PwDaemon:
         shutil.rmtree(self.runtime_dir, ignore_errors=True)
 
 
-def start_private_pipewire(extra_conf: Path | None = PROTOTYPE_CONF, session_conf: str | None = None) -> PwDaemon:
-    """session_conf: extra PipeWire context.properties text (DV-4: e.g. a 44.1 kHz / 256 quantum session)."""
-    rt = Path(tempfile.mkdtemp(prefix="kmixdeck-pw-"))
+def start_private_pipewire(extra_conf: Path | None = PROTOTYPE_CONF, session_conf: str | None = None,
+                           runtime_dir: Path | None = None) -> PwDaemon:
+    """session_conf: extra PipeWire context.properties text (DV-4: e.g. a 44.1 kHz / 256 quantum session).
+    runtime_dir: an empty directory to use instead of a fresh one under $TMPDIR (the Hyprland sandbox needs a short
+    path for its sockets)."""
+    rt = runtime_dir or Path(tempfile.mkdtemp(prefix="kmixdeck-pw-"))
     (rt / "pipewire.conf.d").mkdir()
     if session_conf: (rt / "pipewire.conf.d" / "10-session.conf").write_text(session_conf)
     state = rt / "state"; state.mkdir()
