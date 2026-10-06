@@ -175,3 +175,19 @@ def test_hy1_a_channel_added_later_gets_its_shortcut_too(hy):
     _wait(lambda: hy.mute("kmixdeck.channel.game") == game, 5, "the old channel's mute returning")
     failures = [z for z in hy.frontend_log().splitlines() if "through the portal" in z and "failed" in z]
     assert not failures, failures
+
+
+def test_hy1_a_headless_run_leaves_the_shortcuts_alone(hy):
+    """`kmixdeck-kde --probe` (tests, scripts) runs next to the user's instance. It must not take the portal session:
+    measured 2026-10-06 (Hyprland 0.56.2), one --probe run re-bound the shortcuts, and after it exited the user's
+    instance never saw a key again (F12: toggled before, nothing after)."""
+    _wait(lambda: "mute-channel-voice" in hy.portal_ids(), 20, "the portal binding")
+    hy.bind("CTRL + SHIFT + ALT + F12", "mute-channel-voice")
+    before = hy.mute("kmixdeck.channel.voice")
+    hy.press("F12")
+    _wait(lambda: hy.mute("kmixdeck.channel.voice") != before, 5, "F12 before the headless run")
+    r = subprocess.run([str(BIN / "kmixdeck-kde"), "--open", "channel", "--probe", "mixStrip.needed"], env=hy.env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, f"--probe run failed: rc={r.returncode} {r.stderr[-400:]}"
+    hy.press("F12")
+    _wait(lambda: hy.mute("kmixdeck.channel.voice") == before, 5, "F12 after the headless run")

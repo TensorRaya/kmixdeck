@@ -49,8 +49,8 @@ bool compositorHasLayerShell() {
 } // namespace
 #endif
 
-KdeIntegration::KdeIntegration(MixerClient *client, QObject *parent)
-    : QObject(parent), m_client(client),
+KdeIntegration::KdeIntegration(MixerClient *client, bool globalShortcuts, QObject *parent)
+    : QObject(parent), m_client(client), m_globalShortcuts(globalShortcuts),
       m_tray(new KStatusNotifierItem(QStringLiteral("kmixdeck"), this)),
       m_trayMenu(new QMenu) {
     m_tray->setTitle(i18n("kmixdeck"));
@@ -65,7 +65,8 @@ KdeIntegration::KdeIntegration(MixerClient *client, QObject *parent)
     connect(m_client, &MixerClient::cellChanged, this, [this](const QString &, const QString &) { updateTrayIcon(); });
     connect(m_client, &MixerClient::serviceAvailableChanged, this, [this] { updateTrayIcon(); });
     // ADR 0014 HY-1: KGlobalAccel where KWin/kglobalacceld owns the grab (Plasma), the GlobalShortcuts portal elsewhere
-    if (!PortalShortcuts::kglobalaccelAvailable() && PortalShortcuts::portalAvailable()) m_portal = new PortalShortcuts(this);
+    if (m_globalShortcuts && !PortalShortcuts::kglobalaccelAvailable() && PortalShortcuts::portalAvailable())
+        m_portal = new PortalShortcuts(this);
     rebuildActions(); rebuildTrayMenu(); updateTrayIcon();
 }
 
@@ -145,6 +146,15 @@ QStringList KdeIntegration::trayMenuTexts() const {
 }   // test hook (--gesture trayclick)
 
 void KdeIntegration::rebuildActions() {
+    // A headless instance (m_globalShortcuts false) keeps its QActions (tray menu, tests) but registers none of them:
+    // measured 2026-10-06 under Hyprland 0.56.2, one `--probe` run re-bound the portal session and the user's
+    // instance stopped receiving its keys for good. KGlobalAccel has the same shape (component "kmixdeck").
+    const auto grab = [this](QAction *a, const QList<QKeySequence> &keys) {
+        if (m_globalShortcuts) KGlobalAccel::self()->setGlobalShortcut(a, keys);
+    };
+    const auto release = [this](QAction *a) {
+        if (m_globalShortcuts) KGlobalAccel::self()->removeAllShortcuts(a);
+    };
     // Global shortcuts are identified by (component = app name, action objectName). Keep names stable per slug so
     // the user's key assignment (stored by kglobalacceld) survives restarts and renames (DV-7 for hotkeys).
     const QStringList channels = m_client->channelSlugs();
@@ -157,11 +167,11 @@ void KdeIntegration::rebuildActions() {
             m_client->toggleChannelMute(slug);
             notifyMute(m_client->channelName(slug), !m_client->channelMuted(slug));
         });
-        KGlobalAccel::self()->setGlobalShortcut(a, QList<QKeySequence>{});   // no default key; user assigns in System Settings → Shortcuts → kmixdeck
+        grab(a, QList<QKeySequence>{});   // no default key; user assigns in System Settings → Shortcuts → kmixdeck
         m_channelMuteActions.insert(slug, a);
     }
     for (auto it = m_channelMuteActions.begin(); it != m_channelMuteActions.end();) {
-        if (!channels.contains(it.key())) { KGlobalAccel::self()->removeAllShortcuts(it.value()); it.value()->deleteLater(); it = m_channelMuteActions.erase(it); } else ++it;
+        if (!channels.contains(it.key())) { release(it.value()); it.value()->deleteLater(); it = m_channelMuteActions.erase(it); } else ++it;
     }
     const QStringList mixes = m_client->mixSlugs();
     for (const QString &slug : mixes) {
@@ -173,7 +183,7 @@ void KdeIntegration::rebuildActions() {
             m_client->toggleMixMute(slug);
             notifyMute(i18n("mix %1", m_client->mixName(slug)), willMute);
         });
-        KGlobalAccel::self()->setGlobalShortcut(a, QList<QKeySequence>{});
+        grab(a, QList<QKeySequence>{});
         m_mixMuteActions.insert(slug, a);
         // CT-1 volume up/down: master of the mix in 3 dB steps, cubic domain like the slider
         auto step = [this, slug](double db) {
@@ -184,24 +194,24 @@ void KdeIntegration::rebuildActions() {
         auto *up = new QAction(i18n("Mix %1: volume up", m_client->mixName(slug)), this);
         up->setObjectName(QStringLiteral("volume-up-mix-") + slug);
         connect(up, &QAction::triggered, this, [step] { step(+3.0); });
-        KGlobalAccel::self()->setGlobalShortcut(up, QList<QKeySequence>{});
+        grab(up, QList<QKeySequence>{});
         m_mixUpActions.insert(slug, up);
         auto *down = new QAction(i18n("Mix %1: volume down", m_client->mixName(slug)), this);
         down->setObjectName(QStringLiteral("volume-down-mix-") + slug);
         connect(down, &QAction::triggered, this, [step] { step(-3.0); });
-        KGlobalAccel::self()->setGlobalShortcut(down, QList<QKeySequence>{});
+        grab(down, QList<QKeySequence>{});
         m_mixDownActions.insert(slug, down);
     }
     for (auto *map : {&m_mixMuteActions, &m_mixUpActions, &m_mixDownActions})
         for (auto it = map->begin(); it != map->end();) {
-            if (!mixes.contains(it.key())) { KGlobalAccel::self()->removeAllShortcuts(it.value()); it.value()->deleteLater(); it = map->erase(it); } else ++it;
+            if (!mixes.contains(it.key())) { release(it.value()); it.value()->deleteLater(); it = map->erase(it); } else ++it;
         }
     if (!m_listenNextAction) {
         // UX-2 / CT-1 "switch monitoring mix": move the headphones (= the output the current mix plays to) to the next mix
         m_listenNextAction = new QAction(i18n("Listen to next mix"), this);
         m_listenNextAction->setObjectName(QStringLiteral("listen-next-mix"));
         connect(m_listenNextAction, &QAction::triggered, this, &KdeIntegration::listenNext);
-        KGlobalAccel::self()->setGlobalShortcut(m_listenNextAction, QList<QKeySequence>{});
+        grab(m_listenNextAction, QList<QKeySequence>{});
     }
     if (m_portal) {   // same QActions, same ids: the portal path is a second transport, not a second set of actions
         QList<QAction *> all;

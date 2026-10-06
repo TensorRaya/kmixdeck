@@ -87,7 +87,7 @@ int main(int argc, char *argv[])
     // One client shared by QML (as the "Mixer" singleton) and by the KDE integration (tray, shortcuts).
     auto *client = new kmixdeck::frontend::MixerClient(&app);
     MixerForeign::setInstance(client);
-    kmixdeck::frontend::KdeIntegration kde(client);
+    kmixdeck::frontend::KdeIntegration kde(client, !headless);
     if (headless) client->setHideToTray(false);
 
     QQmlApplicationEngine engine;

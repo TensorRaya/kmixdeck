@@ -22,7 +22,9 @@ namespace kmixdeck::frontend {
 class KdeIntegration : public QObject {
     Q_OBJECT
 public:
-    explicit KdeIntegration(MixerClient *client, QObject *parent = nullptr);
+    // globalShortcuts = false for the headless modes (--probe, --screenshot, --gesture, --self-test): they run next to
+    // the user's instance, and their registrations would replace that instance's under the same component/app id.
+    explicit KdeIntegration(MixerClient *client, bool globalShortcuts = true, QObject *parent = nullptr);
     void setMainWindow(QQuickWindow *w);
     void trayClick(const QPoint &pos);
     QStringList trayMenuTexts() const;   // test hook: the context menu's entries, "[x] " prefix when checked   // simulates a tray click (tests: one = popover, two within the interval = window)
@@ -34,6 +36,7 @@ private:
     void notifyMute(const QString &what, bool muted);
 
     MixerClient *m_client;
+    bool m_globalShortcuts = true;   // false: headless run, registers no global shortcut (see rebuildActions)
     KStatusNotifierItem *m_tray;
     QMenu *m_trayMenu;
     QHash<QString, QAction *> m_channelMuteActions;   // slug → action
