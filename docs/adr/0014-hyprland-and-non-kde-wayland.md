@@ -150,6 +150,15 @@ no serial. So the layer surface is used under every Wayland compositor, KWin inc
 - **Version skew.** The laptop runs Hyprland 0.56.2 (Lua config). This build host offers 0.53.3 (Ubuntu package,
   hyprlang). Tests must run against the Lua API we ship, so either the test host gets ≥ 0.55 or Phase 3 runs on the
   laptop.
+- **Nested Hyprland sometimes starts without a monitor** (10 of 109 sandbox starts on the Blade, aquamarine 0.15.1):
+  IPC up, `hyprctl monitors all` empty, every window gets configure 0×0 and is never mapped, Hyprland's main thread
+  idle in `epoll_wait`. A 2 s pause between the host KWin and Hyprland did not change it (3 of 40). Likely cause:
+  aquamarine's Wayland backend, fixed upstream after 0.15.1 by `7bb8bdf` (PR #415, 2026-09-22, "fixes hyprland
+  wayland monitors sometimes not poppin up": the output's first requests were not flushed and nothing woke the loop).
+  Not proven here yet: the A/B with aquamarine at `7bb8bdf` in a private prefix is still to run (prediction 0 bad
+  starts). This only hits the NESTED backend, never a real session. The sandbox now waits for a monitor and fails in
+  ≤ 20 s and keeps Hyprland's log (path in its last line), instead of tests failing later on windows
+  that never map.
 - ~~Synthetic key input for the test~~ — `wtype` works, see HY-1 result.
 - ~~Whether XDPH remembers triggers when a GlobalShortcuts session is re-created~~ — the trigger is in Hyprland's
   config, not in XDPH; measured to survive the re-create (HY-1 result).

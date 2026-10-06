@@ -20,6 +20,8 @@ org.kde.kglobalaccel like in Plasma) and no Hyprland. Waybar stands in for plasm
 Nothing touches the logged-in user's session: own XDG_RUNTIME_DIR, own buses, no seat, no systemd export.
 """
 import argparse
+import json
+import shutil
 import signal
 import subprocess
 import sys
@@ -146,6 +148,30 @@ if args.session == "hyprland":
     sig = next(d.name for d in hypr.iterdir() if (d / ".socket.sock").exists())
     wait(hypr_socket, 10, "Hyprland Wayland socket")
     wl = hypr_socket()
+    # IPC and Wayland socket up does not mean Hyprland has its output yet. 10 of 109 starts (2026-10-06, Blade,
+    # aquamarine 0.15.1) had none: `hyprctl monitors all` empty, every window got configure 0x0 and was never mapped
+    # (ADR 0014, open points). Ready means a monitor.
+    t0 = time.monotonic()
+    henv_ipc = dict(henv, HYPRLAND_INSTANCE_SIGNATURE=sig, XDG_RUNTIME_DIR=str(rt))
+
+    def monitors():
+        r = subprocess.run(["hyprctl", "monitors", "-j"], env=henv_ipc, capture_output=True, text=True)
+        return json.loads(r.stdout or "[]") if r.returncode == 0 else []
+    end = time.monotonic() + 20
+    while not monitors() and time.monotonic() < end:
+        time.sleep(0.1)
+    if not monitors():
+        keep = Path("/var/tmp") / f"hyprland-no-monitor-{rt.name}"
+        keep.mkdir(exist_ok=True)
+        shutil.copy(rt / "hyprland.log", keep / "stdout.log")
+        shutil.copy(rt / "host-kwin.log", keep / "host-kwin.log")
+        for f in (rt / "hypr" / sig).glob("hyprland.log*"):   # Hyprland's own log once stdout logging is off
+            shutil.copy(f, keep / f"hypr-{f.name}")
+        r = subprocess.run(["hyprctl", "monitors", "all", "-j"], env=henv_ipc, capture_output=True, text=True)
+        (keep / "monitors-all.json").write_text(r.stdout + r.stderr)
+        print(f"timeout waiting for a Hyprland monitor; logs kept in {keep}", flush=True)
+        stop()
+    print(f"monitor after {time.monotonic() - t0:.2f}s", flush=True)
 
 denv = dict(env, WAYLAND_DISPLAY=wl, XDG_CURRENT_DESKTOP=desktop, XDG_SESSION_TYPE="wayland", QT_QPA_PLATFORM="wayland")
 if sig:
