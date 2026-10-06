@@ -65,6 +65,13 @@ only, and a click on the tray under Wayland opens the window instead.
 Runtime: PipeWire + WirePlumber (any distro of 2024 or later). Optional: `swh-plugins`/`rnnoise` for LADSPA effects;
 `python3-gi` + `python3-websockets` for the web UI.
 
+**PipeWire 1.6.0–1.6.2** (Ubuntu 26.04 ships 1.6.2) have a filter-chain bug that crashes kmixdeckd and the PipeWire
+server ([#5202](https://gitlab.freedesktop.org/pipewire/pipewire/-/issues/5202)). On exactly those versions the build
+also compiles upstream's fixed 1.6.3 module as `libpipewire-module-kmixdeck-filter-chain` and installs it into
+PipeWire's module directory; kmixdeck uses it until your PipeWire is 1.6.3 or newer, then PipeWire's own again
+([ADR 0015](docs/adr/0015-ship-a-fixed-filter-chain-on-pipewire-1.6.0-1.6.2.md)). The configure summary says whether it
+is built. With a prefix inside `$HOME`, install it separately: `sudo cmake --install build --component pipewire-module`.
+
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 ninja -C build
