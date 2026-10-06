@@ -494,6 +494,13 @@ def start_private_pipewire(extra_conf: Path | None = PROTOTYPE_CONF, session_con
         "DISABLE_RTKIT": "1",
     })
     env.pop("PULSE_SERVER", None); env.pop("DBUS_SESSION_BUS_ADDRESS", None)
+    # DV-34 / ADR 0015: on PipeWire 1.6.0-1.6.2 the build has kmixdeck's fixed filter-chain module. An install puts it
+    # into PipeWire's module directory; the sandbox gets the same view by putting the build's module dir first, for the
+    # server, WirePlumber and kmixdeckd alike. Without it every suite would run the crashing stock module (#5202).
+    fixed = REPO / "build" / "lib" / "pipewire-0.3"
+    if (fixed / "libpipewire-module-kmixdeck-filter-chain.so").exists():
+        stock = subprocess.run(["pkg-config", "--variable=moduledir", "libpipewire-0.3"], capture_output=True, text=True, check=True).stdout.strip()
+        env["PIPEWIRE_MODULE_DIR"] = f"{fixed}:{stock}"
     # PIPEWIRE_CONFIG_DIR *replaces* the search path — for the daemon AND every client (client.conf,
     # pipewire-pulse.conf, ...). So mirror the stock config dir and layer our conf.d on top.
     stock = Path("/usr/share/pipewire")

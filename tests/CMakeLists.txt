@@ -148,7 +148,18 @@ if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMP
     # Am 2026-09-22 fehlte `soundboard` in dieser Liste: 10 CT-8-Tests, committet und als
     # fertig gemeldet, im Vollgate-Log 0 Treffer. Gefunden nur durch Abgleich `ls test_*.py`
     # gegen `ctest -N`. Genau das prueft jetzt der fast-Test `suiten-vollstaendig`.
-    foreach(suite service_cli audio_graph lifecycle routing fx presentation layout ports frontends_sync soundboard streamdeck web)
+    # DV-34 / ADR 0015: the probe that makes PipeWire #5202 deterministic, and the program that proves it fires. Built
+    # here, never installed. Plain C, like kwin-fake-key below: AUTOMOC off, linked as C. pthread is part of libc
+    # (glibc >= 2.34), so nothing else to link.
+    enable_language(C)
+    add_library(realloc-guard MODULE tools/realloc-guard.c)
+    add_executable(realloc-guard-selftest tools/realloc-guard-selftest.c)
+    foreach(t realloc-guard realloc-guard-selftest)
+        set_target_properties(${t} PROPERTIES AUTOMOC OFF LINKER_LANGUAGE C C_STANDARD 11 C_EXTENSIONS ON PREFIX ""
+                                             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+                                             LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    endforeach()
+    foreach(suite service_cli audio_graph lifecycle routing fx presentation layout ports frontends_sync soundboard streamdeck web pipewire_5202)
         add_test(NAME integration-${suite}
             COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_${suite}.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)
