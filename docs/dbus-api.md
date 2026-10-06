@@ -36,6 +36,7 @@ The root object at `/org/kmixdeck1`. Everything else hangs below it; `GetManaged
 | `DefaultSource` | string | read | `node.name` of the PipeWire default input. |
 | `ChannelOrder` | string[] | read | Channel slugs in display order. |
 | `MixOrder` | string[] | read | Mix slugs in display order. |
+| `Samples` | `aa{sv}` | read | Every registered sample of every board, each as a dict with `channel`, `name`, `path`, `gain`, `length` (seconds) and `sounding`. Changes are announced with `PropertiesChanged`, so a pad never has to poll to learn that a sample stopped. |
 | `VirtualDevices` | string[] | read | Node names of the virtual devices this service created. |
 
 ### Methods
