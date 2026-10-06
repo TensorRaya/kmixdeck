@@ -56,6 +56,18 @@ endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PipeWire REQUIRED IMPORTED_TARGET libpipewire-0.3>=1.0)
+# ADR 0015: PipeWire 1.6.0-1.6.2 ship a filter-chain module that reads freed memory (#5202) and crashes kmixdeckd and
+# the PipeWire server. On exactly those versions kmixdeck builds and installs upstream's fixed 1.6.3 module under its
+# own name; kmixdeckd picks it at runtime (src/pipewire/filterchain.cpp). Every other version builds nothing extra.
+if(PipeWire_VERSION VERSION_GREATER_EQUAL 1.6.0 AND PipeWire_VERSION VERSION_LESS 1.6.3)
+    set(KMIXDECK_FIXED_FILTER_CHAIN ON)
+    enable_language(C)
+    add_subdirectory(third_party/pipewire)
+else()
+    set(KMIXDECK_FIXED_FILTER_CHAIN OFF)
+endif()
+add_feature_info(FIXED_FILTER_CHAIN KMIXDECK_FIXED_FILTER_CHAIN
+    "PipeWire ${PipeWire_VERSION}: fixed filter-chain module for #5202 (built on 1.6.0-1.6.2 only, ADR 0015)")
 # FX (src/fx.cpp) reads LADSPA port names via the plugin's descriptor. Header only, no library to link.
 # Debian/Ubuntu: ladspa-sdk, Arch: ladspa, Fedora: ladspa-devel. Found via CMAKE_PREFIX_PATH like everything else.
 find_path(LADSPA_INCLUDE_DIR ladspa.h REQUIRED)
