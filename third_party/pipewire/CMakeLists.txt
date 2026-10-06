@@ -31,7 +31,6 @@ target_link_libraries(kmixdeck-filter-chain PRIVATE PkgConfig::PipeWire m)
 # PipeWire loads modules only from PIPEWIRE_MODULE_DIR or its compiled-in module directory, never from an absolute
 # path (pw_context_load_module → find_module; absolute names are refused since 6bc07dfe0e). So the module goes into
 # that directory, whatever CMAKE_INSTALL_PREFIX is; DESTDIR still applies for packaging.
-pkg_get_variable(PIPEWIRE_MODULEDIR libpipewire-0.3 moduledir)
 if(CMAKE_INSTALL_PREFIX MATCHES "^$ENV{HOME}/")
     # A prefix inside $HOME cannot write /usr/lib/…/pipewire-0.3. Keep it out of the default install so a user
     # install works (same reason as the bash-completion path, see the top-level CMakeLists.txt), and say so.

@@ -166,8 +166,10 @@ struct Layout {
     static Layout fromJson(const QJsonObject &o);
 
     /// Render the whole graph as a PipeWire config fragment (context.objects + context.modules).
-    QString toPipewireConf() const;
-    bool writePipewireConf(const QString &path) const;
+    /// `filterChain`: the module every cell and effects chain is loaded with — the daemon passes pw::filterChainModule()
+    /// (ADR 0015), so the server at login runs the same chain code as the daemon. The default keeps the golden stable.
+    QString toPipewireConf(const char *filterChain = "libpipewire-module-filter-chain") const;
+    bool writePipewireConf(const QString &path, const char *filterChain = "libpipewire-module-filter-chain") const;
 
     LayoutChannel *channel(const QString &slug);
     LayoutMix *mix(const QString &slug);

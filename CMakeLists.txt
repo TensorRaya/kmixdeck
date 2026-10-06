@@ -56,6 +56,8 @@ endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PipeWire REQUIRED IMPORTED_TARGET libpipewire-0.3>=1.0)
+# Where PipeWire loads modules from when PIPEWIRE_MODULE_DIR is unset — the daemon looks for the fixed module there.
+pkg_get_variable(PIPEWIRE_MODULEDIR libpipewire-0.3 moduledir)
 # ADR 0015: PipeWire 1.6.0-1.6.2 ship a filter-chain module that reads freed memory (#5202) and crashes kmixdeckd and
 # the PipeWire server. On exactly those versions kmixdeck builds and installs upstream's fixed 1.6.3 module under its
 # own name; kmixdeckd picks it at runtime (src/pipewire/filterchain.cpp). Every other version builds nothing extra.

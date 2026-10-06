@@ -5,6 +5,7 @@ add_library(kmixdeck_core STATIC
     layout.cpp layout.h
     fx.cpp fx.h
     pipewire/graph.cpp pipewire/graph.h
+    pipewire/filterchain.cpp pipewire/filterchain.h
     pipewire/meters.cpp pipewire/meters.h
     pipewire/sampler.cpp pipewire/sampler.h
 )
@@ -12,6 +13,7 @@ target_include_directories(kmixdeck_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(kmixdeck_core SYSTEM PRIVATE ${LADSPA_INCLUDE_DIR})
 target_link_libraries(kmixdeck_core PUBLIC Qt6::Core PkgConfig::PipeWire PkgConfig::EBUR128 PkgConfig::FFMPEG)
 target_compile_options(kmixdeck_core PRIVATE -Wall -Wextra)
+target_compile_definitions(kmixdeck_core PRIVATE KMIXDECK_PW_MODULEDIR="${PIPEWIRE_MODULEDIR}")   # ADR 0015
 
 # --- kmixdeckd: the service (ADR 0005). Only binary that links libpipewire.
 add_executable(kmixdeckd

@@ -135,6 +135,21 @@ private Q_SLOTS:
         QVERIFY(!conf.contains(QStringLiteral("kmixdeck.link.")));
         QVERIFY(conf.contains(QStringLiteral("kmixdeck.virt.desk")));
     }
+    void pipewireConfNamesTheChosenFilterChain() {
+        // DV-34 / ADR 0015: every filter-chain entry (cells AND effects) carries the module the daemon loads, and only
+        // kmixdeck's own module is optional — PipeWire's cannot be missing, so its entries stay exactly as before.
+        Layout l = full();
+        l.channels[0].fx.effects[0].enabled = true;   // full() keeps its effect bypassed; an active one renders a chain
+        const QString stock = l.toPipewireConf();
+        const QString fixed = l.toPipewireConf("libpipewire-module-kmixdeck-filter-chain");
+        const int chains = int(stock.count(QStringLiteral("{ name = libpipewire-module-filter-chain args = ")));
+        QCOMPARE(chains, int(l.channels.size()) + 1);   // one cell chain per channel + the effects chain of `game`
+        QCOMPARE(int(fixed.count(QStringLiteral("{ name = libpipewire-module-kmixdeck-filter-chain args = "))), chains);
+        QCOMPARE(int(fixed.count(QStringLiteral("libpipewire-module-filter-chain"))), 0);
+        QCOMPARE(int(fixed.count(QStringLiteral(" flags = [ nofail ] }\n"))), chains);
+        QCOMPARE(int(stock.count(QStringLiteral("nofail"))), 0);
+        QCOMPARE(fixed.count(QLatin1Char('\n')), stock.count(QLatin1Char('\n')));   // nothing else changes
+    }
 };
 QTEST_GUILESS_MAIN(LayoutTest)
 #include "layouttest.moc"

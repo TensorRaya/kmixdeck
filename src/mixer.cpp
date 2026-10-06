@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 kmixdeck contributors
 #include "mixer.h"
 #include "logging.h"
+#include "pipewire/filterchain.h"
 #include <climits>
 #include <algorithm>
 #include <QSet>
@@ -159,7 +160,7 @@ bool Mixer::saveLayout() const {
         // and no later edit is ever seen again.
         armLayoutWatch();
     }
-    if (!m_pwConfPath.isEmpty()) ok &= m_layout.writePipewireConf(m_pwConfPath);
+    if (!m_pwConfPath.isEmpty()) ok &= m_layout.writePipewireConf(m_pwConfPath, pw::filterChainModule());   // ADR 0015
     return ok;
 }
 
@@ -306,7 +307,7 @@ void Mixer::reconcile() {
     // hand) would rebuild a different graph at next login. Compare content, write only on drift (idempotent).
     if (!m_pwConfPath.isEmpty()) {
         QFile f(m_pwConfPath);
-        const bool same = f.open(QIODevice::ReadOnly) && f.readAll() == m_layout.toPipewireConf().toUtf8();
+        const bool same = f.open(QIODevice::ReadOnly) && f.readAll() == m_layout.toPipewireConf(pw::filterChainModule()).toUtf8();
         if (!same) { qCInfo(lcMixer) << "pipewire fragment differs from layout, rewriting" << m_pwConfPath; saveLayout(); }
     }
     applyFallbacks();
@@ -334,7 +335,7 @@ void Mixer::ensureCellGraph() {
             const QString name = ADR13::chainNode(c.slug, b);
             const QString want = QStringLiteral("cells ") + c.slug + QLatin1Char(' ') + ADR13::chainSignature(m_layout, b);
             if (const auto node = m_graph.node(name)) { if (node->description != want) stale << node->id; continue; }
-            requestNullNode(name, [&] { m_graph.loadLoopback(ADR13::cellChainArgs(m_layout, c.slug, b, n), "libpipewire-module-filter-chain"); });
+            requestNullNode(name, [&] { m_graph.loadLoopback(ADR13::cellChainArgs(m_layout, c.slug, b, n), pw::filterChainModule()); });
             expectEdge(name, QStringLiteral("cells ") + c.name);
         }
     for (int i = 0; i < m_layout.mixes.size(); ++i) {
@@ -680,7 +681,7 @@ void Mixer::applyFx(const QString &slug) {
     const QString args = fx::renderFilterChainArgs(chain, desc, entry, exit, plainName, plainName, slug, isMix);
     qCInfo(lcMixer) << "fx: rendered" << args.length() << "chars" << (isMix ? "(behind the mix sink)" : "(in front of the channel sink)");
     if (args.isEmpty()) return;
-    m_graph.loadLoopback(args, "libpipewire-module-filter-chain");
+    m_graph.loadLoopback(args, pw::filterChainModule());   // ADR 0015: the same module the fragment names
     if (isMix) {
         // FX-6: the chain's tail is the new source for every output edge and for the capture source (MX-3b).
         // Rebuild those edges so they capture kmixdeck.fx.mix.<slug>.out instead of the raw sink — measured
