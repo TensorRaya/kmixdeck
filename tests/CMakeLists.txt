@@ -13,6 +13,10 @@ ecm_add_test(unit/layouttest.cpp
 ecm_add_test(unit/fxtest.cpp
     TEST_NAME fxtest
     LINK_LIBRARIES kmixdeck_core Qt6::Test)
+# UX-18: the R128 analyser's cost must not grow with daemon uptime (mode flags shared with pipewire/meters.cpp).
+ecm_add_test(unit/meterstest.cpp
+    TEST_NAME meterstest
+    LINK_LIBRARIES kmixdeck_core Qt6::Test)
 
 # Frontend smoke: every QML file must load (offscreen, no daemon needed — the client shows "not reachable").
 if(BUILD_KDE_FRONTEND)
@@ -39,7 +43,7 @@ endif()
 # Gemessen 2026-09-21: diese Gruppe laeuft in 17 s, die Audio-Integration in ~25 min.
 # `ctest -L fast` ist das Gate fuer Text-, Doku- und CLI-Aenderungen; das Vollgate
 # gehoert vor einen Commit, der Audioverhalten beruehrt — nicht hinter jede Zeile Kommentar.
-set_tests_properties(mixerlogictest layouttest fxtest PROPERTIES LABELS "fast")
+set_tests_properties(mixerlogictest layouttest fxtest meterstest PROPERTIES LABELS "fast")
 
 # Gate-Label: jeder Test gehoert in genau eins der beiden Gates. Der Filter selbst ist
 # fail-open (fehlendes Label = stilles Ueberspringen), dieser Test macht ihn fail-closed.

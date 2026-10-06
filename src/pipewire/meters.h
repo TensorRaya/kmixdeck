@@ -15,6 +15,10 @@ namespace kmixdeck::pw {
 
 class Graph;
 
+/// UX-18: the libebur128 mode flags every R128 analyser is built with. A function rather than a constant so
+/// the unit test exercises exactly what the daemon uses without pulling <ebur128.h> into this header.
+int loudnessAnalyserMode();
+
 class Meters : public QObject {
     Q_OBJECT
 public:

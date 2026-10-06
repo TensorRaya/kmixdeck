@@ -28,6 +28,17 @@ struct MeterStream {
                                     // "no data yet", not "silence", and showed up as a dropout under load)
 };
 
+// UX-18: HISTOGRAM is not an optimisation, it is what keeps the analyser bounded. Without it libebur128 stores
+// every 100 ms gating block since the analyser was created and walks all of them on each integrated reading,
+// and the analyser lives as long as the daemon (the Stream mix has it on by default). Measured 2026-10-06 with
+// libebur128 1.2.6, 1 kHz stereo tone: memory +1.3 MB per hour of audio (81 MB after 72 h), and one
+// ebur128_loudness_global() took 3 us after 1 min, 160 us after 1 h, 2.7 ms after 8 h, which at 25 Hz is 6.7 %
+// of a core spent on a number that barely moves. With HISTOGRAM: 196 kB flat and 2.8 us per call at any age.
+// The price is the bin width: -19.9 instead of -20.0 LUFS for that tone, inside EBU Tech 3341's ±0.1 LU.
+int loudnessAnalyserMode() {
+    return EBUR128_MODE_I | EBUR128_MODE_S | EBUR128_MODE_M | EBUR128_MODE_TRUE_PEAK | EBUR128_MODE_HISTOGRAM;
+}
+
 // UX-18 (EBU R128 / ITU-R BS.1770): its own capture stream per mix, because a loudness meter needs the real
 // channel layout — the peak meters fold to mono, and BS.1770 weights L/R separately before summing. libebur128
 // keeps the 400 ms / 3 s windows and the gated integration itself; we only feed frames and read back.
@@ -79,8 +90,7 @@ struct Meters::Impl {
         if (l->st && l->rate == info.rate) return;          // renegotiation to the same rate: keep the windows
         if (l->st) ebur128_destroy(&l->st);                  // rate really changed: a stale state would misread
         l->rate = info.rate;
-        l->st = ebur128_init(info.channels, info.rate,
-                             EBUR128_MODE_I | EBUR128_MODE_S | EBUR128_MODE_M | EBUR128_MODE_TRUE_PEAK);
+        l->st = ebur128_init(info.channels, info.rate, loudnessAnalyserMode());
     }
     static pw_stream_events loudEvents() {
         pw_stream_events e{}; e.version = PW_VERSION_STREAM_EVENTS;
