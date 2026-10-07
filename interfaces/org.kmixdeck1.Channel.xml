@@ -17,6 +17,11 @@
     <!-- DV-22: stereo position of the channel, -1 (left) … 0 (centre) … +1 (right); constant-power law on the channel sink; persisted -->
     <property name="Pan" type="d" access="readwrite"/>
     <property name="Muted" type="b" access="readwrite"/>
+    <!-- CT-6: opt-in capture source of this channel alone (kmixdeck.chsource.<slug>, Audio/Source, description
+         "kmixdeck <Name> Channel"), tapped post FX/trim/pan/mute/ducking and before every cell and mix fader.
+         Off by default; persisted. CaptureSource is the node name while it is in the graph, "" otherwise. -->
+    <property name="Capture" type="b" access="readwrite"/>
+    <property name="CaptureSource" type="s" access="read"/>
     <!-- PipeWire node.name, for tools that want to link things themselves -->
     <property name="NodeName" type="s" access="read"/>
     <!-- device reference of a hardware source feeding this channel, or empty (CH-3, ADR 0007/0009):

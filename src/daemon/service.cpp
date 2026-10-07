@@ -69,6 +69,9 @@ void ChannelObject::setColor(const QString &c) { if (!m_mixer->setChannelColor(m
 double ChannelObject::trim() const { return m_mixer->channelTrim(m_slug); }
 double ChannelObject::pan() const { return m_mixer->channelPan(m_slug); }
 void ChannelObject::setPan(double v) { if (v < -1 || v > 1) { rejectProperty(QStringLiteral("Pan"), QStringLiteral("must be -1..1")); return; } m_mixer->setChannelPan(m_slug, v); }
+bool ChannelObject::capture() const { return m_mixer->channelCapture(m_slug); }   // CT-6
+void ChannelObject::setCapture(bool on) { if (!m_mixer->setChannelCapture(m_slug, on)) rejectProperty(QStringLiteral("Capture"), QStringLiteral("no such channel")); }
+QString ChannelObject::captureSource() const { return m_mixer->channelCaptureSource(m_slug); }
 void ChannelObject::setTrim(double v) { if (v < 0 || v > 1) { rejectProperty(QStringLiteral("Trim"), QStringLiteral("must be 0..1")); return; } m_mixer->setChannelTrim(m_slug, v); }
 bool ChannelObject::muted() const { return m_mixer->channelMuted(m_slug); }
 void ChannelObject::setMuted(bool m) { m_mixer->setChannelMuted(m_slug, m); }
@@ -128,6 +131,7 @@ QVariantMap ChannelObject::properties() const {
             // without asking property by property. Leaving Ducking out here made the web UI's state show
             // `undefined` while the bus had the value all along (measured 2026-09-21).
             {QStringLiteral("Ducking"), duckingJson()}, {QStringLiteral("DuckReduction"), duckReduction()},
+            {QStringLiteral("Capture"), capture()}, {QStringLiteral("CaptureSource"), captureSource()},   // CT-6
             {QStringLiteral("Kind"), kind()}};   // CT-8: same lesson as Ducking above — a UI that filters on
                                                  // Kind sees nothing if it is missing from THIS map.
 }

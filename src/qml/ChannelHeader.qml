@@ -24,6 +24,8 @@ Item {
     property string iconName: Mixer.channelIcon(channel)
     property string colorCode: Mixer.channelColor(channel)   // MX-5
     property string group: Mixer.channelGroup(channel)       // CH-8
+    property bool capture: Mixer.channelCapture(channel)     // CT-6
+    property string captureSource: Mixer.channelCaptureSource(channel)
     // Many mixes → narrow column: no icon tile, tighter spacing, no " dB" on the trim read-out (the tooltip has it).
     readonly property bool narrow: width < Kirigami.Units.gridUnit * 16
     // What the row needs without the FX and ducking buttons. Computed from the real controls, not guessed: until
@@ -56,6 +58,8 @@ Item {
             header.iconName = Mixer.channelIcon(slug)
             header.colorCode = Mixer.channelColor(slug)
             header.group = Mixer.channelGroup(slug)
+            header.capture = Mixer.channelCapture(slug)
+            header.captureSource = Mixer.channelCaptureSource(slug)
         }
     }
 
@@ -68,6 +72,16 @@ Item {
     // UX-11: drop an application row here to add this channel to its assignment (CH-12 keeps the others)
     // UX-11 test hook: same call the DropArea makes
     function gestureDrop(appPath) { Mixer.assignApp(appPath, [header.channel], true); return "" }
+    // CT-6 test hook: open the row menu and trigger the real "Separate capture source" item, as a click would
+    function gestureCapture() {
+        ctxMenu.popup()
+        for (let i = 0; i < ctxMenu.count; ++i) {
+            const it = ctxMenu.itemAt(i)
+            if (it && it.objectName === "channelCapture/" + header.channel) { it.toggle(); it.triggered(); ctxMenu.close(); return "" }
+        }
+        ctxMenu.close()
+        return "<no capture item>"
+    }
     DropArea {
         objectName: "channelDrop/" + header.channel
         anchors.fill: parent
@@ -430,6 +444,18 @@ Item {
         QQC2.MenuItem { text: i18n("Hardware input…"); icon.name: "audio-input-microphone"; onTriggered: inMenu.popup() }
         QQC2.MenuItem { text: header.hasFx ? i18n("Effects (active)…") : i18n("Effects…"); icon.name: "view-media-equalizer"; onTriggered: applicationWindow().fxPanelOpen("channel", header.channel) }
         QQC2.MenuItem { text: header.isDucked ? i18n("Ducking (active)…") : i18n("Ducking…"); icon.name: "audio-volume-low"; onTriggered: applicationWindow().duckPanelOpen(header.channel) }
+        QQC2.MenuItem {   // CT-6: this channel as its own capture source (a separate track in OBS)
+            objectName: "channelCapture/" + header.channel
+            text: i18n("Separate capture source")
+            icon.name: "media-record"
+            checkable: true
+            checked: header.capture
+            onTriggered: Mixer.setChannelCapture(header.channel, checked)
+            QQC2.ToolTip.text: header.captureSource.length > 0
+                ? i18n("Recorders and OBS see this channel alone as the input “%1”.", header.captureSource)
+                : i18n("Offer this channel alone as an input for OBS or a recorder, as a separate track.")
+            QQC2.ToolTip.visible: hovered
+        }
         QQC2.MenuItem {
             text: i18n("New applications start here")
             icon.name: "go-jump"

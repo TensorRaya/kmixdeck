@@ -90,6 +90,8 @@ One row of the mixer: an input group at `/org/kmixdeck1/channel/<slug>`. Channel
 | `Trim` | double | readwrite | Channel-wide trim before every mix, linear 0…1 (CH-7). This is *not* the per-mix fader — that is the Cell. |
 | `Pan` | double | readwrite | Stereo position: −1 left, 0 centre, +1 right, constant-power law on the channel sink (DV-22). |
 | `Muted` | bool | readwrite | Channel mute, applied on top of every cell. |
+| `Capture` | bool | readwrite | Opt-in capture source of this channel alone, for multi-track recording (CT-6). Off by default. The source taps the channel after FX, trim, pan, mute and ducking and before every cell and mix fader. |
+| `CaptureSource` | string | read | PipeWire node name of that source (`kmixdeck.chsource.<slug>`, description `kmixdeck <Name> Channel`) while it is in the graph, empty otherwise. This is what OBS or a recorder picks. |
 | `NodeName` | string | read | PipeWire node name of the channel sink, for tools that link things themselves. |
 | `InputDevice` | string | readwrite | What feeds this channel, in `<ref>` grammar (`node.name[:PORT[,PORT]][>L\|>R]`, ADR 0009). Empty = no hardware input. |
 | `InputPresent` | bool | read | False while `InputDevice` is set but the device is unplugged: grey the row out, keep the value (DV-9). |

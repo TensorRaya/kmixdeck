@@ -535,6 +535,9 @@ Kirigami.ApplicationWindow {
         onOpened: { groupField.text = ""; groupField.forceActiveFocus() }
     }
     function groupDialogOpen(slug) { groupDialog.channel = slug; groupDialog.open() }
+    function gestureCapture(slug) {   // CT-6: through the channel row's own menu
+        const h = findByName("channelHeader/" + slug); return h ? h.gestureCapture() : "<no channel header " + slug + ">"
+    }
     function gestureGroup(slug, name) { Mixer.setChannelGroup(slug, name === "none" ? "" : name); return Mixer.lastError }
     function iconDialogOpen(kind, slug) { iconDialog.open(kind, slug) }
     // FX panel opens as a dialog layer over the matrix — narrow windows keep the grid behind them.

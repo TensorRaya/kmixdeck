@@ -109,6 +109,7 @@ QJsonObject Layout::toJson() const {
         // written by a build without the soundboard still loads here.
         if (!c.kind.isEmpty()) o.insert(QStringLiteral("kind"), c.kind);
         if (!c.samples.isEmpty()) { QJsonArray sa; for (const auto &s : c.samples) sa.append(s.toJson()); o.insert(QStringLiteral("samples"), sa); }
+        if (c.capture) o.insert(QStringLiteral("capture"), true);   // CT-6: off writes nothing
         ch.append(o);
     }
     for (const auto &m : mixes) {
@@ -170,7 +171,8 @@ Layout Layout::fromJson(const QJsonObject &o) {
                                         // is accepted as a kind — an unknown one from a newer file reads as a normal
                                         // channel instead of creating something the daemon cannot reconcile.
                                         c.value(QStringLiteral("kind")).toString() == QLatin1String("soundboard") ? QStringLiteral("soundboard") : QString(),
-                                        readSamples(c)}); }
+                                        readSamples(c),
+                                        c.value(QStringLiteral("capture")).toBool(false)}); }   // CT-6
     for (const auto &v : o.value(QStringLiteral("mixes")).toArray()) {
         const auto m = v.toObject(); LayoutMix lm;
         lm.slug = m.value(QStringLiteral("slug")).toString(); lm.name = m.value(QStringLiteral("name")).toString(); lm.icon = m.value(QStringLiteral("icon")).toString();
@@ -489,6 +491,13 @@ QString Layout::toPipewireConf(const char *filterChain) const {
         mod(loopbackArgs(QStringLiteral("Mix: ") + m.name + QStringLiteral(" (capture)"), src + QStringLiteral(".in"), Names::mixNode(m.slug), true, {}, false,
                          src, QString(), {}, false, false,
                          QStringLiteral("node.description = %1 media.class = Audio/Source ").arg(q(QStringLiteral("kmixdeck ") + m.name + QStringLiteral(" Mix")))));
+    }
+    for (const auto &c : channels) {   // CT-6: opt-in capture source per channel, reads the channel sink monitor
+        if (!c.capture) continue;
+        const QString src = EdgeNames::channelSourceNode(c.slug);
+        mod(loopbackArgs(c.name + QStringLiteral(" (capture)"), src + QStringLiteral(".in"), Names::channelNode(c.slug), true, {}, false,
+                         src, QString(), {}, false, false,
+                         QStringLiteral("node.description = %1 media.class = Audio/Source ").arg(q(QStringLiteral("kmixdeck ") + c.name + QStringLiteral(" Channel")))));
     }
     out += QStringLiteral("]\n");
     return out;

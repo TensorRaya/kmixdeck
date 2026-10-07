@@ -1144,6 +1144,22 @@ struct Cli {
             return setProp(pathOf(a[2]), iface, "Pan", v, &e) ? Ok : fail(Rejected, e);
         }
         if (sub == "mute" && ch) { bool b; if (!parseBool(a, 3, &b)) return fail(Usage, "on|off"); return setProp(pathOf(a[2]), iface, "Muted", b, &e) ? Ok : fail(Rejected, e); }
+        if (sub == "capture" && ch) {   // CT-6: channel capture <slug> [on|off]
+            QDBusInterface chObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
+            if (a.size() >= 4) {
+                const QString w = a[3].toLower();
+                if (w != QLatin1String("on") && w != QLatin1String("off")) return fail(Usage, QStringLiteral("expected 'on' or 'off', got '%1'").arg(a[3]));
+                if (!setProp(pathOf(a[2]), iface, "Capture", w == QLatin1String("on"), &e)) return fail(Rejected, e);
+            }
+            const bool on = chObj.property("Capture").toBool();
+            // the source is built asynchronously; what OBS will see is the node name, known before it registers
+            const QString node = on ? QStringLiteral("kmixdeck.chsource.") + a[2] : QString();
+            if (g_json) out << QJsonDocument(QJsonObject{{QStringLiteral("capture"), on}, {QStringLiteral("source"), node},
+                                                         {QStringLiteral("present"), !chObj.property("CaptureSource").toString().isEmpty()}}).toJson(QJsonDocument::Compact) << "\n";
+            else out << (on ? node : QStringLiteral("off")) << "\n";
+            out.flush();
+            return Ok;
+        }
         if (sub == "input" && ch) {   // channel input <slug> [<node[:POS,POS]>|none] — ADR 0009 refs
             if (a.size() < 4) { const QString ref = unwrap(objs.value(pathOf(a[2])).value("InputDevice")).toString(); if (g_json) out << QJsonDocument(QJsonObject{{"InputDevice", ref}}).toJson(); else out << (ref.isEmpty() ? QStringLiteral("none") : ref) << "\n"; return Ok; }
             QString dev = a[3] == "none" ? QString() : a[3];

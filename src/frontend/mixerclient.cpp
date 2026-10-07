@@ -188,6 +188,9 @@ void MixerClient::onNameOwnerChanged(const QString &name, const QString &, const
 void MixerClient::setChannelPan(const QString &slug, double pan) {   // DV-22
     setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Pan"), std::clamp(pan, -1.0, 1.0));
 }
+void MixerClient::setChannelCapture(const QString &slug, bool on) {   // CT-6
+    setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Capture"), on);
+}
 void MixerClient::setChannelTrim(const QString &slug, double cubic) {   // CH-7
     const double c = std::clamp(cubic, 0.0, 1.0);
     setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Trim"), c * c * c);

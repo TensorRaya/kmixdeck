@@ -1003,3 +1003,40 @@ def test_ux18_silence_after_a_tone_reads_as_the_floor_not_as_minus_2432_db(stack
         assert float(w["lufsI/floor.text"]) < -10.0, f"integrated should still hold the programme value: {w}"
     finally:
         stack.cli("mix", "remove", "floor", check=False)
+
+
+def test_ct6_channel_capture_switch_in_the_window_the_routing_page_and_the_web(stack):
+    """CT-6 is tier full: CLI (test_routing), KDE window and web UI. The switch is flipped through each frontend's own
+    menu entry and read back from the bus, so a menu that only looks right fails here."""
+    from test_web import Web, _click, _menu_click
+    from chrome_driver import Chrome, CHROME
+    src = "kmixdeck.chsource.voice"
+    try:
+        # window: the row menu item turns it on, the bus and the graph agree
+        g = kde(stack, "--gesture", "capture:voice", open_page="mixer")
+        assert g == ["gesture capture:voice -> ok"], g
+        wait_for(lambda: stack.cli("channel", "capture", "voice", json_out=True)["capture"] is True, timeout=4.0, what="Capture on after the window click")
+        stack.pw.wait_node(src)
+        # routing page: the source has its own row, named after the channel
+        r = window(stack, "routingChannelCapture/voice.title", "routingChannelCapture/voice.subtitle", open_page="routing")
+        assert "Voice" in r.get("routingChannelCapture/voice.title", ""), r
+        # the same menu item turns it off again
+        assert kde(stack, "--gesture", "capture:voice", open_page="mixer") == ["gesture capture:voice -> ok"]
+        wait_for(lambda: stack.pw.node(src) is None, timeout=4.0, what="source gone after the second window click")
+        assert stack.cli("channel", "capture", "voice", json_out=True)["capture"] is False
+        assert window(stack, "routingChannelCapture/voice.title", open_page="routing").get("routingChannelCapture/voice.title", "<not found>").startswith("<not found")
+        # web UI: the channel menu entry does the same
+        if not CHROME: pytest.skip("no chrome/chromium for the web UI")
+        web = Web(stack, token="")
+        try:
+            with Chrome(web.url, size=(1280, 800)) as ch:
+                ch.wait("window.kmixdeck && window.kmixdeck.state.connected && document.querySelector('[data-probe=\"channelMenuButton/voice\"]')", 15)
+                _click(ch, "channelMenuButton/voice"); _menu_click(ch, "Separate capture source")
+                wait_for(lambda: stack.cli("channel", "capture", "voice", json_out=True)["capture"] is True, timeout=4.0, what="Capture on after the web click")
+                stack.pw.wait_node(src)
+                _click(ch, "channelMenuButton/voice"); _menu_click(ch, "Separate capture source")
+                wait_for(lambda: stack.pw.node(src) is None, timeout=4.0, what="source gone after the second web click")
+        finally:
+            web.close()
+    finally:
+        stack.cli("channel", "capture", "voice", "off", check=False)

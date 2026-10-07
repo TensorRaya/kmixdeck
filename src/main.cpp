@@ -246,6 +246,7 @@ int main(int argc, char *argv[])
                 }
                 else if (op == QLatin1String("trim") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureTrim", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
                 else if (op == QLatin1String("group") && a.size() == 2) QMetaObject::invokeMethod(win, "gestureGroup", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]), Q_ARG(QVariant, a[1]));
+                else if (op == QLatin1String("capture") && a.size() == 1) QMetaObject::invokeMethod(win, "gestureCapture", Q_RETURN_ARG(QVariant, ret), Q_ARG(QVariant, a[0]));   // CT-6
                 // Layout check: overlapping text/controls in the main window, or in the dialog-layer window openZiel made.
                 else if (op == QLatin1String("layout") && a.size() >= 1 && a[0] == QLatin1String("overlaps")) {
                     QQuickItem *start = nullptr;

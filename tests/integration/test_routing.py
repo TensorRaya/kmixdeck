@@ -15,6 +15,7 @@ import pytest
 from test_service_cli import Stack, make_fake_sink, out_link_target
 from pw_sandbox import start_private_pipewire
 from waiting import wait_for
+from test_ports import wait_level
 
 HOT, SILENT = -30.0, -60.0
 
@@ -394,3 +395,144 @@ def test_mx2_cell_state_survives_a_foreign_writer(stack):
         assert log.count("written behind our back") >= 2, "the daemon must log what it undid"
     finally:
         stack.cli("channel", "remove", "probe", check=False)
+
+
+def _chsource_level(stack, slug):
+    """RMS of kmixdeck.chsource.<slug>, both sides, via the sandbox recorder (links are checked, never assumed)."""
+    out = stack.pw.runtime_dir / f"chsrc-{slug}-{time.time_ns()}.wav"
+    src = f"kmixdeck.chsource.{slug}"
+    return stack.pw.rms_db(stack.pw._record(out, 2, [(f"{src}:capture_FL", "pw-record:input_FL"), (f"{src}:capture_FR", "pw-record:input_FR")], 1.5, src))
+
+
+def _fake_mic(stack, name):
+    """A real Audio/Source with a tone behind it: null sink → pw-loopback → Audio/Source (same recipe as the CH-3 test)."""
+    subprocess.run(["pw-cli", "create-node", "adapter", "{ factory.name=support.null-audio-sink node.name=%s.feed media.class=Audio/Sink audio.position=[FL FR] object.linger=true monitor.channel-volumes=true }" % name],
+                   env=stack.pw.env, capture_output=True)
+    stack.pw.wait_node(f"{name}.feed")
+    lb = subprocess.Popen(["pw-loopback", "-n", name,
+                           "--capture-props", "{ node.name=%s.cap node.target=%s.feed stream.capture.sink=true node.passive=true audio.position=[FL FR] }" % (name, name),
+                           "--playback-props", '{ node.name=%s node.description="CT-6 test mic" media.class=Audio/Source audio.position=[FL FR] }' % name],
+                          env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    stack.pw.wait_node(name)
+    return lb, stack.pw.play_into(f"{name}.feed")
+
+
+def _restart_and_wait_new(stack, name):
+    """Restart the daemon and wait for a NEW node of that name. A module the daemon loaded at runtime is its own and
+    dies with it; the old node can still be in the registry when the name is first seen again, and a recorder linked
+    to it then reads nothing (measured 2026-10-07: pw-record rc=1, 44-byte file, links 2/2)."""
+    old = stack.pw.node(name)
+    old_id = old["id"] if old else None
+    stack.restart_daemon()
+    return wait_for(lambda: (n := stack.pw.node(name)) is not None and n["id"] != old_id and n, timeout=8.0, what=f"new {name} after daemon restart")
+
+
+def test_ct6_channel_capture_source_is_a_direct_out_through_the_whole_life_cycle(stack):
+    """CT-6 (MAY part): a channel can be its own capture source, for one track per channel in OBS.
+
+    Tap point is the channel sink monitor: post trim/mute, before every cell and mix fader. Counter-proofs: trim moves
+    the source, a cell fader and the mix master do not, another channel's signal is not in it. Then AR-10, with audio
+    measured at the source in every step: input unplugged (config kept, source silent) → replug (audio back, no user
+    action) → daemon restart with the device present → restart with the device absent (still in layout.json and the
+    generated conf) → plug in after that restart. Off removes the node; channel remove takes it along, undo brings it
+    back; the layout export carries the flag."""
+    from test_lifecycle import conf, layout
+    mic, src = "ct6.mic", "kmixdeck.chsource.voice"
+    lb = play = game = None
+    try:
+        # opt-in: nothing until asked for
+        assert stack.pw.node(src) is None and "kmixdeck.chsource." not in conf(stack)
+        lb, play = _fake_mic(stack, mic)
+        stack.cli("channel", "input", "voice", mic)
+        stack.pw.wait_node("kmixdeck.in.voice")
+        assert stack.cli("channel", "capture", "voice", "on").stdout.strip() == src
+        stack.pw.wait_node(src)
+        props = stack.pw.node(src)["info"]["props"]
+        assert props.get("media.class") == "Audio/Source" and props.get("node.description") == "kmixdeck Voice Channel", props
+        st = stack.cli("channel", "capture", "voice", json_out=True)
+        assert st == {"capture": True, "source": src, "present": True}, st
+        wait_for(lambda: next(c for c in stack.cli("status", json_out=True)["channels"] if c["Slug"] == "voice").get("CaptureSource") == src,
+                 timeout=4.0, what="Channel.CaptureSource on the bus")
+        assert layout(stack)["channels"][2].get("capture") is True and f'node.name = "{src}"' in conf(stack)
+
+        # 1) appears: the mic is in the source
+        hot = wait_level(lambda: _chsource_level(stack, "voice"), lambda v: v > HOT, what="voice source, mic playing")
+        # counter-proofs: cell fader and mix master are AFTER the tap, trim is before it
+        stack.cli("cell", "set", "voice", "stream", "0.0"); stack.cli("cell", "set", "voice", "monitor", "0.0"); stack.cli("mix", "volume", "stream", "0.0"); settle()
+        after_faders = _chsource_level(stack, "voice")
+        assert abs(after_faders - hot) < 1.0, f"cell + master faders must not touch the channel source (hot {hot:.1f}, after {after_faders:.1f})"
+        stack.cli("cell", "set", "voice", "stream", "1.0"); stack.cli("cell", "set", "voice", "monitor", "1.0"); stack.cli("mix", "volume", "stream", "1.0")
+        stack.cli("channel", "trim", "voice", "-20dB")
+        wait_level(lambda: _chsource_level(stack, "voice"), lambda v: hot - 25 < v < hot - 15, what="voice source after -20 dB trim")
+        stack.cli("channel", "trim", "voice", "1.0")
+        wait_level(lambda: _chsource_level(stack, "voice"), lambda v: abs(v - hot) < 1.0, what="voice source back at unity")
+        game = stack.pw.play_into("kmixdeck.channel.game")
+        play.kill(); play.wait(); play = None
+        assert wait_level(lambda: _chsource_level(stack, "voice"), lambda v: v < SILENT, what="voice source, only game playing") < SILENT, \
+            "another channel's signal must not be in this channel's source"
+        game.kill(); game.wait(); game = None
+        play = stack.pw.play_into(f"{mic}.feed")
+        wait_level(lambda: _chsource_level(stack, "voice"), lambda v: v > HOT, what="voice source, mic again")
+
+        # 2) unplug: configuration kept, source still there, silent
+        lb.kill(); lb.wait(); lb = None
+        wait_for(lambda: stack.pw.node(mic) is None, timeout=4.0, what="mic gone")
+        assert stack.cli("channel", "capture", "voice", json_out=True)["capture"] is True
+        assert stack.pw.node(src) is not None, "the source must outlive the device behind the channel"
+        assert wait_level(lambda: _chsource_level(stack, "voice"), lambda v: v < SILENT, what="voice source, mic unplugged") < SILENT
+        # 3) replug: audio back without user action
+        play.kill(); play.wait(); play = None
+        subprocess.run(["pw-cli", "destroy", str(stack.pw.node_id(f"{mic}.feed"))], env=stack.pw.env, capture_output=True)
+        wait_for(lambda: stack.pw.node(f"{mic}.feed") is None, timeout=4.0, what="mic feed gone")
+        lb, play = _fake_mic(stack, mic)
+        wait_level(lambda: _chsource_level(stack, "voice"), lambda v: v > HOT, what="voice source after replug")
+
+        # 4) daemon restart, device present: same source, same audio
+        _restart_and_wait_new(stack, src)
+        assert stack.cli("channel", "capture", "voice", json_out=True)["capture"] is True
+        wait_level(lambda: _chsource_level(stack, "voice"), lambda v: v > HOT, what="voice source after daemon restart")
+
+        # 5) daemon restart, device absent: still in layout.json and in the generated conf, source silent
+        play.kill(); play.wait(); play = None
+        lb.kill(); lb.wait(); lb = None
+        subprocess.run(["pw-cli", "destroy", str(stack.pw.node_id(f"{mic}.feed"))], env=stack.pw.env, capture_output=True)
+        wait_for(lambda: stack.pw.node(mic) is None and stack.pw.node(f"{mic}.feed") is None, timeout=4.0, what="mic and feed gone")
+        _restart_and_wait_new(stack, src)
+        assert layout(stack)["channels"][2].get("capture") is True and f'node.name = "{src}"' in conf(stack)
+        assert stack.cli("channel", "capture", "voice", json_out=True) == {"capture": True, "source": src, "present": True}
+        # No level read here, on purpose: in this state the recreated input edge (capture half suspended) stalls the
+        # whole graph, so EVERY capture source delivers no samples at all — kmixdeck.source.stream too, with CT-6 off.
+        # That is an older bug outside CT-6, measured and filed separately; step 6 below proves the source recovers.
+        # 6) plug in after that restart: audio again
+        lb, play = _fake_mic(stack, mic)
+        wait_level(lambda: _chsource_level(stack, "voice"), lambda v: v > HOT, what="voice source, mic plugged in after restart")
+
+        # export carries the flag (CT-7)
+        exp = json.loads(stack.cli("export").stdout)
+        assert next(c for c in exp["channels"] if c["slug"] == "voice").get("capture") is True
+
+        # off: the node goes, the layout forgets it
+        assert stack.cli("channel", "capture", "voice", "off").stdout.strip() == "off"
+        wait_for(lambda: stack.pw.node(src) is None, timeout=4.0, what="source removed by off")
+        assert "capture" not in layout(stack)["channels"][2] and "kmixdeck.chsource." not in conf(stack)
+
+        # channel remove takes it along, undo brings it back (CH-9)
+        stack.cli("channel", "add", "Stem")
+        stack.cli("channel", "capture", "stem", "on")
+        stack.pw.wait_node("kmixdeck.chsource.stem")
+        stack.cli("channel", "remove", "stem")
+        wait_for(lambda: stack.pw.node("kmixdeck.chsource.stem") is None, timeout=4.0, what="source gone with its channel")
+        stack.cli("undo")
+        stack.pw.wait_node("kmixdeck.chsource.stem", timeout=8.0)
+        assert stack.cli("channel", "capture", "stem", json_out=True)["capture"] is True
+        stack.cli("channel", "remove", "stem")
+        wait_for(lambda: stack.pw.node("kmixdeck.chsource.stem") is None, timeout=4.0, what="source gone again")
+        # the mix capture source is untouched by all of this (own prefix, no prefix match)
+        assert stack.pw.node("kmixdeck.source.stream") is not None
+    finally:
+        for p in (play, game, lb):
+            if p: p.kill(); p.wait()
+        stack.cli("channel", "capture", "voice", "off", check=False)
+        stack.cli("channel", "input", "voice", "none", check=False)
+        stack.cli("channel", "trim", "voice", "1.0", check=False)
+        stack.cli("mix", "volume", "stream", "1.0", check=False)

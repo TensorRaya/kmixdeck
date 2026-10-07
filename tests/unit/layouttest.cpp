@@ -16,6 +16,7 @@ class LayoutTest : public QObject {
     static Layout full() {
         Layout l = Layout::starter();
         auto &game = l.channels[0]; game.color = QStringLiteral("#ff8800"); game.group = QStringLiteral("Media"); game.pan = -0.5;
+        game.capture = true;   // CT-6
         fx::Chain fxc; fx::Effect e; e.type = QStringLiteral("highpass"); e.params = {{QStringLiteral("freq"), 120.0}}; e.enabled = false; fxc.effects.push_back(e);
         game.fx = fxc;
         auto &stream = l.mixes[1]; stream.color = QStringLiteral("#00aaff");
@@ -41,6 +42,7 @@ private Q_SLOTS:
         const Layout b = Layout::fromJson(QJsonDocument::fromJson(QJsonDocument(a.toJson()).toJson()).object());
         QCOMPARE(QJsonDocument(b.toJson()).toJson(), QJsonDocument(a.toJson()).toJson());   // idempotent: json(from(json(a))) == json(a)
         QCOMPARE(b.channels.size(), 3); QCOMPARE(b.channels[0].color, QStringLiteral("#ff8800")); QCOMPARE(b.channels[0].group, QStringLiteral("Media"));
+        QVERIFY(b.channels[0].capture); QVERIFY(!b.channels[1].capture);   // CT-6
         QCOMPARE(b.channels[0].pan, -0.5); QCOMPARE(b.channels[0].fx.effects.size(), 1); QVERIFY(!b.channels[0].fx.effects[0].enabled); QCOMPARE(b.channels[0].fx.effects[0].params.value(QStringLiteral("freq")), 120.0);
         QCOMPARE(b.mixes[1].outputs.size(), 2); QCOMPARE(b.mixes[1].outputs[0].positions, QStringList({QStringLiteral("AUX3"), QStringLiteral("AUX4")}));
         QCOMPARE(b.mixes[1].outputs[1].side, QStringLiteral("R")); QVERIFY(b.mixes[1].outputs[1].muted); QCOMPARE(b.mixes[1].outputs[0].trim, 0.5);
@@ -134,6 +136,24 @@ private Q_SLOTS:
         for (const auto &m : l.mixes) QVERIFY(conf.contains(QStringLiteral("node.name = \"kmixdeck.tap.%1\"").arg(m.slug)));
         QVERIFY(!conf.contains(QStringLiteral("kmixdeck.link.")));
         QVERIFY(conf.contains(QStringLiteral("kmixdeck.virt.desk")));
+    }
+    void channelCaptureSourceIsOptIn() {
+        // CT-6: off by default — no key in layout.json, no node in the conf, so an existing layout renders the same
+        // graph as before (the golden above pins that for the starter). On: exactly one Audio/Source per channel that
+        // asks for it, tapping that channel's sink and nothing else, under its own prefix (never kmixdeck.source.*).
+        Layout l = Layout::starter();
+        QVERIFY(!l.toJson().value(QStringLiteral("channels")).toArray().at(0).toObject().contains(QStringLiteral("capture")));
+        QVERIFY(!l.toPipewireConf().contains(QStringLiteral("kmixdeck.chsource.")));
+        l.channels[2].capture = true;   // voice
+        const QString conf = l.toPipewireConf();
+        QCOMPARE(int(conf.count(QStringLiteral("node.name = \"kmixdeck.chsource.voice\""))), 1);
+        QCOMPARE(int(conf.count(QStringLiteral("node.name = \"kmixdeck.chsource."))), 2);   // the source and its .in capture half, nothing else
+        QVERIFY(conf.contains(QStringLiteral("node.name = \"kmixdeck.chsource.voice.in\" media.name = \"kmixdeck.chsource.voice.in\" node.target = \"kmixdeck.channel.voice\"")));
+        QVERIFY(conf.contains(QStringLiteral("node.description = \"kmixdeck Voice Channel\" media.class = Audio/Source")));
+        const QJsonObject j = l.toJson().value(QStringLiteral("channels")).toArray().at(2).toObject();
+        QCOMPARE(j.value(QStringLiteral("capture")).toBool(), true);
+        QVERIFY(Layout::fromJson(l.toJson()).channels[2].capture);
+        QVERIFY(!Layout::fromJson(l.toJson()).channels[0].capture);
     }
     void pipewireConfNamesTheChosenFilterChain() {
         // DV-34 / ADR 0015: every filter-chain entry (cells AND effects) carries the module the daemon loads, and only

@@ -875,6 +875,24 @@ void Mixer::setChannelPan(const QString &slug, double pan) {
     auto *c = m_layout.channel(slug); if (!c) return;
     c->pan = std::clamp(pan, -1.0, 1.0); saveLayout(); applyChannelGain(slug); Q_EMIT channelChanged(slug);
 }
+bool Mixer::channelCapture(const QString &slug) const { const auto *c = m_layout.channel(slug); return c && c->capture; }
+QString Mixer::channelCaptureSource(const QString &slug) const {   // CT-6
+    const QString src = EdgeNames::channelSourceNode(slug);
+    return channelCapture(slug) && m_graph.node(src) ? src : QString();
+}
+bool Mixer::setChannelCapture(const QString &slug, bool on) {   // CT-6
+    auto *c = m_layout.channel(slug); if (!c) return false;
+    if (c->capture == on) return true;
+    c->capture = on; saveLayout();
+    if (on) ensureEdgeLoopbacks();
+    else {
+        const QString src = EdgeNames::channelSourceNode(slug);
+        destroyOurNodes([&](const QString &n) { return n == src || n == src + QStringLiteral(".in"); });
+        m_edges.remove(src); m_edgePending.remove(src);
+    }
+    Q_EMIT channelChanged(slug);
+    return true;
+}
 void Mixer::setChannelTrim(const QString &slug, double linear) {
     auto it = m_sinks.find(Names::channelNode(slug)); if (it == m_sinks.end()) return;
     const float before = it->volume;
@@ -1476,6 +1494,18 @@ void Mixer::ensureEdgeLoopbacks() {
         });
         if (!m_graph.node(src)) expectEdge(src, QStringLiteral("Mix: ") + m.name + QStringLiteral(" (capture)"));
     }
+    for (const auto &c : m_layout.channels) {   // CT-6: identical args to Layout::toPipewireConf
+        if (!c.capture) continue;
+        const QString src = EdgeNames::channelSourceNode(c.slug);
+        if (m_graph.node(src)) continue;   // same order as the mix source: the sink is requested in reconcile() first
+        requestNullNode(src, [&] {
+            m_graph.loadLoopback(loopbackArgs(c.name + QStringLiteral(" (capture)"), src + QStringLiteral(".in"), Names::channelNode(c.slug), true, {}, false,
+                                              src, QString(), {}, false, false,
+                                              QStringLiteral("node.description = %1 media.class = Audio/Source ")
+                                                  .arg(QLatin1Char('"') + QStringLiteral("kmixdeck ") + c.name + QStringLiteral(" Channel\""))));
+        });
+        expectEdge(src, c.name + QStringLiteral(" (capture)"));
+    }
 }
 void Mixer::ensureEdgeLoopbackForInput(const QString &slug) {
     const auto *in = m_layout.input(slug);
@@ -1947,7 +1977,8 @@ void Mixer::snapshotForUndo(const QString &kind, const QString &slug) {
     if (isCh) {
         for (const auto &i : m_layout.inputs) if (i.channel == slug || i.slug == slug)
             inputs.append(QJsonObject{{QStringLiteral("slug"), i.slug}, {QStringLiteral("name"), i.name}, {QStringLiteral("device"), i.device.toJson()}, {QStringLiteral("channel"), i.channel}});
-        if (auto *c = m_layout.channel(slug)) u.insert(QStringLiteral("layout"), QJsonObject{{QStringLiteral("slug"), c->slug}, {QStringLiteral("name"), c->name}, {QStringLiteral("icon"), c->icon}});
+        if (auto *c = m_layout.channel(slug)) u.insert(QStringLiteral("layout"), QJsonObject{{QStringLiteral("slug"), c->slug}, {QStringLiteral("name"), c->name}, {QStringLiteral("icon"), c->icon},
+                                                                                  {QStringLiteral("capture"), c->capture}});   // CT-6
         u.insert(QStringLiteral("wasDefault"), m_layout.defaultChannel == slug);
         // channel trim/mute live on the channel sink
         if (auto s = m_sinks.constFind(Names::channelNode(slug)); s != m_sinks.constEnd()) { u.insert(QStringLiteral("trim"), s->volume); u.insert(QStringLiteral("muted"), s->mute); }
@@ -1977,7 +2008,10 @@ bool Mixer::undo() {
     const QString slug = lay.value(QStringLiteral("slug")).toString();
     const bool isCh = u.value(QStringLiteral("kind")).toString() == QLatin1String("channel");
     if (slug.isEmpty() || (isCh ? m_layout.channel(slug) != nullptr : m_layout.mix(slug) != nullptr)) { Q_EMIT undoChanged(); return false; }
-    if (isCh) m_layout.channels.push_back(LayoutChannel::make(slug, lay.value(QStringLiteral("name")).toString(), lay.value(QStringLiteral("icon")).toString()));
+    if (isCh) {
+        m_layout.channels.push_back(LayoutChannel::make(slug, lay.value(QStringLiteral("name")).toString(), lay.value(QStringLiteral("icon")).toString()));
+        m_layout.channels.back().capture = lay.value(QStringLiteral("capture")).toBool(false);   // CT-6
+    }
     else {
         LayoutMix m; m.slug = slug; m.name = lay.value(QStringLiteral("name")).toString(); m.icon = lay.value(QStringLiteral("icon")).toString();
         for (const auto &d : lay.value(QStringLiteral("outputs")).toArray()) m.outputs.push_back(DeviceRef::fromJson(d.toObject()));
@@ -2072,9 +2106,10 @@ void Mixer::removeChannel(const QString &slug) {
     saveLayout();
     destroyOurNodes([&](const QString &n) {
         return n == ADR13::chainNode(slug) || n.startsWith(ADR13::chainNode(slug) + QLatin1Char('.')) || n.startsWith(ADR13::chainNode(slug) + QLatin1Char('@')) || n == Names::channelNode(slug)
-            || n == EdgeNames::inputNode(slug) || n == EdgeNames::inputNode(slug) + QStringLiteral(".in");
+            || n == EdgeNames::inputNode(slug) || n == EdgeNames::inputNode(slug) + QStringLiteral(".in")
+            || n == EdgeNames::channelSourceNode(slug) || n == EdgeNames::channelSourceNode(slug) + QStringLiteral(".in");   // CT-6
     });
-    m_edges.remove(EdgeNames::inputNode(slug));
+    m_edges.remove(EdgeNames::inputNode(slug)); m_edges.remove(EdgeNames::channelSourceNode(slug));
     m_channels.removeIf([&](const Channel &c) { return c.slug == slug; }); Q_EMIT layoutChanged(); Q_EMIT inputsChanged();
 }
 void Mixer::removeMix(const QString &slug) {
@@ -2209,6 +2244,11 @@ void Mixer::onNode(const pw::NodeInfo &n) {
             }
         }
     }
+    else if (n.name.startsWith(QLatin1String("kmixdeck.chsource."))) {   // CT-6: tell clients the source is there
+        const bool edgeNew = !m_edges.contains(n.name);
+        m_edges[n.name] = n;
+        if (edgeNew) Q_EMIT channelChanged(n.name.mid(18));
+    }
     else if (n.name.startsWith(QLatin1String("kmixdeck.in.")) || n.name.startsWith(QLatin1String("kmixdeck.out.")) || n.name.startsWith(QLatin1String("kmixdeck.source."))) {
         const bool edgeNew = !m_edges.contains(n.name);
         m_edges[n.name] = n;                                    // device-edge playback side (DV-14 volume is applied here)
@@ -2281,6 +2321,10 @@ void Mixer::onNodeRemoved(uint32_t id) {
     // CH-12 relays follow the app node: gone → tear the relay down (see ensureAppRelays for why a lingering one hurts)
     for (const auto &la : m_layout.apps) if (la.nodeName == name && la.channels.size() > 1) removeAppRelays(la);
     if (m_edges.remove(name)) for (const auto &m : m_mixes) if (name == EdgeNames::outputNode(m.slug, 0) || name == EdgeNames::sourceNode(m.slug)) { Q_EMIT mixChanged(m.slug); break; }
+    if (name.startsWith(QLatin1String("kmixdeck.chsource.")) && !name.endsWith(QLatin1String(".in"))) {   // CT-6
+        Q_EMIT channelChanged(name.mid(18));
+        if (m_connected) QTimer::singleShot(0, this, [this] { ensureEdgeLoopbacks(); });   // still wanted → rebuilt; off → no-op
+    }
     // An edge we destroyed on purpose (port subset changed, ADR 0009) is rebuilt as soon as PipeWire confirms it
     // is gone — destroyObject() is asynchronous, so ensureEdgeLoopbacks() right after it would still see the old node.
     if (m_connected && (name.startsWith(QLatin1String("kmixdeck.out.")) || name.startsWith(QLatin1String("kmixdeck.in.")) || (name.startsWith(QLatin1String("kmixdeck.virt.")) && !name.endsWith(QLatin1String(".out")))) && !name.endsWith(QLatin1String(".in")))

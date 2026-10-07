@@ -152,22 +152,26 @@ Kirigami.ScrollablePage {
                         for (const o of Mixer.mixOutputs(m)) rows.push({ key: m + "|" + o, mix: m, dev: o, capture: false })
                         rows.push({ key: m + "|capture", mix: m, dev: Mixer.mixCaptureSource(m), capture: true })
                     }
+                    for (const c of page.channels)   // CT-6: a channel with its own capture source, straight from the channel
+                        if (Mixer.channelCapture(c)) rows.push({ key: c + "|chcapture", mix: "", channel: c, dev: Mixer.channelCaptureSource(c), capture: true })
                     return rows
                 }
                 delegate: Node {
                     required property var modelData
                     kind: "output"; key: modelData.key
                     icon: modelData.capture ? "camera-video" : (modelData.dev === Mixer.listeningDevice ? "audio-headphones" : "audio-speakers")
-                    title: modelData.capture ? i18n("Capture: %1", Mixer.mixName(modelData.mix)) : Mixer.deviceRefShort(modelData.dev)
+                    objectName: modelData.channel ? "routingChannelCapture/" + modelData.channel : ""   // CT-6 probe
+                    title: modelData.capture ? i18n("Capture: %1", modelData.channel ? Mixer.channelName(modelData.channel) : Mixer.mixName(modelData.mix)) : Mixer.deviceRefShort(modelData.dev)
                     subtitle: {
+                        if (modelData.channel) return i18n("this channel alone, for OBS")   // CT-6: no mix in between, so no edge from the mix column
                         if (modelData.capture) return i18n("for OBS / Discord")
                         if (modelData.dev === Mixer.listeningDevice) return i18n("what I hear")
                         if (!Mixer.mixOutputPresent(modelData.mix)) return i18n("unplugged")
                         const sd = Mixer.refSide(modelData.dev)
                         return sd === "L" ? i18n("left of %1 only", Mixer.mixName(modelData.mix)) : sd === "R" ? i18n("right of %1 only", Mixer.mixName(modelData.mix)) : ""
                     }
-                    meterKey: "out/" + modelData.mix
-                    dim: !modelData.capture && !Mixer.mixOutputPresent(modelData.mix)
+                    meterKey: modelData.channel ? "channel/" + modelData.channel : "out/" + modelData.mix
+                    dim: modelData.channel ? modelData.dev.length === 0 : (!modelData.capture && !Mixer.mixOutputPresent(modelData.mix))
                     // A5: one-port output → pads decide which side of the mix goes there
                     sided: !modelData.capture && Mixer.refPositions(modelData.dev).length === 1
                     sideRef: modelData.capture ? "" : modelData.dev

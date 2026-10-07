@@ -215,6 +215,13 @@ documents it cannot parse and keeps the current layout.
 `channel pan <slug> [<-1..1>|L|C|R]`
 : Stereo position (DV-22). Without a value: prints it.
 
+`channel capture <slug> [on|off]`
+: Gives this channel its own capture source, so OBS or a recorder can take it as a separate track (CT-6).
+  The source is `kmixdeck.chsource.<slug>`, listed as "kmixdeck <Name> Channel". It carries the channel after
+  its effects, trim, pan, mute and ducking, before any cell or mix fader. Off by default. Prints the node name,
+  or `off`.
+> kmixdeck channel capture voice on     # OBS now lists "kmixdeck Voice Channel"
+
 `channel default [<slug>|none]`
 : Where never-seen applications land (CH-5).
 

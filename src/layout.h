@@ -94,6 +94,9 @@ struct LayoutChannel {
     // a POSITIONAL braced initialiser, so inserting one in the middle silently shifts every value after it.
     QString kind;                 // "" / "input" = normal channel, "soundboard" = CT-8
     QVector<LayoutSample> samples;// CT-8: registered samples, only ever non-empty on a soundboard channel
+    // CT-6: an extra capture source for this channel alone (one stem per channel for multi-track recording). Off by
+    // default (opt-in rule): a layout without the key renders the same graph as before. Last field, see above.
+    bool capture = false;
     bool isSoundboard() const { return kind == QLatin1String("soundboard"); }
     static LayoutChannel make(const QString &slug, const QString &name, const QString &icon = {}) { LayoutChannel c; c.slug = slug; c.name = name; c.icon = icon; return c; }
 };
@@ -207,6 +210,10 @@ inline QString outputNode(const QString &mixSlug, int index) {
                       : QStringLiteral("kmixdeck.out.%1.%2").arg(mixSlug).arg(index);
 }
 inline QString sourceNode(const QString &mixSlug) { return QStringLiteral("kmixdeck.source.") + mixSlug; }
+/// CT-6: the per-channel capture source. Its own prefix, so no prefix match on kmixdeck.source.<mix> or
+/// kmixdeck.channel.<ch> ever catches it. Taps the channel sink monitor: post FX, trim, pan, mute and ducking,
+/// before every cell and mix fader — a direct out.
+inline QString channelSourceNode(const QString &chSlug) { return QStringLiteral("kmixdeck.chsource.") + chSlug; }
 /// DV-29: the pass-through of a virtual device — what apps play into `.out` port N appears on the source's port N,
 /// so a channel wired to the device hears the app (Loopback's "virtual device" semantics). One loopback per device.
 inline QString virtualPassNode(const QString &virtSlug) { return QStringLiteral("kmixdeck.virt.") + virtSlug + QStringLiteral(".pass"); }   // only "<pass>.in" exists as a node; the playback half is inputNode()

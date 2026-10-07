@@ -98,6 +98,10 @@ public:
     Q_INVOKABLE bool   channelMuted(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Muted")).toBool(); }
     Q_INVOKABLE double channelPan(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Pan")).toDouble(); }   // DV-22
     Q_INVOKABLE void   setChannelPan(const QString &slug, double pan);
+    // CT-6: opt-in capture source per channel; channelCaptureSource is "" until the node is in the graph
+    Q_INVOKABLE bool    channelCapture(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Capture")).toBool(); }
+    Q_INVOKABLE QString channelCaptureSource(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("CaptureSource")).toString(); }
+    Q_INVOKABLE void    setChannelCapture(const QString &slug, bool on);
     Q_INVOKABLE double channelTrim(const QString &slug) const { return std::cbrt(m_channels.value(slug).value(QStringLiteral("Trim"), 1.0).toDouble()); }   // CH-7, cubic like every fader
     Q_INVOKABLE void   setChannelTrim(const QString &slug, double cubic);
     Q_INVOKABLE void   addChannel(const QString &name);

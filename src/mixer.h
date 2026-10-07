@@ -196,6 +196,11 @@ public:
     double channelPan(const QString &slug) const;
     void   setChannelPan(const QString &slug, double pan);
     void   applyChannelGain(const QString &slug);   // trim × pan → L/R volumes on the sink
+    // CT-6: opt-in capture source per channel (one stem per channel). channelCaptureSource() is the node name while
+    // the source is in the graph, "" otherwise — what a recorder should pick.
+    bool    channelCapture(const QString &slug) const;
+    bool    setChannelCapture(const QString &slug, bool on);
+    QString channelCaptureSource(const QString &slug) const;
     QStringList channelInputs(const QString &channel) const;
     QString     addChannelInput(const QString &channel, const QString &ref);      // returns the wire's input slug, "" on refusal
     bool        removeChannelInput(const QString &channel, const QString &ref);

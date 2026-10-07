@@ -80,6 +80,8 @@ function channelHeader(ch) {
     ["Trim…", async () => { const t = prompt2("Trim in dB (−60 … +6)", (20 * Math.log10(ch.Trim || 1)).toFixed(1)); if (t !== null && !isNaN(+t)) await C.set(ch.path, "Trim", Math.pow(10, Math.max(-60, Math.min(6, +t)) / 20)).catch(err); }, "", `channelTrim/${slug}`],
     ["Colour…", async () => { const c = prompt2("Colour (#rrggbb or empty)", ch.Color); if (c !== null) await C.set(ch.path, "Color", c).catch(err); }],
     ["Group…", async () => { const g = prompt2("Group", ch.Group); if (g !== null) await C.set(ch.path, "Group", g).catch(err); }],
+    // CT-6: same switch as the window's "Separate capture source"; the label shows the state like a checkable item
+    [(ch.Capture ? "✓ " : "") + "Separate capture source", () => C.set(ch.path, "Capture", !ch.Capture).catch(err), "", `channelCapture/${slug}`],
     ["Move up", () => C.call(C.ROOT, "MoveChannel", ch.path, Math.max(0, C.channels().findIndex((c) => c.path === ch.path) - 1)).catch(err)],
     ["Move down", () => C.call(C.ROOT, "MoveChannel", ch.path, C.channels().findIndex((c) => c.path === ch.path) + 1).catch(err)],
     ["Remove channel", () => confirm(`Remove channel “${ch.Name}”?`) && C.call(C.ROOT, "RemoveChannel", ch.path).catch(err), "danger"],

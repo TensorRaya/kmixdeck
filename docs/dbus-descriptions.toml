@@ -70,6 +70,8 @@ Group = "Optional grouping label for frontends that stack rows by group. Empty =
 Trim = "Channel-wide trim before every mix, linear 0…1 (CH-7). This is *not* the per-mix fader — that is the Cell."
 Pan = "Stereo position: −1 left, 0 centre, +1 right, constant-power law on the channel sink (DV-22)."
 Muted = "Channel mute, applied on top of every cell."
+Capture = "Opt-in capture source of this channel alone, for multi-track recording (CT-6). Off by default. The source taps the channel after FX, trim, pan, mute and ducking and before every cell and mix fader."
+CaptureSource = "PipeWire node name of that source (`kmixdeck.chsource.<slug>`, description `kmixdeck <Name> Channel`) while it is in the graph, empty otherwise. This is what OBS or a recorder picks."
 NodeName = "PipeWire node name of the channel sink, for tools that link things themselves."
 InputDevice = "What feeds this channel, in `<ref>` grammar (`node.name[:PORT[,PORT]][>L|>R]`, ADR 0009). Empty = no hardware input."
 InputPresent = "False while `InputDevice` is set but the device is unplugged: grey the row out, keep the value (DV-9)."

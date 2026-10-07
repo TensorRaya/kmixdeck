@@ -102,6 +102,10 @@ class ChannelObject : public ExportedObject {
     // CT-8: "" for a normal channel, "soundboard" for a sample player. CONSTANT because the kind is decided when
     // the channel is created — it never changes later, which keeps the opt-in check in every UI a plain compare.
     Q_PROPERTY(QString Kind READ kind CONSTANT)
+    // CT-6: opt-in capture source of this channel alone (a stem for multi-track recording). CaptureSource is its
+    // node name while it is in the graph, "" otherwise.
+    Q_PROPERTY(bool Capture READ capture WRITE setCapture)
+    Q_PROPERTY(QString CaptureSource READ captureSource)
 public:
     ChannelObject(Mixer *mixer, const QString &slug, QObject *parent);
     QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.Channel"); }
@@ -114,6 +118,8 @@ public:
     QString color() const; void setColor(const QString &c);
     double trim() const; void setTrim(double);
     double pan() const; void setPan(double);
+    bool capture() const; void setCapture(bool);   // CT-6
+    QString captureSource() const;
     bool muted() const; void setMuted(bool);
     QString nodeName() const { return Names::channelNode(m_slug); }
     QString duckingJson() const; void setDuckingJson(const QString &json);
