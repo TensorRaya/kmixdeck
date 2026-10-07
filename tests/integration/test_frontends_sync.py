@@ -6,7 +6,7 @@ One table row per core feature: the change is made through the CLI (rule 1: the 
 back through (a) the CLI itself, (b) the KDE window (`--probe`), (c) the tray popover (`--gesture trayclick:1
 --probe`). Adding a core feature = adding a row here; tools/sot-audit.py requires this file for every ✅ core row.
 """
-import json, math, subprocess, time
+import json, math, os, subprocess, time
 from pathlib import Path
 import pytest
 from test_service_cli import BIN, Stack, make_fake_sink  # noqa: F401
@@ -575,6 +575,10 @@ def _ux3_body(stack, prop, make_fake_sink, make_fake_source, start_fake_app):
         plan = stack.cli("setup", json_out=True)
         if plan.get("defaultSink") == "fake.desk" and plan.get("defaultSource") == "fake.usbmic": break
         time.sleep(0.1)
+    if plan.get("defaultSink") != "fake.desk":   # diagnostic only (seen once 2026-10-07 under load 5–9): who has which default now
+        md = subprocess.run(["pw-metadata", "-n", "default", "0"], env=stack.env, capture_output=True, text=True).stdout
+        log = open(stack.daemon_log_path).read()[-1500:] if os.path.exists(stack.daemon_log_path) else ""
+        raise AssertionError(f"plan {plan}\nmetadata 'default':\n{md[-800:]}\ndaemon log tail:\n{log}")
     assert plan["defaultSink"] == "fake.desk" and plan["sinkKnown"] is True and plan["sinkDescription"] == "Desk Speakers", plan
     assert plan["defaultSource"] == "fake.usbmic" and plan["sourceKnown"] is True, plan
     p, app = start_fake_app(stack)
