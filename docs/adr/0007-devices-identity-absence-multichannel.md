@@ -66,6 +66,14 @@ that produce sound* (mics, apps) go into channels; *things that hear* (headphone
   with that `node.name` appears it links it **by itself** — no metadata call, no daemon involvement (DV-3,
   DV-6). Verified for a capture side (input) and a playback side (output): absent → alive/unlinked, appears →
   linked within ~1 s, vanishes → alive/unlinked, returns → linked again; metadata retarget still works.
+  **Amendment 2026-10-07 (ops-e7ye5), input side:** linger only holds for an edge that was *built while the
+  device was present*. An input edge created with its device absent (daemon start, or PipeWire loading the conf
+  at login) never gets its capture half scheduled; module-loopback's playback half is a trigger node (PipeWire
+  1.6.2) linked into the channel sink, it waits for that trigger every cycle, and the driver with it — every
+  capture source in the graph went silent (`node.always-process` on the capture half did not help: no ports
+  without a link). So the daemon builds an input edge only while the device is present, removes a
+  conf-built one at start when the device is absent, and builds it when the device appears (DV-12). The
+  layout and the conf keep the input (DV-11). Same rule the CH-12 app relays already followed.
   This supersedes the `kmixdeck.null` parking of ADR 0002 trap 4 for device edges: the parking sink stays
   only for "this mix has *no* output configured" (an empty target, not an absent one).
 - Fallback for outputs (DV-3): a mix MAY name a `FallbackOutput`; while the primary is absent the mix plays

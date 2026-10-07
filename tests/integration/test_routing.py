@@ -500,9 +500,7 @@ def test_ct6_channel_capture_source_is_a_direct_out_through_the_whole_life_cycle
         _restart_and_wait_new(stack, src)
         assert layout(stack)["channels"][2].get("capture") is True and f'node.name = "{src}"' in conf(stack)
         assert stack.cli("channel", "capture", "voice", json_out=True) == {"capture": True, "source": src, "present": True}
-        # No level read here, on purpose: in this state the recreated input edge (capture half suspended) stalls the
-        # whole graph, so EVERY capture source delivers no samples at all — kmixdeck.source.stream too, with CT-6 off.
-        # That is an older bug outside CT-6, measured and filed separately; step 6 below proves the source recovers.
+        assert wait_level(lambda: _chsource_level(stack, "voice"), lambda v: v < SILENT, what="voice source, restart without mic") < SILENT
         # 6) plug in after that restart: audio again
         lb, play = _fake_mic(stack, mic)
         wait_level(lambda: _chsource_level(stack, "voice"), lambda v: v > HOT, what="voice source, mic plugged in after restart")
@@ -536,3 +534,50 @@ def test_ct6_channel_capture_source_is_a_direct_out_through_the_whole_life_cycle
         stack.cli("channel", "input", "voice", "none", check=False)
         stack.cli("channel", "trim", "voice", "1.0", check=False)
         stack.cli("mix", "volume", "stream", "1.0", check=False)
+
+
+def test_e7ye5_an_absent_input_never_stalls_the_graph_at_daemon_start_or_login(stack):
+    """ops-e7ye5: an input edge with its device absent stalled EVERY capture source (module-loopback's trigger node
+    waits for a capture half that is never scheduled). Both ways in: daemon restart with the device absent, and
+    login (PipeWire builds the edge from the conf before kmixdeckd runs). In both, the mix capture source keeps
+    delivering audio from another channel, the input stays configured, and the device's audio returns on replug."""
+    from test_lifecycle import conf
+    mic = "e7.mic"
+    lb = play = game = None
+    try:
+        lb, play = _fake_mic(stack, mic)
+        stack.cli("channel", "input", "voice", mic)
+        stack.pw.wait_node("kmixdeck.in.voice")
+        stack.cli("cell", "set", "voice", "stream", "1.0"); stack.cli("cell", "set", "game", "stream", "1.0")
+        def unplug():
+            nonlocal lb, play
+            play.kill(); play.wait(); play = None
+            lb.kill(); lb.wait(); lb = None
+            subprocess.run(["pw-cli", "destroy", str(stack.pw.node_id(f"{mic}.feed"))], env=stack.pw.env, capture_output=True)
+            wait_for(lambda: stack.pw.node(mic) is None and stack.pw.node(f"{mic}.feed") is None, timeout=4.0, what="mic gone")
+        def stream_hot(what):
+            return wait_level(lambda: stack.pw.level_at_port("kmixdeck.source.stream", "capture_FL"), lambda v: v > HOT, what=what)
+        unplug()
+        game = stack.pw.play_into("kmixdeck.channel.game")
+        # 1) daemon restart with the device absent
+        stack.restart_daemon()
+        stack.pw.wait_node("kmixdeck.mix.stream")
+        stream_hot("stream mix capture (game playing) after a daemon restart with the mic absent")
+        assert stack.cli("channel", "input", "voice").stdout.strip() == mic, "the absent input must stay configured (DV-11)"
+        assert "kmixdeck.in.voice" in conf(stack), "and stay in the generated conf"
+        # 2) login: PipeWire builds the graph from the conf, the device is absent, then the daemon starts
+        stack.daemon.terminate(); stack.daemon.wait(timeout=5)
+        game.kill(); game.wait(); game = None
+        stack.pw.restart()
+        stack.restart_daemon()
+        game = stack.pw.play_into("kmixdeck.channel.game")
+        stream_hot("stream mix capture (game playing) after login with the mic absent")
+        # 3) replug: the mic is back in the mix without user action (DV-12)
+        game.kill(); game.wait(); game = None
+        lb, play = _fake_mic(stack, mic)
+        stack.pw.wait_node("kmixdeck.in.voice", timeout=4.0)
+        stream_hot("stream mix capture, mic plugged in again")
+    finally:
+        for p in (play, game, lb):
+            if p: p.kill(); p.wait()
+        stack.cli("channel", "input", "voice", "none", check=False)

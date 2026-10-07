@@ -296,6 +296,16 @@ void Mixer::reconcile() {
     for (const auto &c : m_layout.channels) if (c.fx.isActive() && !m_graph.node(QStringLiteral("kmixdeck.fx.%1").arg(c.slug))) applyFx(c.slug);
     for (const auto &m : m_layout.mixes)     if (m.fx.isActive() && !m_graph.node(QStringLiteral("kmixdeck.fx.mix.%1").arg(m.slug))) applyFx(m.slug);
     ensureCellGraph();
+    // ops-e7ye5: an input edge whose device is absent at start (PipeWire built it from the conf at login, or a
+    // reconnect) is not silent, it stalls the whole graph — see ensureEdgeLoopbackForInput. Take it out; it comes
+    // back the moment the device appears (onNode → ensureEdgeLoopbackForInput).
+    for (const auto &i : m_layout.inputs) {
+        if (i.device.node.isEmpty() || inputPresent(i.slug)) continue;
+        const QString e = EdgeNames::inputNode(i.slug);
+        if (!m_graph.node(e) && !m_graph.node(e + QStringLiteral(".in"))) continue;
+        destroyOurNodes([&](const QString &n) { return n == e || n == e + QStringLiteral(".in"); });
+        m_edges.remove(e);
+    }
     ensureEdgeLoopbacks();
     for (const auto &a : m_layout.apps) ensureAppRelays(a);   // CH-12 relays are layout, so they come back like cells
     // Capture sides are plumbing, not faders. WirePlumber restores whatever volume it last saw on them (it did:
@@ -1510,6 +1520,15 @@ void Mixer::ensureEdgeLoopbacks() {
 void Mixer::ensureEdgeLoopbackForInput(const QString &slug) {
     const auto *in = m_layout.input(slug);
     if (!in || in->device.node.isEmpty() || in->channel.isEmpty()) return;
+    // ops-e7ye5: never BUILD an edge while its device is absent. module-loopback's playback half is a trigger node
+    // (PW_STREAM_FLAG_TRIGGER, PipeWire 1.6.2): it only runs when the capture half's process() fires. A capture half
+    // that was never linked is never scheduled, the playback half linked into the channel sink waits for its trigger
+    // every cycle, and the driver with it: EVERY capture source of the graph went silent (measured 2026-10-07: daemon
+    // restart or login with the mic absent → kmixdeck.in.<ch>.in state S, kmixdeck.null W/Q 1.00, 44-byte WAVs from
+    // kmixdeck.source.stream; node.always-process on the capture half changed nothing — no ports without a link;
+    // destroying the edge freed the graph at once). Same trap as the CH-12 relays (ensureAppRelays). An edge built
+    // while the device was there and then unplugged keeps running (measured) and still waits by linger (ADR 0007 D3).
+    if (!inputPresent(slug)) return;   // onNode builds it when the device appears (DV-12)
     const QString node = EdgeNames::inputNode(slug);
     if (m_graph.node(node)) return;
     requestNullNode(node, [&] {   // one module per edge, even when called again before the registry caught up (DV-21)
