@@ -595,7 +595,10 @@ def test_once_prints_one_reading_even_when_several_arrive_at_once(tmp_path):
     `loudness --once` printed more than one object in 12-15 of 20 calls, `levels --once` in 16 of 20.
     """
     env = dict(os.environ)
-    bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1", f"--address=unix:dir={tmp_path}"],
+    # Abstract socket, not unix:dir={tmp_path}: a socket path is capped at 108 bytes (sun_path). With a long TMPDIR
+    # (here 120 bytes for tmp_path + "/dbus-XXXXXXXX") dbus-daemon could not bind, printed an empty address and the
+    # stand-in died with "The given address is empty" -- red in 5 of 5 runs, green with TMPDIR=/tmp (2026-10-07).
+    bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1", f"--address=unix:abstract=kmixdeck-burst-{os.getpid()}"],
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     fake = None
     try:
