@@ -716,6 +716,15 @@ int cmdTree(const Objects &o) {
 class Watcher : public QObject {
     Q_OBJECT
     int m_maxKeys = 0, m_stableTicks = 0, m_ticks = 0;   // FX-10: see peaks() — the key set grows in stages
+    // --once: the one reading is out. QCoreApplication::quit() does NOT stop the delivery of signals that are already
+    // queued — the loop only exits once control gets back to it, and a socket read that brought several Peaks or
+    // Loudness messages hands them to these slots back to back first. Measured 2026-10-07 against a fake daemon that
+    // sends a burst of 10 right after Subscribe(): `loudness --once` printed more than one object in 12-15 of 20
+    // calls, `levels --once` in 16 of 20; against the real daemon 1-2 of 100 (test_fx red in a full container run:
+    // json.loads "Extra data"). Every reader of --once parses ONE object, so after it nothing more may be printed.
+    bool m_onceDone = false;
+public:
+    bool onceDone() const { return m_onceDone; }   // the --once timeouts must not fire after the reading went out
 Q_SIGNALS:
     void gotPeaks();   // `levels --once` quits on the first tick
     void gotLoudness();   // `loudness --once` quits on the first reading
@@ -731,6 +740,7 @@ public Q_SLOTS:
     // UX-18: mix slug → [M, S, I, TP]. The signal is a{sad}, so the slot takes the raw message and demarshals
     // the dictionary by hand — a QVariantMap slot would hand us un-demarshalled QDBusArgument values (null).
     void loudnessSig(const QDBusMessage &msg) {
+        if (m_onceDone) return;
         QMap<QString, QList<double>> p;
         const auto arg = msg.arguments().value(0).value<QDBusArgument>();
         arg.beginMap();
@@ -741,6 +751,7 @@ public Q_SLOTS:
         }
         arg.endMap();
         if (p.isEmpty()) return;
+        if (g_once) m_onceDone = true;
         Q_EMIT gotLoudness();
         if (g_json) {
             QJsonObject j;
@@ -769,13 +780,14 @@ public Q_SLOTS:
         // and concluded the limiter was broken. Waiting for one specific prefix only moves the goalpost, so
         // the bar is STABILITY: quit once the set of keys stopped growing for three consecutive ticks
         // (25 Hz → 120 ms of quiet), capped so a permanently growing graph cannot hang the caller.
-        if (p.isEmpty()) return;
+        if (p.isEmpty() || m_onceDone) return;
         const int n = p.size();
         if (n > m_maxKeys) { m_maxKeys = n; m_stableTicks = 0; } else { ++m_stableTicks; }
         const bool finalTick = m_stableTicks >= 3 || ++m_ticks >= 40;   // 40 ticks ≈ 1.6 s hard ceiling
         // With --once the caller parses ONE object (json.loads), so the ticks we skip while the set grows must
         // not be printed — otherwise this fix would trade a missing key for a parse error.
         if (g_once && !finalTick) return;
+        if (g_once) m_onceDone = true;
         if (finalTick) Q_EMIT gotPeaks();
         if (g_json) { out << QJsonDocument(QJsonObject::fromVariantMap(p)).toJson(QJsonDocument::Compact) << "\n"; out.flush(); return; }
         QStringList keys = p.keys(); keys.sort();
@@ -1553,7 +1565,7 @@ struct Cli {
         QDBusConnection::sessionBus().connect(BUS, ROOT, "org.kmixdeck1.Levels", "Peaks", w, SLOT(peaks(QVariantMap)));
         if (once) {   // scripts and tests want one reading, not a stream — quit after the first non-empty tick
             QObject::connect(w, &Watcher::gotPeaks, &app, [] { QCoreApplication::quit(); });
-            QTimer::singleShot(4000, &app, [] { QCoreApplication::exit(int(Rejected)); });   // no tick at all = failure
+            QTimer::singleShot(4000, &app, [w] { if (!w->onceDone()) QCoreApplication::exit(int(Rejected)); });   // no tick at all = failure
         }
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&lv] { lv.call("Unsubscribe"); });
         return app.exec();
@@ -1563,12 +1575,13 @@ struct Cli {
         QDBusReply<void> abo = lv.call("Subscribe");
         if (!abo.isValid()) return fail(NoService, abo.error().message());
         const bool once = a.contains(QStringLiteral("--once"));
+        g_once = once;
         auto *w = new Watcher; w->setParent(&app);
         QDBusConnection::sessionBus().connect(BUS, ROOT, "org.kmixdeck1.Levels", "Loudness", w, SLOT(loudnessSig(QDBusMessage)));
         if (once) {
             QObject::connect(w, &Watcher::gotLoudness, &app, [] { QCoreApplication::quit(); });
             // No mix with the meter on means no signal at all — say so instead of hanging until the timeout.
-            QTimer::singleShot(6000, &app, [] { out << "{}\n"; out.flush(); QCoreApplication::quit(); });
+            QTimer::singleShot(6000, &app, [w] { if (w->onceDone()) return; out << "{}\n"; out.flush(); QCoreApplication::quit(); });
         }
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&lv] { lv.call("Unsubscribe"); });
         return app.exec();

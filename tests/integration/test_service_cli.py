@@ -550,6 +550,69 @@ def test_ux6_subscriber_that_dies_is_forgotten(stack):
     assert meter_nodes(stack) == 0
 
 
+# A daemon stand-in that answers Subscribe and then sends a BURST of Levels signals back to back. Runs under the
+# system python (Gio), on its own private bus: the real daemon's 25 Hz tick only now and then lands two signals in
+# one socket read, a burst does it every time.
+BURST_DAEMON = r"""
+import sys
+from gi.repository import GLib, Gio
+XML = '''<node><interface name="org.kmixdeck1.Levels">
+  <method name="Subscribe"/><method name="Unsubscribe"/>
+  <signal name="Peaks"><arg type="a{sv}"/></signal><signal name="Loudness"><arg type="a{sad}"/></signal>
+</interface><interface name="org.freedesktop.DBus.ObjectManager">
+  <method name="GetManagedObjects"><arg type="a{oa{sa{sv}}}" direction="out"/></method>
+</interface></node>'''
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+def burst():
+    for i in range(10):
+        bus.emit_signal(None, "/org/kmixdeck1", "org.kmixdeck1.Levels", "Loudness",
+                        GLib.Variant("(a{sad})", ({"stream": [-20.0 - i, -20.0, -20.0, -20.0]},)))
+        # a{sv}, not the a{sd} the XML documents: that is what kmixdeckd puts on the wire (busctl monitor, 2026-10-07)
+        bus.emit_signal(None, "/org/kmixdeck1", "org.kmixdeck1.Levels", "Peaks",
+                        GLib.Variant("(a{sv})", ({"channel/voice": GLib.Variant("d", 0.1 + i / 100)},)))
+    bus.flush_sync(None)
+    return False
+def call(conn, sender, path, iface, method, params, inv):
+    if method == "GetManagedObjects":
+        inv.return_value(GLib.Variant("(a{oa{sa{sv}}})", ({},))); return
+    inv.return_value(None)
+    if method == "Subscribe": GLib.timeout_add(150, burst)
+for iface in Gio.DBusNodeInfo.new_for_xml(XML).interfaces:
+    bus.register_object("/org/kmixdeck1", iface, call, None, None)
+Gio.bus_own_name_on_connection(bus, "org.kmixdeck1", Gio.BusNameOwnerFlags.DO_NOT_QUEUE,
+                               lambda *a: print("ready", flush=True), None)
+GLib.MainLoop().run()
+"""
+
+
+def test_once_prints_one_reading_even_when_several_arrive_at_once(tmp_path):
+    """`levels --once` and `loudness --once` print exactly ONE object; every caller json.loads()es stdout.
+
+    QCoreApplication::quit() does not stop the delivery of signals that are already queued: a socket read that
+    brings several Peaks/Loudness messages hands them to the slots back to back before the loop can exit, and each
+    printed its object. Seen as `json.decoder.JSONDecodeError: Extra data` in test_fx (full container run,
+    2026-10-07) and, against the real daemon, in 1-2 of 100 calls. Against this burst stand-in, before the fix:
+    `loudness --once` printed more than one object in 12-15 of 20 calls, `levels --once` in 16 of 20.
+    """
+    env = dict(os.environ)
+    bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1", f"--address=unix:dir={tmp_path}"],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    fake = None
+    try:
+        env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
+        fake = subprocess.Popen(["/usr/bin/python3", "-c", BURST_DAEMON], env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        assert fake.stdout.readline().strip() == "ready", "the burst stand-in did not get the bus name"
+        for cmd in ("loudness", "levels"):
+            for i in range(10):
+                r = subprocess.run([str(BIN / "kmixdeck"), "--json", cmd, "--once"], env=env, capture_output=True, text=True, timeout=15)
+                lines = r.stdout.splitlines()
+                assert r.returncode == 0 and len(lines) == 1, f"`{cmd} --once` call {i + 1}: rc={r.returncode}, {len(lines)} lines: {r.stdout[:300]!r}"
+                json.loads(r.stdout)
+    finally:
+        for p in (fake, bus):
+            if p: p.terminate(); p.wait(timeout=5)
+
+
 # ---------------------------------------------------------------- channel inputs + device absence (CH-3, DV-9, DV-12, ADR 0007)
 def make_fake_source(stack, name, desc):
     subprocess.run(["pw-cli", "create-node", "adapter",
