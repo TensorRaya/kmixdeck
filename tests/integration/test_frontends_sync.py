@@ -464,6 +464,17 @@ def prop_of(stack):
     return lambda name: stack.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Mixer", name).stdout.strip()
 
 
+def _ux3_evidence(stack, what):
+    """What the daemon and the session said when UX-3 went red, instead of a bare assert.
+
+    Seen 3 times on 2026-10-07, every time at host load 5-12, never in isolation: twice the plan kept an empty
+    defaultSink for 5 s after pw-metadata had set it, once the window's firstrun:apply left `plan:-|-|apps=0`
+    (FirstRunPlan and FirstRunApply both came back empty over D-Bus). The next red run has to name its cause."""
+    md = subprocess.run(["pw-metadata", "-n", "default", "0"], env=stack.env, capture_output=True, text=True).stdout
+    log = open(stack.daemon_log_path).read()[-1500:] if os.path.exists(stack.daemon_log_path) else ""
+    return f"{what}\ndaemon alive: {stack.daemon.poll() is None}\nmetadata 'default':\n{md[-800:]}\ndaemon log tail:\n{log}"
+
+
 def _ux3_body(stack, prop, make_fake_sink, make_fake_source, start_fake_app):
     assert prop("FirstRun") == "b true", "a sandbox has no layout.json → the daemon must report FirstRun"
     make_fake_sink(stack, "fake.desk", "Desk Speakers"); make_fake_source(stack, "fake.usbmic", "USB Microphone"); time.sleep(0.8)
@@ -473,10 +484,8 @@ def _ux3_body(stack, prop, make_fake_sink, make_fake_source, start_fake_app):
         plan = stack.cli("setup", json_out=True)
         if plan.get("defaultSink") == "fake.desk" and plan.get("defaultSource") == "fake.usbmic": break
         time.sleep(0.1)
-    if plan.get("defaultSink") != "fake.desk":   # diagnostic only (seen once 2026-10-07 under load 5–9): who has which default now
-        md = subprocess.run(["pw-metadata", "-n", "default", "0"], env=stack.env, capture_output=True, text=True).stdout
-        log = open(stack.daemon_log_path).read()[-1500:] if os.path.exists(stack.daemon_log_path) else ""
-        raise AssertionError(f"plan {plan}\nmetadata 'default':\n{md[-800:]}\ndaemon log tail:\n{log}")
+    if plan.get("defaultSink") != "fake.desk":   # diagnostic only, see _ux3_evidence
+        raise AssertionError(_ux3_evidence(stack, f"plan {plan}"))
     assert plan["defaultSink"] == "fake.desk" and plan["sinkKnown"] is True and plan["sinkDescription"] == "Desk Speakers", plan
     assert plan["defaultSource"] == "fake.usbmic" and plan["sourceKnown"] is True, plan
     p, app = start_fake_app(stack)
@@ -502,6 +511,8 @@ def _ux3_body(stack, prop, make_fake_sink, make_fake_source, start_fake_app):
         assert "Desk Speakers" in g["firstRunSink.text"] and "USB Microphone" in g["firstRunSource.text"] and "FakeGame" in g["firstRunApps.text"], g
         # apply through the window's handler (what the "Set up" button calls)
         r = kde(stack, "--gesture", "firstrun:apply", "--probe", "firstRunBody.summary", open_page="mixer")
+        if not r["firstRunBody.summary"].startswith("done:"):   # diagnostic only, see _ux3_evidence
+            raise AssertionError(_ux3_evidence(stack, f"window after firstrun:apply: {r}"))
         assert r["firstRunBody.summary"].startswith("done:") and "monitorOutput" in r["firstRunBody.summary"] and "voiceInput" in r["firstRunBody.summary"], r
         wait_for(lambda: prop("FirstRun") == "b false" and prop("ListeningDevice") == 's "fake.desk"', timeout=5.0, what="prop('FirstRun') == 'b false' and prop('ListeningDevice') == 's 'fake.")
         assert prop("FirstRun") == "b false"
