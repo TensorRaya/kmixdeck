@@ -15,6 +15,8 @@ install(FILES ${CMAKE_SOURCE_DIR}/interfaces/org.kmixdeck1.Mixer.xml ${CMAKE_SOU
               ${CMAKE_SOURCE_DIR}/interfaces/org.kmixdeck1.Mix.xml ${CMAKE_SOURCE_DIR}/interfaces/org.kmixdeck1.Cell.xml
               ${CMAKE_SOURCE_DIR}/interfaces/org.kmixdeck1.App.xml
         DESTINATION ${KDE_INSTALL_DBUSINTERFACEDIR})
+# ADR 0014 HY-5: the Waybar module block. The CLI is always built, so this does not depend on the KDE frontend.
+install(FILES waybar/kmixdeck.jsonc DESTINATION ${KDE_INSTALL_DATADIR}/kmixdeck/waybar)
 if(BUILD_KDE_FRONTEND)
     install(FILES org.kmixdeck.kmixdeck.desktop DESTINATION ${KDE_INSTALL_APPDIR})
     install(FILES org.kmixdeck.kmixdeck.metainfo.xml DESTINATION ${KDE_INSTALL_METAINFODIR})

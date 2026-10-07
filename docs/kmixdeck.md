@@ -326,6 +326,19 @@ hold-to-listen button of the UIs.
 > kmixdeck audition channel voice   # solo; everything else muted
 > kmixdeck audition none            # exactly back to before (UX-12)
 
+`waybar [--once]` · `waybar mute` · `waybar up [<dB>]` · `waybar down [<dB>]` · `waybar open`
+: A Waybar custom module (ADR 0014 HY-5). Without an argument it prints one JSON
+line per change in the form waybar-custom(5) reads with `"return-type": "json"`:
+the mix you hear (the first mix on the listening device, see `listen`), its
+master level and mute, and the integrated loudness when that mix has the R128
+meter on. It starts the meters of nobody, keeps running while the daemon is
+away and says so (class `offline`). `mute`, `up`/`down` (3 dB by default, -60 dB
+is silence) and `open` (the window) act on that same mix — they are what the
+module's clicks call. The module block for Waybar is installed as
+`share/kmixdeck/waybar/kmixdeck.jsonc`.
+> kmixdeck waybar --once            # the line the bar shows right now
+> kmixdeck waybar up                # +3 dB on the mix you hear
+
 ## Effects
 
 Ordered insert chains on any channel or mix (ADR 0008). Builtin effects need

@@ -1,0 +1,32 @@
+// kmixdeck module for Waybar (ADR 0014 HY-5). Installed with kmixdeck; kmixdeck never writes it into your config.
+//
+// Use it from your own Waybar config (values you set there win over the ones in here):
+//   "include": ["/usr/share/kmixdeck/waybar/kmixdeck.jsonc"],
+//   "modules-right": [ ..., "custom/kmixdeck", ... ]
+// (for a prefix other than /usr, use <prefix>/share/kmixdeck/waybar/kmixdeck.jsonc)
+//
+// It shows the mix you hear: the first mix that plays on your listening device (`kmixdeck listen`).
+// Classes for style.css, on #custom-kmixdeck:
+//   live, muted          master mute of that mix
+//   unplugged            its device is gone, the mix is parked
+//   on-target, below-target   integrated loudness against the mix's target (only with the R128 meter on)
+//   idle                 no listening device, or no mix plays on it
+//   offline              the kmixdeck service is not running
+{
+    "custom/kmixdeck": {
+        "exec": "kmixdeck waybar",
+        "return-type": "json",
+        // the script loops itself; restart it only if it ever exits (e.g. kmixdeck was upgraded under it)
+        "restart-interval": 5,
+        "exec-on-event": false,
+        // mix names are user text: "R&B" must not be read as Pango markup
+        "escape": true,
+        "format": "{text}",
+        "on-click": "kmixdeck waybar mute",
+        "on-click-right": "kmixdeck waybar open",
+        "on-scroll-up": "kmixdeck waybar up",
+        "on-scroll-down": "kmixdeck waybar down",
+        // touchpads send many small scroll events; one 3 dB step per notch, not per event
+        "smooth-scrolling-threshold": 1
+    }
+}

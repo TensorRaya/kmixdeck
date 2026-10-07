@@ -28,6 +28,8 @@
 #include <cmath>
 #include <cstdio>
 #include <QDBusMessage>
+#include <QDBusServiceWatcher>
+#include <algorithm>
 
 using InterfaceMap = QMap<QString, QVariantMap>;
 using ManagedObjects = QMap<QDBusObjectPath, InterfaceMap>;
@@ -94,6 +96,7 @@ constexpr const char *KOMMANDO_NAMEN[] = {
     "status", "tree", "patch", "loudness", "streamdeck", "setup", "export", "import", "undo", "scene",
     "devices", "channel", "mix", "fx", "duck", "cell", "app", "listen", "audition", "levels", "watch",
     "sample",   // CT-8 soundboard
+    "waybar",   // ADR 0014 HY-5
     "complete",   // CL-7: kein Alltagskommando, aber `help complete` und die Doku-Pruefung brauchen den Namen
 };
 
@@ -130,6 +133,29 @@ bool fetch(Objects &o, QString *error) {
         }
     }
     return true;
+}
+
+/// UX-2: the mixes that play on the listening device, in the user's mix order. One definition for `listen` and
+/// `waybar` (ADR 0014 HY-5), so the bar and the CLI never name different mixes for the same state.
+QStringList heardMixes(const Objects &o) {
+    const QString dev = unwrap(o.mixer.value("ListeningDevice")).toString();
+    QStringList heard;
+    if (dev.isEmpty()) return heard;
+    QStringList order = unwrap(o.mixer.value("MixOrder")).toStringList();
+    if (order.isEmpty()) for (const auto &m : o.mixes) order << m.value("Slug").toString();   // older daemon: path order
+    for (const QString &slug : std::as_const(order))
+        if (o.mixes.value(QStringLiteral("%1/mix/%2").arg(ROOT, slug)).value("Outputs").toStringList().contains(dev)) heard << slug;
+    return heard;
+}
+
+/// HY-5 scroll: one step of a mix master in dB, by the window fader's rule (Fader.qml stepDb). -60 dB is the floor
+/// and reads as silence, so a step up from silence lands at -60 + step. A multiplicative step (lin * 10^(dB/20)) can
+/// never leave 0, which is what a scroll wheel on a muted-by-fader mix would otherwise do forever.
+double steppedLevel(double lin, double stepDb) {
+    constexpr double floorDb = -60.0;
+    const double cur = lin > 0 ? std::max(floorDb, 20.0 * std::log10(lin)) : floorDb;
+    const double next = std::clamp(cur + stepDb, floorDb, 0.0);
+    return next <= floorDb ? 0.0 : std::pow(10.0, next / 20.0);
 }
 
 QString db(double lin) { return lin <= 0 ? QStringLiteral("  -inf") : QString::number(20.0 * std::log10(lin), 'f', 1).rightJustified(6); }
@@ -713,6 +739,135 @@ int cmdTree(const Objects &o) {
 }
 } // namespace
 
+/// ADR 0014 HY-5: `kmixdeck waybar` — one JSON line per change, in the shape waybar-custom(5) reads with
+/// `return-type: json` and no `interval` (the script loops itself). The module shows the mix you hear: the first
+/// mix in MixOrder that plays on Mixer.ListeningDevice (UX-2), with its master level, mute, and R128 integrated
+/// loudness if that mix has the meter on (UX-18). The state is the daemon's object tree, refreshed on every
+/// PropertiesChanged / InterfacesAdded / InterfacesRemoved, i.e. the same signals `watch` prints.
+///
+/// No Levels subscription: that would start every peak meter (measured 12-14.6 % daemon CPU against 3.4-4.0 %
+/// without) for a bar that shows no peaks. The Loudness signal arrives without one.
+///
+/// When the daemon is not on the bus the module says so (class "offline") and waits for it to come back, instead of
+/// exiting: Waybar does not restart a looping script unless `restart-interval` is set, so an exit would leave a
+/// blank module until the next login.
+class WaybarFeed : public QObject {
+    Q_OBJECT
+    Objects m_o;                      // the daemon's tree, patched in place from PropertiesChanged
+    bool m_online = false;
+    bool m_once = false, m_done = false;
+    QString m_lastLine;
+    QHash<QString, double> m_lufsI;   // mix slug -> integrated loudness, from the Loudness signal
+    QTimer m_settle;                  // at most one line per 30 ms: a fader drag is one stream of lines, not one per property
+public:
+    WaybarFeed() {
+        m_settle.setSingleShot(true); m_settle.setInterval(30);
+        connect(&m_settle, &QTimer::timeout, this, &WaybarFeed::emitLine);
+    }
+    void start(const Objects &o, bool online) {
+        m_o = o; m_online = online;
+        auto bus = QDBusConnection::sessionBus();
+        bus.connect(BUS, QString(), "org.freedesktop.DBus.Properties", "PropertiesChanged", this, SLOT(propertiesChanged(QDBusMessage)));
+        bus.connect(BUS, ROOT, "org.freedesktop.DBus.ObjectManager", "InterfacesAdded", this, SLOT(refetch()));
+        bus.connect(BUS, ROOT, "org.freedesktop.DBus.ObjectManager", "InterfacesRemoved", this, SLOT(refetch()));
+        bus.connect(BUS, ROOT, "org.kmixdeck1.Levels", "Loudness", this, SLOT(loudness(QDBusMessage)));
+        // Owner gone: show "offline" and do NOT ask the bus again — the daemon is D-Bus activatable, and a call
+        // would start it right back up, so `systemctl --user stop kmixdeckd` could never win against a running bar.
+        auto *w = new QDBusServiceWatcher(QString::fromLatin1(BUS), bus, QDBusServiceWatcher::WatchForOwnerChange, this);
+        connect(w, &QDBusServiceWatcher::serviceOwnerChanged, this, [this](const QString &, const QString &, const QString &owner) {
+            m_lufsI.clear();
+            if (owner.isEmpty()) { m_online = false; m_o = {}; changed(); } else refetch();
+        });
+        emitLine();
+    }
+    /// The line for one state. Static and pure so `waybar --once` and the stream share every character.
+    static QJsonObject line(const Objects &o, bool online, const QHash<QString, double> &lufsI) {
+        if (!online)
+            return {{"text", "kmixdeck off"}, {"tooltip", "kmixdeck: the service is not running"}, {"class", "offline"}, {"alt", "offline"}, {"percentage", 0}};
+        const QString dev = unwrap(o.mixer.value("ListeningDevice")).toString();
+        const QString devName = qdbus_cast<StringMap>(o.mixer.value("OutputDevices")).value(dev, dev);
+        const QStringList heard = heardMixes(o);
+        if (heard.isEmpty()) {
+            const QString why = dev.isEmpty() ? QStringLiteral("no listening device chosen (kmixdeck listen <device>)")
+                                              : QStringLiteral("no mix plays on %1").arg(devName);
+            return {{"text", "no mix"}, {"tooltip", "kmixdeck: " + why}, {"class", "idle"}, {"alt", "idle"}, {"percentage", 0}};
+        }
+        const QVariantMap m = o.mixes.value(QStringLiteral("%1/mix/%2").arg(ROOT, heard.first()));
+        const QString slug = heard.first(), name = m.value("Name").toString();
+        const double vol = m.value("Volume").toDouble();
+        const bool muted = m.value("Muted").toBool();
+        const bool present = m.value("OutputPresent", true).toBool();
+        // percentage: the cubic fader position, like every UI shows it (MixerClient::mixVolume), so Waybar's
+        // format-icons follow the slider and not the linear gain
+        const int pct = int(std::lround(std::cbrt(std::clamp(vol, 0.0, 1.0)) * 100.0));
+        const QString level = vol <= 0 ? QStringLiteral("-inf") : QString::number(20.0 * std::log10(vol), 'f', 1) + QStringLiteral(" dB");
+        QString text = name + QLatin1Char(' ') + (muted ? QStringLiteral("muted") : level);
+        QStringList tip{QStringLiteral("kmixdeck: you hear %1 on %2").arg(name, devName),
+                        QStringLiteral("master %1%2").arg(level, muted ? QStringLiteral(", muted") : QString())};
+        if (heard.size() > 1) tip << QStringLiteral("also on this device: %1").arg(heard.mid(1).join(QLatin1String(", ")));
+        if (!present) tip << QStringLiteral("the device is unplugged, the mix is parked");
+        QJsonArray classes{muted ? QStringLiteral("muted") : QStringLiteral("live")};
+        if (!present) classes << QStringLiteral("unplugged");
+        if (m.value("Loudness").toBool()) {
+            const double target = m.value("LoudnessTarget").toDouble();
+            const auto it = lufsI.constFind(slug);
+            const bool have = it != lufsI.constEnd() && *it > -70.0;   // -70 = BS.1770 floor, "nothing integrated yet"
+            if (have) text += QStringLiteral(" · %1 LUFS").arg(*it, 0, 'f', 1);
+            tip << (have ? QStringLiteral("integrated %1 LUFS, target %2").arg(*it, 0, 'f', 1).arg(target, 0, 'f', 0)
+                         : QStringLiteral("integrated loudness: not enough audio yet, target %1").arg(target, 0, 'f', 0));
+            if (have) classes << (*it >= target ? QStringLiteral("on-target") : QStringLiteral("below-target"));
+        }
+        tip << QStringLiteral("click: mute · right click: window · scroll: volume");
+        return {{"text", text}, {"tooltip", tip.join(QLatin1Char('\n'))}, {"class", classes},
+                {"alt", muted ? QStringLiteral("muted") : QStringLiteral("live")}, {"percentage", pct}, {"mix", slug}};
+    }
+public Q_SLOTS:
+    void changed() { if (!m_settle.isActive()) m_settle.start(); }
+    // Only the two interfaces the line reads are patched; everything else (cells, channels, apps) is ignored.
+    void propertiesChanged(const QDBusMessage &msg) {
+        const auto args = msg.arguments();
+        const QString iface = args.value(0).toString();
+        const QVariantMap props = plain(qdbus_cast<QVariantMap>(args.value(1)));
+        QVariantMap *target = iface == QLatin1String("org.kmixdeck1.Mixer") ? &m_o.mixer
+                            : iface == QLatin1String("org.kmixdeck1.Mix")   ? &m_o.mixes[msg.path()] : nullptr;
+        if (!target) return;
+        for (auto it = props.cbegin(); it != props.cend(); ++it) target->insert(it.key(), it.value());
+        changed();
+    }
+    void refetch() { Objects o; QString e; m_online = fetch(o, &e); m_o = o; changed(); }   // a mix came or went: rare
+    void loudness(const QDBusMessage &msg) {
+        const auto arg = msg.arguments().value(0).value<QDBusArgument>();
+        arg.beginMap();
+        while (!arg.atEnd()) {
+            QString k; QList<double> v;
+            arg.beginMapEntry(); arg >> k >> v; arg.endMapEntry();
+            if (v.size() >= 3) m_lufsI.insert(k, v[2]);
+        }
+        arg.endMap();
+        changed();   // the line only changes when the shown 0.1 LUFS changes: emitLine() drops duplicates
+        if (m_once) finishOnce();
+    }
+    /// `waybar --once`: one line, then exit. If the heard mix has the R128 meter on, wait for one Loudness tick
+    /// (25 Hz) so the line carries the number; 600 ms without one and it is printed without.
+    void once(const Objects &o, bool online) {
+        m_o = o; m_online = online; m_once = true;
+        const QStringList heard = online ? heardMixes(o) : QStringList{};
+        const bool wantsLufs = !heard.isEmpty() && o.mixes.value(QStringLiteral("%1/mix/%2").arg(ROOT, heard.first())).value("Loudness").toBool();
+        if (wantsLufs) QDBusConnection::sessionBus().connect(BUS, ROOT, "org.kmixdeck1.Levels", "Loudness", this, SLOT(loudness(QDBusMessage)));
+        QTimer::singleShot(wantsLufs ? 600 : 0, this, &WaybarFeed::finishOnce);
+    }
+    void finishOnce() {
+        if (m_done) return;
+        m_done = true; m_settle.stop(); emitLine(); QCoreApplication::quit();
+    }
+    void emitLine() {
+        const QString s = QString::fromUtf8(QJsonDocument(line(m_o, m_online, m_lufsI)).toJson(QJsonDocument::Compact));
+        if (s == m_lastLine) return;
+        m_lastLine = s;
+        out << s << "\n"; out.flush();
+    }
+};
+
 class Watcher : public QObject {
     Q_OBJECT
     int m_maxKeys = 0, m_stableTicks = 0, m_ticks = 0;   // FX-10: see peaks() — the key set grows in stages
@@ -825,6 +980,7 @@ struct Cli {
     QStringList a;                 // positional arguments: a[0] = command, a[1] = sub-command
     QString cmd, sub;
     Objects o;                     // the daemon's object tree (empty for offline commands)
+    bool m_online = true;          // false only for `waybar`, the one command that runs without the daemon
     QString e;
     QDBusInterface mixer{BUS, ROOT, "org.kmixdeck1.Mixer", QDBusConnection::sessionBus()};
 
@@ -1520,7 +1676,7 @@ struct Cli {
     int cmdListen() {   // UX-2: listen [<node.name>|none] — the device I hear on; "what am I hearing" = mixes routed to it
         if (a.size() < 2) {
             const QString dev = unwrap(o.mixer.value("ListeningDevice")).toString();
-            QStringList heard; for (auto it = o.mixes.cbegin(); it != o.mixes.cend(); ++it) if (it.value().value("Outputs").toStringList().contains(dev)) heard << it.value().value("Slug").toString();
+            const QStringList heard = heardMixes(o);   // same definition as `waybar`, in the user's mix order
             if (g_json) { out << QJsonDocument(QJsonObject{{"device", dev}, {"mixes", QJsonArray::fromStringList(heard)}}).toJson(QJsonDocument::Compact) << "\n"; return Ok; }
             out << (dev.isEmpty() ? QStringLiteral("none") : dev) << "  " << (heard.isEmpty() ? QStringLiteral("(no mix routed here)") : heard.join(QLatin1String(", "))) << "\n"; return Ok;
         }
@@ -1570,6 +1726,41 @@ struct Cli {
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&lv] { lv.call("Unsubscribe"); });
         return app.exec();
     }
+    int cmdWaybar() {   // ADR 0014 HY-5: waybar [--once] | waybar mute|up|down|open — see WaybarFeed
+        const QString act = a.value(1);
+        if (act.isEmpty() || act == QLatin1String("--once")) {
+            if (!nurLesen(act.isEmpty() ? 1 : 2)) return Usage;
+            auto *feed = new WaybarFeed; feed->setParent(&app);
+            if (act == QLatin1String("--once")) feed->once(o, m_online);
+            else feed->start(o, m_online);
+            return app.exec();
+        }
+        if (act == QLatin1String("open")) {   // right click: the window, raised if it already runs (KDBusService::Unique)
+            if (!nurLesen(2)) return Usage;
+            // the frontend next to this binary first (build tree, a prefix outside PATH), else the one on PATH
+            const QString sibling = QCoreApplication::applicationDirPath() + QStringLiteral("/kmixdeck-kde");
+            const QString prog = QFileInfo(sibling).isExecutable() ? sibling : QStringLiteral("kmixdeck-kde");
+            return QProcess::startDetached(prog, {}) ? Ok : fail(Rejected, "could not start " + prog);
+        }
+        if (!m_online) return fail(NoService, "service not reachable: " + e);
+        const QStringList heard = heardMixes(o);
+        // A click on "no mix" is a no-op, not an error: Waybar would only log it, and the module already says why.
+        if (heard.isEmpty()) return Ok;
+        const QString path = QStringLiteral("%1/mix/%2").arg(ROOT, heard.first());
+        if (act == QLatin1String("mute")) {
+            if (!nurLesen(2)) return Usage;
+            const QDBusMessage r = QDBusInterface(BUS, path, "org.kmixdeck1.Mix", QDBusConnection::sessionBus()).call("ToggleMute");   // CT-1: atomic on the bus
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
+        }
+        if (act == QLatin1String("up") || act == QLatin1String("down")) {
+            if (a.size() > 3) return fail(Usage, "waybar up|down [<dB>]");
+            bool ok = true; const double step = a.size() == 3 ? QString(a[2]).remove(QStringLiteral("dB"), Qt::CaseInsensitive).toDouble(&ok) : 3.0;
+            if (!ok || step <= 0 || step > 60) return fail(Usage, "step is 0..60 dB, e.g. `waybar up 3`");
+            const double cur = o.mixes.value(path).value("Volume").toDouble();
+            return setProp(path, "org.kmixdeck1.Mix", "Volume", steppedLevel(cur, act == QLatin1String("up") ? step : -step), &e) ? Ok : fail(Rejected, e);
+        }
+        return fail(Usage, "waybar [--once] | waybar mute | waybar up|down [<dB>] | waybar open");
+    }
     int cmdWatch() {
         Watcher w; auto bus = QDBusConnection::sessionBus();
         bus.connect(BUS, QString(), "org.freedesktop.DBus.Properties", "PropertiesChanged", &w, SLOT(propertiesChanged(QDBusMessage)));
@@ -1604,6 +1795,7 @@ struct Cli {
             {QStringLiteral("audition"), &Cli::cmdAudition},
             {QStringLiteral("levels"), &Cli::cmdLevels},
             {QStringLiteral("watch"), &Cli::cmdWatch},
+            {QStringLiteral("waybar"), &Cli::cmdWaybar},
         };
         const Fn fn = table.value(cmd, nullptr);
         if (!fn) return fail(Usage, "unknown command '" + cmd + "'; see --help");
@@ -1732,6 +1924,9 @@ int main(int argc, char *argv[]) {
     const bool offline = a[0] == QLatin1String("streamdeck");   // CT-3: file-system only, works without the daemon
 
     Cli cli(app, p, a);
+    // HY-5: a bar module starts with the session, often before the daemon. `waybar` shows "offline" and waits for
+    // the name instead of exiting with code 2 — Waybar would show nothing until the next login.
+    if (a[0] == QLatin1String("waybar")) { cli.m_online = fetch(cli.o, &cli.e); return cli.run(); }
     if (!offline && !fetch(cli.o, &cli.e)) return fail(NoService, "service not reachable: " + cli.e);
     return cli.run();
 }
