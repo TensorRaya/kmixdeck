@@ -163,7 +163,7 @@ if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMP
                                              RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
                                              LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     endforeach()
-    foreach(suite service_cli audio_graph lifecycle routing fx presentation layout ports frontends_sync soundboard streamdeck web pipewire_5202)
+    foreach(suite service_cli audio_graph lifecycle routing fx presentation layout ports frontends_sync frontends_features soundboard streamdeck web pipewire_5202)
         add_test(NAME integration-${suite}
             COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_${suite}.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/integration)

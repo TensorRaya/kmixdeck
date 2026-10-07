@@ -589,7 +589,7 @@ def test_fx9_web_ui_configures_how_hard_it_ducks(stack):
 def test_fx9_badge_in_the_channel_row(stack):
     """FX-9, Spec-Wortlaut: der abgesenkte Kanal zeigt ein "ducked by <channel>"-Abzeichen samt der aktuellen
     Reduktion. Hier die Web-Haelfte der Dreifach-Paritaet — CLI-Baum und KDE-Kanalkopf pruefen
-    test_frontends_sync.py::test_fx9_badge_says_who_ducks_and_how_much_in_all_three_frontends.
+    test_frontends_features.py::test_fx9_badge_says_who_ducks_and_how_much_in_all_three_frontends.
     """
     stack.cli("duck", "set", "game", "--by", "voice", "--depth", "-18")
     web = Web(stack, token="")
