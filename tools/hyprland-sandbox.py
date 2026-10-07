@@ -22,6 +22,7 @@ Nothing touches the logged-in user's session: own XDG_RUNTIME_DIR, own buses, no
 """
 import argparse
 import json
+import os
 import shutil
 import signal
 import subprocess
@@ -46,9 +47,56 @@ args = ap.parse_args()
 
 procs = []
 pw = None
+bus_addresses = []   # the sandbox's session buses: what they activated (the portals) is stopped first, see stop()
+
+
+def activated_by_our_buses():
+    """Processes our buses started by activation (xdg-desktop-portal, -hyprland, -gtk, at-spi...).
+
+    Not found through the parent: dbus-daemon's activation helper exits and its child is reparented to PID 1
+    (measured on the Blade 2026-10-07: xdg-desktop-portal-hyprland ppid=1). What identifies them is the activation
+    environment, which carries our bus address; processes started by this script are excluded, they go in order.
+    """
+    ours = {p.pid for p in procs} | {os.getpid()}
+    # dbus-daemon gives an activated service DBUS_STARTER_ADDRESS (dbus-daemon(1)); the session address may or may
+    # not be in its activation environment, so either one counts
+    keys = [f"{v}={a}".encode() for a in bus_addresses for v in ("DBUS_STARTER_ADDRESS", "DBUS_SESSION_BUS_ADDRESS")]
+    found = []
+    for d in Path("/proc").iterdir():
+        if not d.name.isdigit() or int(d.name) in ours:
+            continue
+        try:
+            environ = (d / "environ").read_bytes().split(b"\0")
+        except OSError:   # gone, or not ours to read
+            continue
+        if any(k in environ for k in keys):
+            found.append(int(d.name))
+    return found
+
+
+def running(pid):
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        return False
 
 
 def stop(*_):
+    # The portals first, while their compositor is still up. xdg-desktop-portal-hyprland 1.4.1 that loses its
+    # Wayland display crashes in its exit handlers (SIGSEGV in wl_proxy_marshal_array_flags called from exit()):
+    # with the old reverse-start order, which takes Hyprland down before the bus that activated the portal, every
+    # sandbox left one ~1 MB core in /var/lib/systemd/coredump — 180 on the Blade on 2026-10-06, 343 MB.
+    # SIGTERM to it while Hyprland runs: exits, no core (measured 2026-10-07).
+    kids = activated_by_our_buses()
+    print(f"stopping {len(kids)} bus-activated process(es) first: {kids}", flush=True)
+    for pid in kids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    end = time.monotonic() + 4
+    while any(running(k) for k in kids) and time.monotonic() < end:
+        time.sleep(0.05)
     for p in reversed(procs):
         p.terminate()
     for p in procs:
@@ -85,7 +133,9 @@ def session_bus(env, address):
     p = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1", f"--address={address}"],
                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
     procs.append(p)
-    return p.stdout.readline().strip()
+    addr = p.stdout.readline().strip()
+    bus_addresses.append(addr)
+    return addr
 
 
 # Hyprland puts its IPC sockets at $XDG_RUNTIME_DIR/hypr/<40 hex>_<10 digits>_<up to 10 digits>/.socket2.sock, 82
