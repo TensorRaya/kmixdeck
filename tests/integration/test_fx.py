@@ -6,7 +6,7 @@ a gate with a high threshold silences a ~−24 dB signal, bypass brings it back.
 """
 import pytest
 import json, subprocess, time
-from test_service_cli import Stack
+from test_service_cli import BIN, Stack
 from pw_sandbox import start_private_pipewire
 
 # gate/compressor/limiter come from the swh LADSPA set (ADR 0008); without it every fx test is meaningless
@@ -348,6 +348,50 @@ def test_ux18_loudness_is_opt_in_per_mix_and_reads_ebu_r128():
         play.terminate(); play.wait(timeout=5)
     finally:
         s.close(); pw.close()
+
+
+def _loudness_signals(stack, seconds):
+    """Count org.kmixdeck1.Levels.Loudness signals on the bus without being a Levels subscriber."""
+    mon = subprocess.Popen(["busctl", "--user", "monitor", "--match", "type=signal,interface=org.kmixdeck1.Levels,member=Loudness"],
+                           env=stack.env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    time.sleep(seconds)
+    mon.terminate()
+    return mon.communicate(timeout=5)[0].count("Member=Loudness")
+
+
+def test_ux18_loudness_is_published_without_any_levels_subscriber(stack):
+    """UX-18: the R128 analyser of an enabled mix runs with nobody subscribed (it needs seconds of continuous audio,
+    see LevelsAdaptor::syncTargets), so its readings must reach the bus with nobody subscribed too. A Waybar module
+    or a script that wants only the LUFS number must not have to start every peak meter to get it (ADR 0014 HY-5).
+
+    Red before 2026-10-07: the shared tick stopped whenever the PEAK target list was empty — 0 signals in 2 s with
+    nobody subscribed, 50 while `kmixdeck levels` ran, 0 again after it left.
+    Without a subscriber the readings come at 5 Hz, not 25: a 25 Hz tick for nobody doubled the daemon's idle CPU
+    (6.7-7.8 % against 3.4-4.0 %; the analyser read-out alone is ~0.5 ms per tick, see Meters::updateTick).
+    """
+    pw, s = stack
+    assert json.loads(s.cli("--json", "mix", "loudness", "stream").stdout)["loudness"] is True   # on by default
+    play = subprocess.Popen(["pw-play", "-P", '{ node.name = "ux18-nosub" target.object = "kmixdeck.channel.voice" }', str(pw.tone())],
+                            env=pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(1.5)
+        assert s.busctl("get-property", "org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Subscribers").stdout.strip() == "u 0"
+        idle = _loudness_signals(s, 2.0)
+        assert 6 <= idle <= 15, f"{idle} Loudness signals in 2 s with no subscriber; expected the 5 Hz idle rate (10)"
+        # a subscriber gets the full meter rate ...
+        levels = subprocess.Popen([str(BIN / "kmixdeck"), "levels"], env=s.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            time.sleep(1.5)
+            full = _loudness_signals(s, 2.0)
+        finally:
+            levels.terminate(); levels.wait(timeout=5)
+        assert full >= 40, f"{full} Loudness signals in 2 s while `kmixdeck levels` is subscribed; expected 25 Hz (50)"
+        # ... and its teardown must not take the loudness tick with it
+        time.sleep(4.0)   # LevelsAdaptor tears the peak meters down 3 s after the last subscriber
+        after = _loudness_signals(s, 2.0)
+        assert 6 <= after <= 15, f"{after} Loudness signals in 2 s after the last Levels subscriber left; expected 5 Hz (10)"
+    finally:
+        play.terminate(); play.wait(timeout=5)
 
 
 def test_fx9_ducking_actually_lowers_the_music_when_the_mic_talks():

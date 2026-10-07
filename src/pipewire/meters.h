@@ -23,6 +23,8 @@ class Meters : public QObject {
     Q_OBJECT
 public:
     static constexpr int kRateHz = 25;
+    /// UX-18: rate of the Loudness readings while no peak meter runs (nobody subscribed to Levels).
+    static constexpr int kLoudnessIdleHz = 5;
 
     Meters(Graph *graph, QObject *parent = nullptr);
     ~Meters() override;
@@ -43,6 +45,8 @@ Q_SIGNALS:
 
 private:
     void publish();
+    /// The tick carries the peaks AND the R128 readings, so it runs while either has a target.
+    void updateTick();
     struct Impl;
     std::unique_ptr<Impl> d;
     QTimer m_tick;

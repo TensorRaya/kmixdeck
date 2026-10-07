@@ -246,7 +246,33 @@ void Meters::setTargets(const QStringList &nodeNames) {
             if (!d->streams.contains(n)) d->streams.insert(n, d->create(n));
     }
     pw_thread_loop_unlock(d->graph->threadLoop());
-    if (d->streams.isEmpty()) m_tick.stop(); else if (!m_tick.isActive()) m_tick.start();
+    updateTick();
+}
+
+// UX-18: the analysers run whether or not anyone wants peaks (setLoudnessTargets follows the per-mix flag alone),
+// and their readings go out on the same tick. Until 2026-10-07 setTargets() stopped the tick whenever the PEAK
+// list was empty, and setLoudnessTargets() returns early for an unchanged list, so nothing ever restarted it: the
+// Loudness signal went silent the first time the last Levels subscriber left, or at startup after the first layout
+// change. Measured: 0 Loudness signals in 2 s with no subscriber, 50 while `kmixdeck levels` was subscribed, 0 again
+// 4 s after it left — a bar or a script that only wants the LUFS number had to start every peak meter to get it.
+//
+// Without peak streams the tick drops to kLoudnessIdleHz. A 25 Hz tick for nobody cost kmixdeckd 6.7-7.8 % of a core
+// against 3.4-4.0 % with no tick; at 5 Hz it is 2.3-3.4 % (2026-10-07, one analyser, tone playing, no subscriber,
+// two runs each). Of that difference the analyser read-out is ~1.3 %: one tick reads M, S, I and true peak for
+// ~506 us at 48 kHz stereo, 444 us of it the short-term value, which sums its whole 3 s window on every call
+// (integrated: 2.7 us in histogram mode). The rest is the signal and the wake-ups, not split further.
+// A window or a tray that shows the meter subscribes to Levels and gets the full rate again.
+void Meters::updateTick() {
+    bool idle, peaksWanted;
+    {
+        QMutexLocker l(&d->mutex);
+        peaksWanted = !d->streams.isEmpty();
+        idle = !peaksWanted && d->loud.isEmpty();
+    }
+    if (idle) { m_tick.stop(); return; }
+    const int ms = 1000 / (peaksWanted ? kRateHz : kLoudnessIdleHz);
+    if (m_tick.interval() != ms) m_tick.setInterval(ms);   // restarts a running timer with the new interval
+    if (!m_tick.isActive()) m_tick.start();
 }
 
 void Meters::setLoudnessTargets(const QStringList &nodeNames) {
@@ -276,8 +302,7 @@ void Meters::setLoudnessTargets(const QStringList &nodeNames) {
             if (!d->loud.contains(n)) d->loud.insert(n, d->createLoud(n));
     }
     pw_thread_loop_unlock(d->graph->threadLoop());
-    // the loudness tick rides on the peak tick; a loudness-only setup still needs it running
-    if (!d->loud.isEmpty() && !m_tick.isActive()) m_tick.start();
+    updateTick();
 }
 
 QStringList Meters::targets() const { QMutexLocker l(&d->mutex); return d->streams.keys(); }

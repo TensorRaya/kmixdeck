@@ -32,8 +32,9 @@
     <signal name="Peaks">
       <arg name="peaks" type="a{sd}"/>
     </signal>
-    <!-- UX-18: EBU R128 (ITU-R BS.1770) readings, same tick rate as Peaks, only for mixes whose Loudness
-         property is on. Key is the mix slug; the array is always four values, in LUFS except the last:
+    <!-- UX-18: EBU R128 (ITU-R BS.1770) readings, only for mixes whose Loudness property is on, sent whether or not
+         anyone is subscribed: at the Peaks rate while meters run, at 5 Hz while none do (a bar showing the
+         integrated value needs no peak meters). Key is the mix slug; the array is always four values, in LUFS except the last:
            [0] M  momentary loudness, 400 ms window
            [1] S  short-term loudness, 3 s window
            [2] I  integrated loudness, gated — -70 until enough audio has accumulated
