@@ -88,14 +88,6 @@ void ChannelObject::setInputDevice(const QString &d) {
 }
 bool ChannelObject::inputPresent() const { return m_mixer->channelInputPresent(m_slug); }
 QString ChannelObject::duckingJson() const { return QJsonDocument(m_mixer->ducking(m_slug)).toJson(QJsonDocument::Compact); }
-void ChannelObject::setDuckingJson(const QString &json) {
-    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
-    if (!doc.isObject()) { rejectProperty(QStringLiteral("Ducking"), QStringLiteral("expected a JSON object {duckedBy, depth, attack, release, threshold}")); return; }
-    QString warum;
-    // FX-9: pass the reason on, like SetFx does. "rejected" without a reason makes a client guess which of
-    // five values was out of range.
-    if (!m_mixer->setDucking(m_slug, doc.object(), &warum)) rejectProperty(QStringLiteral("Ducking"), warum);
-}
 bool ChannelObject::SetDucking(const QString &json) {
     const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
     if (!doc.isObject()) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("expected a JSON object {duckedBy, depth, attack, release, threshold}")); return false; }
@@ -272,9 +264,7 @@ LevelsAdaptor::LevelsAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdapt
             out.insert(slug, vals);
         }
         if (out.isEmpty()) return;
-        QDBusMessage sig = QDBusMessage::createSignal(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Loudness"));
-        sig << QVariant::fromValue(out);
-        QDBusConnection::sessionBus().send(sig);
+        Q_EMIT Loudness(out);
     });
     connect(m_mixer->meters(), &pw::Meters::peaks, this, [this](const QHash<QString, float> &raw) {
         QHash<QString, float> p = raw;
@@ -300,7 +290,7 @@ LevelsAdaptor::LevelsAdaptor(Mixer *mixer, QObject *parent) : QDBusAbstractAdapt
                 p.insert(QStringLiteral("cell-src/%1/%2").arg(c, m), *ch * static_cast<float>(m_mixer->layout().cellGain(c, m)));
         }
         if (m_subscribers.isEmpty()) return;
-        QVariantMap out;
+        QMap<QString, double> out;
         for (auto it = p.cbegin(); it != p.cend(); ++it) out.insert(meterKey(it.key()), static_cast<double>(it.value()));
         Q_EMIT Peaks(out);
     });
@@ -404,7 +394,9 @@ namespace {
 // UX-18: a{sad} for the Loudness signal. Qt marshals QMap<QString, QList<double>> only after the type is
 // registered — without this the send fails with "type is not registered with D-Bus" on every tick.
 struct LoudnessTypeRegistration {
-    LoudnessTypeRegistration() { qDBusRegisterMetaType<QMap<QString, QList<double>>>(); }
+    // ops-krv2d: a{sd} for Peaks needs the same registration, and before the adaptor exists, because the adaptor's
+    // introspection is generated from these types. Unregistered, Qt drops the signal from Introspect.
+    LoudnessTypeRegistration() { qDBusRegisterMetaType<QMap<QString, QList<double>>>(); qDBusRegisterMetaType<QMap<QString, double>>(); }
 };
 const LoudnessTypeRegistration s_loudnessTypeRegistration;
 } // namespace

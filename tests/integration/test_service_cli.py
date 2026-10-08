@@ -6,7 +6,7 @@ kmixdeckd is started on that bus; the CLI is the test client — so every assert
 The acoustic checks reuse the same measurement helpers as test_audio_graph.py.
 """
 import json
-import math, os, shutil, subprocess, tempfile, time, pytest
+import contextlib, math, os, shutil, subprocess, tempfile, time, pytest
 from pathlib import Path
 from pw_sandbox import start_private_pipewire, REPO
 from waiting import wait_for
@@ -74,13 +74,26 @@ def test_ar2_contract_matches_shipped_xml(stack):
     """AR-2: what the bus introspects == interfaces/*.xml (names, properties, methods)."""
     import xml.etree.ElementTree as ET
     def members(xml_text, iface):
+        # Types are part of the contract: a member with the right name and the wrong signature breaks every client
+        # that follows the XML (ops-krv2d, 2026-10-07: Peaks was a{sv} on the wire, a{sd} in the XML, and a client
+        # sending the documented a{sd} crashed our own CLI). So each member is (kind, name, its argument types).
         root = ET.fromstring(xml_text)
         for i in root.iter("interface"):
             if i.get("name") == iface:
-                return {(c.tag, c.get("name")) for c in i if c.tag in ("property", "method", "signal")}
+                out = set()
+                for c in i:
+                    if c.tag == "property":
+                        out.add((c.tag, c.get("name"), c.get("type"), c.get("access")))
+                    elif c.tag in ("method", "signal"):
+                        # in- and out-arguments are two separate signatures; how the XML interleaves them is not.
+                        default = "in" if c.tag == "method" else "out"
+                        args = [(a.get("direction", default), a.get("type")) for a in c.iter("arg")]
+                        out.add((c.tag, c.get("name"), tuple(t for d, t in args if d == "in"), tuple(t for d, t in args if d == "out")))
+                return out
         return None
     for iface, path in [("org.kmixdeck1.Mixer", "/org/kmixdeck1"), ("org.kmixdeck1.Channel", "/org/kmixdeck1/channel/game"),
-                        ("org.kmixdeck1.Mix", "/org/kmixdeck1/mix/stream"), ("org.kmixdeck1.Cell", "/org/kmixdeck1/cell/game/stream")]:
+                        ("org.kmixdeck1.Mix", "/org/kmixdeck1/mix/stream"), ("org.kmixdeck1.Cell", "/org/kmixdeck1/cell/game/stream"),
+                        ("org.kmixdeck1.Levels", "/org/kmixdeck1")]:
         shipped = members((REPO / "interfaces" / f"{iface}.xml").read_text(), iface)
         live = members(stack.busctl("introspect", "--xml-interface", "org.kmixdeck1", path).stdout, iface)
         assert live is not None, f"{iface} not exported at {path}"
@@ -92,7 +105,7 @@ def test_ar2_contract_matches_shipped_xml(stack):
     objs = json.loads(managed.stdout)["data"][0]
     for iface, path in [("org.kmixdeck1.Mixer", "/org/kmixdeck1"), ("org.kmixdeck1.Channel", "/org/kmixdeck1/channel/game"),
                         ("org.kmixdeck1.Mix", "/org/kmixdeck1/mix/stream"), ("org.kmixdeck1.Cell", "/org/kmixdeck1/cell/game/stream")]:
-        promised = {n for kind, n in members((REPO / "interfaces" / f"{iface}.xml").read_text(), iface) if kind == "property"}
+        promised = {m[1] for m in members((REPO / "interfaces" / f"{iface}.xml").read_text(), iface) if m[0] == "property"}
         got = set(objs[path][iface].keys())
         assert promised <= got, f"{iface} at {path}: GetManagedObjects lacks {promised - got}"
 
@@ -509,6 +522,33 @@ print(json.dumps(peaks))
 """
 
 
+PEAKS_WIRE_TYPE = r"""
+import sys
+from gi.repository import GLib, Gio
+bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+seen = []
+loop = GLib.MainLoop()
+def on(conn, sender, path, iface, sig, params):
+    if params.unpack()[0]:   # the first ticks after Subscribe can be empty
+        seen.append(params.get_type_string()); loop.quit()
+bus.signal_subscribe("org.kmixdeck1", "org.kmixdeck1.Levels", "Peaks", "/org/kmixdeck1", None, Gio.DBusSignalFlags.NONE, on)
+bus.call_sync("org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Subscribe", None, None, Gio.DBusCallFlags.NONE, 5000, None)
+GLib.timeout_add(5000, loop.quit); loop.run()
+bus.call_sync("org.kmixdeck1", "/org/kmixdeck1", "org.kmixdeck1.Levels", "Unsubscribe", None, None, Gio.DBusCallFlags.NONE, 5000, None)
+print(seen[0] if seen else "none")
+"""
+
+
+def test_ux6_peaks_on_the_wire_is_the_documented_a_sd(stack):
+    """ops-krv2d: interfaces/org.kmixdeck1.Levels.xml promises Peaks(a{sd}). A third-party client reads the XML, not
+    our source, so the message on the wire must carry exactly that type — read here with GLib, which reports the
+    real D-Bus signature instead of converting it. Until 2026-10-08 the daemon sent a{sv} (QVariantMap)."""
+    r = subprocess.run(["/usr/bin/python3", "-c", PEAKS_WIRE_TYPE], env=stack.env, capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "(a{sd})", f"Peaks on the wire: {r.stdout.strip()}"
+    wait_for(lambda: meter_nodes(stack) == 0, timeout=8.0, what="meter_nodes(stack) == 0")   # leave no meters behind
+
+
 def meter_nodes(stack):
     out = subprocess.run(["pw-cli", "ls", "Node"], env=stack.pw.env, capture_output=True, text=True).stdout
     return out.count('node.name = "kmixdeck.meter"')
@@ -554,11 +594,12 @@ def test_ux6_subscriber_that_dies_is_forgotten(stack):
 # system python (Gio), on its own private bus: the real daemon's 25 Hz tick only now and then lands two signals in
 # one socket read, a burst does it every time.
 BURST_DAEMON = r"""
-import sys
+import os, sys
 from gi.repository import GLib, Gio
+PEAKS_TYPE = os.environ.get("PEAKS_TYPE", "a{sd}")
 XML = '''<node><interface name="org.kmixdeck1.Levels">
   <method name="Subscribe"/><method name="Unsubscribe"/>
-  <signal name="Peaks"><arg type="a{sv}"/></signal><signal name="Loudness"><arg type="a{sad}"/></signal>
+  <signal name="Peaks"><arg type="a{sd}"/></signal><signal name="Loudness"><arg type="a{sad}"/></signal>
 </interface><interface name="org.freedesktop.DBus.ObjectManager">
   <method name="GetManagedObjects"><arg type="a{oa{sa{sv}}}" direction="out"/></method>
 </interface></node>'''
@@ -567,9 +608,13 @@ def burst():
     for i in range(10):
         bus.emit_signal(None, "/org/kmixdeck1", "org.kmixdeck1.Levels", "Loudness",
                         GLib.Variant("(a{sad})", ({"stream": [-20.0 - i, -20.0, -20.0, -20.0]},)))
-        # a{sv}, not the a{sd} the XML documents: that is what kmixdeckd puts on the wire (busctl monitor, 2026-10-07)
-        bus.emit_signal(None, "/org/kmixdeck1", "org.kmixdeck1.Levels", "Peaks",
-                        GLib.Variant("(a{sv})", ({"channel/voice": GLib.Variant("d", 0.1 + i / 100)},)))
+        # a{sd}, the type interfaces/org.kmixdeck1.Levels.xml documents (ops-krv2d). PEAKS_TYPE=a{sv} sends the
+        # wrong type on purpose: a client must drop such a message, not crash on it.
+        if PEAKS_TYPE == "a{sv}":
+            peaks = GLib.Variant("(a{sv})", ({"channel/voice": GLib.Variant("d", 0.1 + i / 100)},))
+        else:
+            peaks = GLib.Variant("(a{sd})", ({"channel/voice": 0.1 + i / 100},))
+        bus.emit_signal(None, "/org/kmixdeck1", "org.kmixdeck1.Levels", "Peaks", peaks)
     bus.flush_sync(None)
     return False
 def call(conn, sender, path, iface, method, params, inv):
@@ -585,7 +630,7 @@ GLib.MainLoop().run()
 """
 
 
-def test_once_prints_one_reading_even_when_several_arrive_at_once(tmp_path):
+def test_once_prints_one_reading_even_when_several_arrive_at_once():
     """`levels --once` and `loudness --once` print exactly ONE object; every caller json.loads()es stdout.
 
     QCoreApplication::quit() does not stop the delivery of signals that are already queued: a socket read that
@@ -594,23 +639,46 @@ def test_once_prints_one_reading_even_when_several_arrive_at_once(tmp_path):
     2026-10-07) and, against the real daemon, in 1-2 of 100 calls. Against this burst stand-in, before the fix:
     `loudness --once` printed more than one object in 12-15 of 20 calls, `levels --once` in 16 of 20.
     """
-    env = dict(os.environ)
-    # Abstract socket, not unix:dir={tmp_path}: a socket path is capped at 108 bytes (sun_path). With a long TMPDIR
-    # (here 120 bytes for tmp_path + "/dbus-XXXXXXXX") dbus-daemon could not bind, printed an empty address and the
-    # stand-in died with "The given address is empty" -- red in 5 of 5 runs, green with TMPDIR=/tmp (2026-10-07).
-    bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1", f"--address=unix:abstract=kmixdeck-burst-{os.getpid()}"],
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    fake = None
-    try:
-        env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
-        fake = subprocess.Popen(["/usr/bin/python3", "-c", BURST_DAEMON], env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        assert fake.stdout.readline().strip() == "ready", "the burst stand-in did not get the bus name"
+    with burst_stand_in("a{sd}") as env:
         for cmd in ("loudness", "levels"):
             for i in range(10):
                 r = subprocess.run([str(BIN / "kmixdeck"), "--json", cmd, "--once"], env=env, capture_output=True, text=True, timeout=15)
                 lines = r.stdout.splitlines()
                 assert r.returncode == 0 and len(lines) == 1, f"`{cmd} --once` call {i + 1}: rc={r.returncode}, {len(lines)} lines: {r.stdout[:300]!r}"
                 json.loads(r.stdout)
+                if cmd == "levels":
+                    assert json.loads(r.stdout).get("channel/voice", 0) > 0.09, f"call {i + 1}: the a{{sd}} reading arrived empty: {r.stdout!r}"
+
+
+def test_levels_drops_a_peaks_message_of_the_wrong_type_instead_of_crashing():
+    """ops-krv2d: a Peaks message that does not carry the documented a{sd} is not ours to interpret. Before the fix
+    the CLI took ANY type into a QVariantMap slot and QtDBus demarshalled it as a{sv}; the documented a{sd} then
+    crashed it (SIGSEGV, rc 139, 6 of 6, backtrace QDBusArgument::operator>>(QDBusVariant&)). With an explicit
+    signature on the connection QtDBus does not deliver a mismatching message at all, so `levels --once` sees no
+    reading and ends with its own "no tick" exit code (Rejected = 4) — never a signal."""
+    with burst_stand_in("a{sv}") as env:
+        for i in range(3):
+            r = subprocess.run([str(BIN / "kmixdeck"), "--json", "levels", "--once"], env=env, capture_output=True, text=True, timeout=15)
+            assert r.returncode == 4 and r.stdout == "", f"call {i + 1}: rc={r.returncode} stdout={r.stdout[:200]!r}"
+
+
+@contextlib.contextmanager
+def burst_stand_in(peaks_type):
+    """A private bus with BURST_DAEMON on it; yields the env for clients. `peaks_type` is the Peaks type it sends."""
+    env = dict(os.environ)
+    # Abstract socket, not unix:dir={tmp_path}: a socket path is capped at 108 bytes (sun_path). With a long TMPDIR
+    # (here 120 bytes for tmp_path + "/dbus-XXXXXXXX") dbus-daemon could not bind, printed an empty address and the
+    # stand-in died with "The given address is empty" -- red in 5 of 5 runs, green with TMPDIR=/tmp (2026-10-07).
+    bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1",
+                            f"--address=unix:abstract=kmixdeck-burst-{os.getpid()}-{time.monotonic_ns()}"],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    fake = None
+    try:
+        env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
+        fake = subprocess.Popen(["/usr/bin/python3", "-c", BURST_DAEMON], env={**env, "PEAKS_TYPE": peaks_type},
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        assert fake.stdout.readline().strip() == "ready", "the burst stand-in did not get the bus name"
+        yield env
     finally:
         for p in (fake, bus):
             if p: p.terminate(); p.wait(timeout=5)

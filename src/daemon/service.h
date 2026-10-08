@@ -97,7 +97,10 @@ class ChannelObject : public ExportedObject {
     // write changes a consistent set — five separate properties would let a client leave the channel ducked
     // by a trigger it never meant to pick. DuckReduction is the dB the compressor reports RIGHT NOW (0 = not
     // ducking), read from the graph, not from the layout.
-    Q_PROPERTY(QString Ducking READ duckingJson WRITE setDuckingJson)
+    // Read-only, as interfaces/org.kmixdeck1.Channel.xml says: a property write cannot report a refusal (see
+    // rejectProperty above), so the only way in is SetDucking(). The WRITE accessor that was here answered rc 0 to a
+    // value the mixer refused; the stricter AR-2 contract check found it (ops-krv2d, 2026-10-08).
+    Q_PROPERTY(QString Ducking READ duckingJson)
     Q_PROPERTY(double DuckReduction READ duckReduction)
     // CT-8: "" for a normal channel, "soundboard" for a sample player. CONSTANT because the kind is decided when
     // the channel is created — it never changes later, which keeps the opt-in check in every UI a plain compare.
@@ -122,7 +125,7 @@ public:
     QString captureSource() const;
     bool muted() const; void setMuted(bool);
     QString nodeName() const { return Names::channelNode(m_slug); }
-    QString duckingJson() const; void setDuckingJson(const QString &json);
+    QString duckingJson() const;
     double duckReduction() const;
     QString inputDevice() const; void setInputDevice(const QString &);
     QStringList inputs() const;
@@ -243,7 +246,10 @@ public Q_SLOTS:
     void Subscribe(const QDBusMessage &msg);
     void Unsubscribe(const QDBusMessage &msg);
 Q_SIGNALS:
-    void Peaks(const QVariantMap &peaks);
+    // a{sd} as interfaces/org.kmixdeck1.Levels.xml documents. A QVariantMap here went out as a{sv} (ops-krv2d).
+    void Peaks(const QMap<QString, double> &peaks);
+    // UX-18, a{sad}. Declared here, not sent by hand, so Introspect lists it like the XML does (ops-krv2d).
+    void Loudness(const QMap<QString, QList<double>> &loudness);
 private Q_SLOTS:
     void onNameOwnerChangedSlot(const QString &name, const QString &oldOwner, const QString &newOwner) { onNameOwnerChanged(name, oldOwner, newOwner); }
 private:

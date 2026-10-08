@@ -770,7 +770,14 @@ public Q_SLOTS:
         }
         out.flush();
     }
-    void peaks(const QVariantMap &p) {
+    // ops-krv2d: connected with the explicit signature a{sd}. Before, a QVariantMap slot took any type, and QtDBus
+    // demarshalled the documented a{sd} as a{sv} and crashed (SIGSEGV in QDBusArgument::operator>>(QDBusVariant&)).
+    void peaks(const QMap<QString, double> &raw) {
+        QVariantMap p;
+        for (auto it = raw.cbegin(); it != raw.cend(); ++it) p.insert(it.key(), it.value());
+        peaksMap(p);
+    }
+    void peaksMap(const QVariantMap &p) {
         // The first tick after Subscribe() is empty: the daemon is still building the peak streams for the
         // targets it just learned about. `--once` waits for a tick that actually carries readings.
         // 🔴 "not empty" was the wrong bar (fixed 2026-09-19 while chasing the FX-10 test). Building those
@@ -1562,7 +1569,7 @@ struct Cli {
         const bool once = a.contains(QStringLiteral("--once"));
         g_once = once;
         auto *w = new Watcher; w->setParent(&app);
-        QDBusConnection::sessionBus().connect(BUS, ROOT, "org.kmixdeck1.Levels", "Peaks", w, SLOT(peaks(QVariantMap)));
+        QDBusConnection::sessionBus().connect(BUS, ROOT, "org.kmixdeck1.Levels", "Peaks", "a{sd}", w, SLOT(peaks(QMap<QString,double>)));
         if (once) {   // scripts and tests want one reading, not a stream — quit after the first non-empty tick
             QObject::connect(w, &Watcher::gotPeaks, &app, [] { QCoreApplication::quit(); });
             QTimer::singleShot(4000, &app, [w] { if (!w->onceDone()) QCoreApplication::exit(int(Rejected)); });   // no tick at all = failure
@@ -1669,6 +1676,7 @@ int main(int argc, char *argv[]) {
     QCoreApplication::setApplicationName(QStringLiteral("kmixdeck"));
     QCoreApplication::setApplicationVersion(QStringLiteral(KMIXDECK_VERSION_STRING));
     qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<PortMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
+    qDBusRegisterMetaType<QMap<QString, double>>();   // Levels.Peaks a{sd} (ops-krv2d)
     QCommandLineParser p;
     // CL-1: der Hilfetext kommt GENERIERT aus docs/kmixdeck.md (hilfe_text.h,
     // erzeugt von docs/generiere-doku.py). Bis 2026-09-21 standen hier 38 Zeilen

@@ -58,7 +58,7 @@ decoration. The introspection XML in [`interfaces/`](../interfaces/) is the auth
 
 ## Level meters (ADR 0006)
 
-`org.kmixdeck1.Levels` on the root object: `Subscribe()` / `Unsubscribe()`, then one `Peaks(a{sv})`
+`org.kmixdeck1.Levels` on the root object: `Subscribe()` / `Unsubscribe()`, then one `Peaks(a{sd})`
 signal per tick (~25 Hz), keyed `channel/<slug>` and `mix/<slug>`, linear 0..1. The service only runs
 the meter graph while somebody is subscribed — call `Unsubscribe()` when your window hides.
 

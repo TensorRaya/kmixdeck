@@ -35,6 +35,7 @@ static QVariantMap plain(const QVariantMap &m) { QVariantMap r; for (auto it = m
 
 MixerClient::MixerClient(QObject *parent) : QObject(parent) {
     qDBusRegisterMetaType<StringMap>(); qDBusRegisterMetaType<PortMap>(); qDBusRegisterMetaType<InterfaceMap>(); qDBusRegisterMetaType<ManagedObjects>();
+    qDBusRegisterMetaType<QMap<QString, double>>();   // Levels.Peaks a{sd} (ops-krv2d)
     auto bus = QDBusConnection::sessionBus();
     bus.connect(BUS, QString(), QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"), this, SLOT(onPropertiesChanged(QDBusMessage)));
     bus.connect(BUS, ROOT, QStringLiteral("org.freedesktop.DBus.ObjectManager"), QStringLiteral("InterfacesAdded"), this, SLOT(onInterfacesAdded(QDBusObjectPath,InterfaceMap)));
@@ -530,22 +531,23 @@ void MixerClient::setMetersEnabled(bool on) {
     auto bus = QDBusConnection::sessionBus();
     QDBusInterface lv(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), bus);
     if (on) {
-        bus.connect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Peaks"), this, SLOT(onPeaks(QVariantMap)));
+        bus.connect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Peaks"), QStringLiteral("a{sd}"), this, SLOT(onPeaks(QMap<QString,double>)));
         bus.connect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Loudness"), this, SLOT(onLoudness(QDBusMessage)));   // UX-18
         lv.asyncCall(QStringLiteral("Subscribe"));
     } else {
-        bus.disconnect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Peaks"), this, SLOT(onPeaks(QVariantMap)));
+        bus.disconnect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Peaks"), QStringLiteral("a{sd}"), this, SLOT(onPeaks(QMap<QString,double>)));
         bus.disconnect(BUS, ROOT, QStringLiteral("org.kmixdeck1.Levels"), QStringLiteral("Loudness"), this, SLOT(onLoudness(QDBusMessage)));
         lv.asyncCall(QStringLiteral("Unsubscribe"));
         m_peaks.clear(); Q_EMIT peaksChanged();
         m_loudness.clear(); Q_EMIT loudnessChanged();
     }
 }
-void MixerClient::onPeaks(const QVariantMap &peaks) {
-    for (auto it = peaks.cbegin(); it != peaks.cend(); ++it) m_peaks[it.key()] = it.value().toDouble();
+void MixerClient::onPeaks(const QMap<QString, double> &peaks) {
+    for (auto it = peaks.cbegin(); it != peaks.cend(); ++it) m_peaks[it.key()] = it.value();
     Q_EMIT peaksChanged();
 }
-// UX-18. Unlike Peaks (a{sd} → QVariantMap for free) the Loudness signature is a{sad}: a map to an ARRAY.
+// UX-18. Unlike Peaks (a{sd} → QMap<QString, double>, registered in the constructor) the Loudness signature is
+// a{sad}: a map to an ARRAY.
 // Qt cannot hand that to a slot as a typed argument without the metatype, and even with it the nested
 // QDBusArgument has to be demarshalled by hand — hence the raw QDBusMessage. Reading it any other way
 // yields an empty map, which looks exactly like "the daemon sends nothing".

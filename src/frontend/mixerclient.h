@@ -285,7 +285,7 @@ Q_SIGNALS:
     void mixChanged(const QString &slug);
 
 private Q_SLOTS:
-    void onPeaks(const QVariantMap &peaks);
+    void onPeaks(const QMap<QString, double> &peaks);   // Levels.Peaks a{sd}
     void onLoudness(const QDBusMessage &msg);   // UX-18: a{sad}, needs the raw message to demarshal
     void onPropertiesChanged(const QDBusMessage &msg);
     void onInterfacesAdded(const QDBusObjectPath &path, const InterfaceMap &ifaces);
