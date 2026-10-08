@@ -37,6 +37,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -83,15 +84,28 @@ def _kein_daemon_ueberlebt_den_lauf():
     # zurueck. Ohne diesen Schritt sammeln sie sich unbegrenzt (fuenf Stueck waren es,
     # bevor ich hingesehen habe). Nur Verzeichnisse ohne lebenden Prozess anfassen,
     # damit ein parallel laufender Testlauf nichts unter den Fuessen verliert.
+    # Older than a minute as well: a parallel session's dir exists from mkdtemp() on, but its pipewire starts only
+    # after the config copy, so for a moment it has no living process and would look like a leftover.
     for d in vorher:
-        if not _hat_lebenden_prozess(d):
+        if not _hat_lebenden_prozess(d) and _aelter_als(d, 60):
             shutil.rmtree(d, ignore_errors=True)
     try:
         yield
     finally:
         subprocess.Popen = _ECHTER_POPEN  # type: ignore[misc]
-        for d in set(Path(tempfile.gettempdir()).glob("kmixdeck-pw-*")) - vorher:
+        # Only what THIS session created. Until 2026-10-08 this removed every kmixdeck-pw-* that appeared since the
+        # session started, which under `ctest -j2` includes the LIVE sandbox of the suite running next to it: its
+        # bus and PipeWire sockets vanished mid-run ("no session bus", pw-dump rc 255). ops-kes94.
+        from pw_sandbox import CREATED_RUNTIME_DIRS
+        for d in CREATED_RUNTIME_DIRS:
             shutil.rmtree(d, ignore_errors=True)
+
+
+def _aelter_als(verzeichnis: Path, sekunden: float) -> bool:
+    try:
+        return time.time() - verzeichnis.stat().st_mtime > sekunden
+    except OSError:
+        return False
 
 
 def _hat_lebenden_prozess(verzeichnis: Path) -> bool:

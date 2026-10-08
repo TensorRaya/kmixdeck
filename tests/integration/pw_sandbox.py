@@ -476,12 +476,21 @@ class PwDaemon:
         shutil.rmtree(self.runtime_dir, ignore_errors=True)
 
 
+# Every sandbox dir this process created. conftest's session finalizer removes exactly these and nothing else:
+# under `ctest -j2` two pytest sessions share $TMPDIR, and a finalizer that swept every new kmixdeck-pw-* deleted
+# the live sandbox of the suite next to it (ops-kes94, A/B 2026-10-08: 47/47 alone, 36 failed when the other
+# session ended first).
+CREATED_RUNTIME_DIRS: set[Path] = set()
+
+
 def start_private_pipewire(extra_conf: Path | None = PROTOTYPE_CONF, session_conf: str | None = None,
                            runtime_dir: Path | None = None) -> PwDaemon:
     """session_conf: extra PipeWire context.properties text (DV-4: e.g. a 44.1 kHz / 256 quantum session).
     runtime_dir: an empty directory to use instead of a fresh one under $TMPDIR (the Hyprland sandbox needs a short
     path for its sockets)."""
     rt = runtime_dir or Path(tempfile.mkdtemp(prefix="kmixdeck-pw-"))
+    if runtime_dir is None:
+        CREATED_RUNTIME_DIRS.add(rt)
     (rt / "pipewire.conf.d").mkdir()
     if session_conf: (rt / "pipewire.conf.d" / "10-session.conf").write_text(session_conf)
     state = rt / "state"; state.mkdir()
