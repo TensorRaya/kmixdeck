@@ -102,6 +102,12 @@ public:
     Q_INVOKABLE bool    channelCapture(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Capture")).toBool(); }
     Q_INVOKABLE QString channelCaptureSource(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("CaptureSource")).toString(); }
     Q_INVOKABLE void    setChannelCapture(const QString &slug, bool on);
+    // CT-10: playback into a channel. channelNowPlaying is the sounding track's title, "" when idle.
+    Q_INVOKABLE bool        channelPlayback(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("Playback")).toBool(); }
+    Q_INVOKABLE QString     channelNowPlaying(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("NowPlaying")).toString(); }
+    Q_INVOKABLE QStringList channelPlayQueue(const QString &slug) const { return m_channels.value(slug).value(QStringLiteral("PlayQueue")).toStringList(); }
+    Q_INVOKABLE void        setChannelPlayback(const QString &slug, bool on);
+    Q_INVOKABLE void        stopChannelPlayback(const QString &slug);   // the sounding track and the whole queue
     Q_INVOKABLE double channelTrim(const QString &slug) const { return std::cbrt(m_channels.value(slug).value(QStringLiteral("Trim"), 1.0).toDouble()); }   // CH-7, cubic like every fader
     Q_INVOKABLE void   setChannelTrim(const QString &slug, double cubic);
     Q_INVOKABLE void   addChannel(const QString &name);

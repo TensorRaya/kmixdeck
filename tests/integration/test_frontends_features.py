@@ -487,3 +487,72 @@ def test_ct6_channel_capture_switch_in_the_window_the_routing_page_and_the_web(s
             web.close()
     finally:
         stack.cli("channel", "capture", "voice", "off", check=False)
+
+
+def test_ct10_playback_switch_and_stop_in_the_window_and_the_web(stack, tmp_path):
+    """CT-10 is tier full: CLI (test_playback), KDE window and web UI. "Accept playback" is flipped through each
+    frontend's own menu entry and read back from the bus; "Stop playback" ends a track that is really sounding
+    (level on the channel sink before, silence and result 'stopped' after), and the title of the sounding track is
+    what the window row and the web channel show."""
+    from test_web import Web, _click, _menu_click
+    from chrome_driver import Chrome, CHROME
+    from test_service_cli import BIN
+    slug, node = "voice", "kmixdeck.channel.voice"
+    clip = tmp_path / "long.wav"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=1000:duration=30:sample_rate=48000",
+                    "-ac", "2", str(clip)], check=True)
+    playback = lambda: stack.cli("channel", "playback", slug, json_out=True)   # noqa: E731
+
+    def start_track(title):
+        p = subprocess.Popen([str(BIN / "kmixdeck"), "channel", "play", slug, str(clip), "--title", title, "--wait"],
+                             env=stack.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        assert p.stdout.readline().strip().isdigit()
+        wait_level(lambda: stack.pw.level_at(node), lambda v: v > -50, what=f"'{title}' on {node}")
+        return p
+
+    def ended_stopped(p):
+        _out, err = p.communicate(timeout=10)
+        assert p.returncode == 4 and "stopped" in err, (p.returncode, err)
+        wait_level(lambda: stack.pw.level_at(node), lambda v: v < -60, what="silence after Stop playback")
+
+    p = None
+    try:
+        # window: the row menu item turns it on
+        g = kde(stack, "--gesture", f"playback:{slug}", open_page="mixer")
+        assert g == [f"gesture playback:{slug} -> ok"], g
+        wait_for(lambda: playback()["playback"] is True, timeout=4.0, what="Playback on after the window click")
+        # Stop is disabled while nothing plays — the gesture says so instead of clicking a dead item
+        assert kde(stack, "--gesture", f"stopplayback:{slug}", open_page="mixer") != [f"gesture stopplayback:{slug} -> ok"]
+        p = start_track("Window song")
+        # the row knows the title (tooltip + the enabled Stop item come from it; a menu item exists only while open,
+        # so the gesture below is what proves Stop is enabled: it refuses a disabled item)
+        r = window(stack, f"channelHeader/{slug}.nowPlaying", open_page="mixer")
+        assert r.get(f"channelHeader/{slug}.nowPlaying") == "Window song", r
+        assert kde(stack, "--gesture", f"stopplayback:{slug}", open_page="mixer") == [f"gesture stopplayback:{slug} -> ok"]
+        ended_stopped(p); p = None
+        # the same item turns it off again
+        assert kde(stack, "--gesture", f"playback:{slug}", open_page="mixer") == [f"gesture playback:{slug} -> ok"]
+        wait_for(lambda: playback()["playback"] is False, timeout=4.0, what="Playback off after the second window click")
+
+        # web UI: the channel menu entries do the same
+        if not CHROME: pytest.skip("no chrome/chromium for the web UI")
+        web = Web(stack, token="")
+        try:
+            with Chrome(web.url, size=(1280, 800)) as ch:
+                ch.wait("window.kmixdeck && window.kmixdeck.state.connected && document.querySelector('[data-probe=\"channelMenuButton/voice\"]')", 15)
+                _click(ch, f"channelMenuButton/{slug}"); _menu_click(ch, "Accept playback")
+                wait_for(lambda: playback()["playback"] is True, timeout=4.0, what="Playback on after the web click")
+                p = start_track("Web song")
+                ch.wait("document.querySelector('[data-probe=\"channelNowPlaying/voice\"]') && "
+                        "document.querySelector('[data-probe=\"channelNowPlaying/voice\"]').textContent.includes('Web song')", 5)
+                _click(ch, f"channelMenuButton/{slug}"); _menu_click(ch, "Stop playback")
+                ended_stopped(p); p = None
+                ch.wait("!document.querySelector('[data-probe=\"channelNowPlaying/voice\"]')", 5)
+                _click(ch, f"channelMenuButton/{slug}"); _menu_click(ch, "Accept playback")
+                wait_for(lambda: playback()["playback"] is False, timeout=4.0, what="Playback off after the second web click")
+        finally:
+            web.close()
+    finally:
+        if p is not None and p.poll() is None:
+            stack.cli("channel", "stop", slug, check=False); p.wait(10)
+        stack.cli("channel", "playback", slug, "off", check=False)

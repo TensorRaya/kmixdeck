@@ -91,6 +91,14 @@ Ducking = "The channel's ducking configuration as JSON, or empty when it does no
 DuckReduction = "How many dB this channel is being attenuated by ducking RIGHT NOW: 0 while nothing triggers, negative while it does. A UI shows this live; it is not a setting."
 SetDucking = "Configures ducking from a JSON object (trigger channel, threshold, reduction, attack/release) and answers whether it was accepted. A method rather than a property write, because a refusal has a reason that has to reach the user."
 
+# CT-10 playback into a channel (ADR 0016)
+Playback = "Opt-in switch (CT-10): whether clients may play audio into this channel with `Play`. Off by default and persisted; turning it off stops the sounding track and drops the queue."
+NowPlaying = "Title of the track sounding in this channel right now, empty when idle. Changes with `PropertiesChanged`, so a frontend shows it without polling."
+PlayQueue = "Titles of the tracks waiting behind `NowPlaying`, in order. At most 8 tracks per channel, sounding and waiting together."
+Play = "Play the audio behind the unix fd (a regular file, a memfd or a pipe; wav, flac, ogg, mp3, aac, m4a, mka/webm) into this channel after everything already queued, and return its track id. The daemon dups the fd and reads it while the track plays, so a pipe streams. Refused with a D-Bus error naming the reason: `org.kmixdeck1.Error.PlaybackOff`, `.QueueFull`, `.NoFdPassing` or `InvalidArgs` for a bad fd."
+StopPlayback = "End one track of this channel, sounding or waiting, with the result `stopped`. Id 0 ends the sounding track and every waiting one. A stopped waiting track never sounds."
+PlaybackEnded = "Emitted exactly once per track id with the result: `played` (the end of the input was heard), `stopped` (StopPlayback, the switch went off, the channel was removed) or `error: <reason>` (undecodable input, read error). The next waiting track starts right after."
+
 # CT-8
 Kind = "What kind of channel this is: `channel` for a normal one, `soundboard` for one that accepts samples. Frontends need it to decide whether to offer sample controls at all."
 

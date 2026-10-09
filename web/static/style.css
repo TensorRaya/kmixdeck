@@ -73,6 +73,7 @@ main { padding: 12px; overflow: auto; }
 .badge.short { font-size: 0; min-width: 0; padding: 0 6px; }
 .badge.short::before { content: attr(data-short); font-size: 11px; }
 .badge-duck { background: var(--warn-bg, #4a3a1a); border-color: var(--warn, #b8863b); color: var(--warn-fg, #f0d6a0); }
+.badge-playing { border-color: var(--accent-ok, #3b8f5a); }   /* CT-10: NowPlaying on the channel */
 .spacer { flex: 1; }
 .hrow { display: flex; align-items: center; gap: 4px; min-height: 36px; }
 .hrow .fader { min-width: 72px; }

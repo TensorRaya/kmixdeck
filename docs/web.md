@@ -88,9 +88,55 @@ The UI is plain ES modules in `web/static/` — no build step, no framework. `ap
 `client.js` (socket, state, patches), `mixer.js`, `apps.js`, `patchbay.js`, `fx.js`, `duck.js`, `widgets.js`. Every interactive element
 carries a `data-probe` attribute; that is what the integration tests drive.
 
+## Play endpoint — audio into a channel over HTTP (opt-in)
+
+For a program on another machine that wants to play audio into one channel — text to speech rendered elsewhere, a
+music player — the bridge can open a second, separate listener (CT-10, ADR 0016). The daemon itself never listens on
+the network; this is the one place that does.
+
+```sh
+kmixdeck channel playback tts_voice on             # the channel must accept playback (off by default)
+kmixdeck-web --play 0.0.0.0:7421                   # prints the endpoint; the token is in ~/.config/kmixdeck/play-token
+```
+
+- **Own token, own scope.** `--play` uses `$XDG_CONFIG_HOME/kmixdeck/play-token` (created on first use, mode 0600; `--play-token`
+  overrides it for tests), compared in constant time. It is not the web-UI token and the web-UI token does not open it. With it a
+  client can only play audio into a channel whose **Accept playback** switch is on — no faders, no routing, no state.
+- `POST /channel/<slug>/play[?title=<urlencoded>]` with `Authorization: Bearer <token>` and a `Content-Length` (no chunked
+  bodies); the body is an audio file (WAV, FLAC, OGG, MP3, AAC/M4A, MKA/WebM). It is held in RAM (a memfd), never written to disk.
+  The request **blocks until the clip ended** and then answers, as JSON:
+
+  | Status | Body | When |
+  |---|---|---|
+  | 200 | `{"ok":true,"id":N,"result":"played"}` | the clip was played to its end |
+  | 410 | `{"ok":false,"id":N,"result":"stopped"}` | stopped (`kmixdeck channel stop`, the window, the switch went off, the channel was removed) |
+  | 422 | `{"ok":false,"id":N,"result":"error: …"}` | the body could not be decoded |
+  | 401 | `{"ok":false,"error":"…"}` | missing or wrong token |
+  | 404 | | no such channel |
+  | 409 | | the channel's playback switch is off (the message names the command that turns it on) |
+  | 400 / 411 | | bad or missing `Content-Length`, chunked body |
+  | 413 | | body larger than `--play-max-bytes` (default 64 MiB) |
+  | 503 | | the channel's queue (8 tracks) is full, too many requests in flight, or the daemon is not on the bus |
+
+  401 to 413, the playback switch, and "too many requests in flight" are decided from the headers, before a byte
+  of the body is read. A full queue is the daemon's answer (`org.kmixdeck1.Error.QueueFull`): the bridge keeps no
+  copy of the limit, so that 503 comes after the upload.
+- Clips queue up per channel and play one after the other. **A client that disconnects while waiting** (it timed out, it
+  gave up) has its clip stopped: a queued clip is never played late.
+- `GET /healthz` (no token): `200 {"ok":true}` while the daemon is on the bus, otherwise `503`.
+
+```sh
+curl -sS -H "Authorization: Bearer $(cat ~/.config/kmixdeck/play-token)" --data-binary @hello.wav \
+     "http://desk:7421/channel/tts_voice/play?title=Hello"
+```
+
+The `systemd` unit does not pass `--play`; add it to an override if you want the endpoint permanently.
+
 ## Proven by
 
 `tests/integration/test_web.py` — 16 tests in headless Chrome, every step checked at the CLI: bridge + allowlist + token +
 origin, meters at 25 Hz, static-file jail, mix end-to-end (add → rename → output → fader → mute → link → remove → undo), app
 chips, patchbay menu and drag, FX drawer, export/import round trip, reconnect. The six `tier:core` rows of the requirements
-are additionally proven in the browser by `test_frontends_sync.py` next to CLI, window and tray.
+are additionally proven in the browser by `test_frontends_sync.py` next to CLI, window and tray. The play endpoint is proven by the
+`test_ct10_web_*` tests in `tests/integration/test_playback.py`: a clip is audible and answered 200 only after it ended, refusals
+before the body, result mapping, a disconnecting client's queued clip never sounds, healthz follows the daemon.

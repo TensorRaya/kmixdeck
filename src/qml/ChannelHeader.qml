@@ -26,6 +26,8 @@ Item {
     property string group: Mixer.channelGroup(channel)       // CH-8
     property bool capture: Mixer.channelCapture(channel)     // CT-6
     property string captureSource: Mixer.channelCaptureSource(channel)
+    property bool playback: Mixer.channelPlayback(channel)        // CT-10
+    property string nowPlaying: Mixer.channelNowPlaying(channel)
     // Many mixes → narrow column: no icon tile, tighter spacing, no " dB" on the trim read-out (the tooltip has it).
     readonly property bool narrow: width < Kirigami.Units.gridUnit * 16
     // What the row needs without the FX and ducking buttons. Computed from the real controls, not guessed: until
@@ -60,6 +62,8 @@ Item {
             header.group = Mixer.channelGroup(slug)
             header.capture = Mixer.channelCapture(slug)
             header.captureSource = Mixer.channelCaptureSource(slug)
+            header.playback = Mixer.channelPlayback(slug)
+            header.nowPlaying = Mixer.channelNowPlaying(slug)
         }
     }
 
@@ -81,6 +85,24 @@ Item {
         }
         ctxMenu.close()
         return "<no capture item>"
+    }
+    // CT-10 test hooks: the real "Accept playback" / "Stop playback" items, as a click would trigger them
+    function menuItemByName(name) {
+        for (let i = 0; i < ctxMenu.count; ++i) { const it = ctxMenu.itemAt(i); if (it && it.objectName === name) return it }
+        return null
+    }
+    function gesturePlayback() {
+        ctxMenu.popup()
+        const it = menuItemByName("channelPlayback/" + header.channel)
+        if (it) { it.toggle(); it.triggered(); ctxMenu.close(); return "" }
+        ctxMenu.close(); return "<no playback item>"
+    }
+    function gestureStopPlayback() {
+        ctxMenu.popup()
+        const it = menuItemByName("channelStopPlayback/" + header.channel)
+        if (!it) { ctxMenu.close(); return "<no stop playback item>" }
+        if (!it.enabled) { ctxMenu.close(); return "<stop playback disabled: nothing playing>" }
+        it.triggered(); ctxMenu.close(); return ""
     }
     DropArea {
         objectName: "channelDrop/" + header.channel
@@ -455,6 +477,27 @@ Item {
                 ? i18n("Recorders and OBS see this channel alone as the input “%1”.", header.captureSource)
                 : i18n("Offer this channel alone as an input for OBS or a recorder, as a separate track.")
             QQC2.ToolTip.visible: hovered
+        }
+        QQC2.MenuItem {   // CT-10: clients (TTS, a music player, `kmixdeck channel play`) may play audio into this channel
+            objectName: "channelPlayback/" + header.channel
+            text: i18n("Accept playback")
+            icon.name: "media-playback-start"
+            checkable: true
+            checked: header.playback
+            onTriggered: Mixer.setChannelPlayback(header.channel, checked)
+            QQC2.ToolTip.text: header.nowPlaying.length > 0
+                ? i18n("Playing now: %1", header.nowPlaying)
+                : i18n("Let programs play audio into this channel (text to speech, music), one track after the other.")
+            QQC2.ToolTip.visible: hovered
+        }
+        QQC2.MenuItem {   // CT-10
+            objectName: "channelStopPlayback/" + header.channel
+            text: i18n("Stop playback")
+            icon.name: "media-playback-stop"
+            enabled: header.nowPlaying.length > 0
+            onTriggered: Mixer.stopChannelPlayback(header.channel)
+            QQC2.ToolTip.text: header.nowPlaying.length > 0 ? i18n("Stops “%1” and drops every track waiting behind it.", header.nowPlaying) : ""
+            QQC2.ToolTip.visible: hovered && header.nowPlaying.length > 0
         }
         QQC2.MenuItem {
             text: i18n("New applications start here")

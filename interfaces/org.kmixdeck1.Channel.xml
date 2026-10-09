@@ -22,6 +22,29 @@
          Off by default; persisted. CaptureSource is the node name while it is in the graph, "" otherwise. -->
     <property name="Capture" type="b" access="readwrite"/>
     <property name="CaptureSource" type="s" access="read"/>
+    <!-- CT-10: playback into this channel. Playback is the opt-in switch (off by default, persisted); while it is off
+         Play is refused. NowPlaying is the title of the sounding track, "" when idle; PlayQueue the titles waiting
+         behind it (at most 8 tracks per channel, sounding + waiting). Both change with PropertiesChanged. -->
+    <property name="Playback" type="b" access="readwrite"/>
+    <property name="NowPlaying" type="s" access="read"/>
+    <property name="PlayQueue" type="as" access="read"/>
+    <!-- CT-10: play what is behind `audio` (a regular file, a memfd or a pipe: wav, flac, ogg, mp3, aac, m4a, mka/webm)
+         into this channel, after whatever is already queued. The daemon dups the fd and reads it while it plays.
+         Returns the track id. Refused with org.kmixdeck1.Error.PlaybackOff, .QueueFull, .NoFdPassing or InvalidArgs. -->
+    <method name="Play">
+      <arg name="audio" type="h" direction="in"/>
+      <arg name="title" type="s" direction="in"/>
+      <arg name="id" type="u" direction="out"/>
+    </method>
+    <!-- CT-10: end one track (sounding or waiting) with result "stopped"; 0 = the sounding one and the whole queue -->
+    <method name="StopPlayback">
+      <arg name="id" type="u" direction="in"/>
+    </method>
+    <!-- CT-10: exactly once per track id: "played", "stopped" or "error: <reason>" -->
+    <signal name="PlaybackEnded">
+      <arg name="id" type="u"/>
+      <arg name="result" type="s"/>
+    </signal>
     <!-- PipeWire node.name, for tools that want to link things themselves -->
     <property name="NodeName" type="s" access="read"/>
     <!-- device reference of a hardware source feeding this channel, or empty (CH-3, ADR 0007/0009):

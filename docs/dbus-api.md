@@ -92,6 +92,9 @@ One row of the mixer: an input group at `/org/kmixdeck1/channel/<slug>`. Channel
 | `Muted` | bool | readwrite | Channel mute, applied on top of every cell. |
 | `Capture` | bool | readwrite | Opt-in capture source of this channel alone, for multi-track recording (CT-6). Off by default. The source taps the channel after FX, trim, pan, mute and ducking and before every cell and mix fader. |
 | `CaptureSource` | string | read | PipeWire node name of that source (`kmixdeck.chsource.<slug>`, description `kmixdeck <Name> Channel`) while it is in the graph, empty otherwise. This is what OBS or a recorder picks. |
+| `Playback` | bool | readwrite | Opt-in switch (CT-10): whether clients may play audio into this channel with `Play`. Off by default and persisted; turning it off stops the sounding track and drops the queue. |
+| `NowPlaying` | string | read | Title of the track sounding in this channel right now, empty when idle. Changes with `PropertiesChanged`, so a frontend shows it without polling. |
+| `PlayQueue` | string[] | read | Titles of the tracks waiting behind `NowPlaying`, in order. At most 8 tracks per channel, sounding and waiting together. |
 | `NodeName` | string | read | PipeWire node name of the channel sink, for tools that link things themselves. |
 | `InputDevice` | string | readwrite | What feeds this channel, in `<ref>` grammar (`node.name[:PORT[,PORT]][>L\|>R]`, ADR 0009). Empty = no hardware input. |
 | `InputPresent` | bool | read | False while `InputDevice` is set but the device is unplugged: grey the row out, keep the value (DV-9). |
@@ -104,6 +107,8 @@ One row of the mixer: an input group at `/org/kmixdeck1/channel/<slug>`. Channel
 ### Methods
 | Name | Signature | Meaning |
 |---|---|---|
+| `Play` | (audio: unix fd, title: string) → id: uint32 | Play the audio behind the unix fd (a regular file, a memfd or a pipe; wav, flac, ogg, mp3, aac, m4a, mka/webm) into this channel after everything already queued, and return its track id. The daemon dups the fd and reads it while the track plays, so a pipe streams. Refused with a D-Bus error naming the reason: `org.kmixdeck1.Error.PlaybackOff`, `.QueueFull`, `.NoFdPassing` or `InvalidArgs` for a bad fd. |
+| `StopPlayback` | (id: uint32) | End one track of this channel, sounding or waiting, with the result `stopped`. Id 0 ends the sounding track and every waiting one. A stopped waiting track never sounds. |
 | `SetWireTrim` | (ref: string, trim: double, muted: bool) → accepted: bool | Set trim and mute of one wire. Returns false when the ref is unknown. |
 | `WireTrim` | (ref: string) → trim: double | Trim of one wire, linear 0…1. |
 | `WireMuted` | (ref: string) → muted: bool | Per-wire mute — for a stereo pair where only one side should be audible. |
@@ -113,6 +118,11 @@ One row of the mixer: an input group at `/org/kmixdeck1/channel/<slug>`. Channel
 | `SetFx` | (chainJson: string) → accepted: bool | Replace the whole chain. Validates first; errors come back as a D-Bus error instead of a silent half-state. `{}` clears. |
 | `SetFxControl` | (control: string, value: double) → accepted: bool | Live-tweak one control without rebuilding the chain. Key is the full control name from the chain JSON, e.g. `gate:Threshold (dB)`. |
 | `SetDucking` | (duckingJson: string) → accepted: bool | Configures ducking from a JSON object (trigger channel, threshold, reduction, attack/release) and answers whether it was accepted. A method rather than a property write, because a refusal has a reason that has to reach the user. |
+
+### Signals
+| Name | Signature | Meaning |
+|---|---|---|
+| `PlaybackEnded` | (id: uint32, result: string) | Emitted exactly once per track id with the result: `played` (the end of the input was heard), `stopped` (StopPlayback, the switch went off, the channel was removed) or `error: <reason>` (undecodable input, read error). The next waiting track starts right after. |
 
 ## `org.kmixdeck1.Mix`
 One column of the mixer: an output group at `/org/kmixdeck1/mix/<slug>`. A mix sums its cells and plays to one or more hardware outputs.

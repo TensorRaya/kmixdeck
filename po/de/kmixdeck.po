@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kmixdeck\n"
 "Report-Msgid-Bugs-To: https://github.com/TensorRaya/kmixdeck/issues\n"
-"POT-Creation-Date: 2026-10-07 16:15+0200\n"
+"POT-Creation-Date: 2026-10-09 15:19+0200\n"
 "PO-Revision-Date: 2026-09-17 14:00+0200\n"
 "Last-Translator: Raya Elena Solano\n"
 "Language-Team: German\n"
@@ -130,19 +130,19 @@ msgstr "%1 stumm"
 msgid "%1 unmuted"
 msgstr "%1 hörbar"
 
-#: src/frontend/mixerclient.cpp:303
+#: src/frontend/mixerclient.cpp:311
 #, kde-format
 msgctxt "@label ref bound to the left side only"
 msgid " → L"
 msgstr " → L"
 
-#: src/frontend/mixerclient.cpp:304
+#: src/frontend/mixerclient.cpp:312
 #, kde-format
 msgctxt "@label ref bound to the right side only"
 msgid " → R"
 msgstr " → R"
 
-#: src/frontend/mixerclient.cpp:328
+#: src/frontend/mixerclient.cpp:336
 #, kde-format
 msgid ""
 "Connect a source to a channel, a channel to a mix, or a mix to an output."
@@ -150,34 +150,34 @@ msgstr ""
 "Eine Quelle mit einem Kanal verbinden, einen Kanal mit einem Mix oder einen "
 "Mix mit einem Ausgang."
 
-#: src/frontend/mixerclient.cpp:343
+#: src/frontend/mixerclient.cpp:351
 #, kde-format
 msgid "The capture device of a mix is always connected."
 msgstr "Das Aufnahmegerät eines Mixes ist immer verbunden."
 
-#: src/frontend/mixerclient.cpp:344
+#: src/frontend/mixerclient.cpp:352
 #, kde-format
 msgid "A device feeds a channel, not a mix — add a channel first."
 msgstr "Ein Gerät speist einen Kanal, keinen Mix — zuerst einen Kanal anlegen."
 
-#: src/frontend/mixerclient.cpp:345
+#: src/frontend/mixerclient.cpp:353
 #, kde-format
 msgid "These two cannot be wired."
 msgstr "Diese beiden lassen sich nicht verbinden."
 
-#: src/frontend/mixerclient.cpp:404
+#: src/frontend/mixerclient.cpp:412
 #, kde-format
 msgctxt "@label stereo row"
 msgid "1 (L)"
 msgstr "1 (L)"
 
-#: src/frontend/mixerclient.cpp:404
+#: src/frontend/mixerclient.cpp:412
 #, kde-format
 msgctxt "@label stereo row"
 msgid "2 (R)"
 msgstr "2 (R)"
 
-#: src/frontend/mixerclient.cpp:463 src/qml/RoutingPage.qml:164
+#: src/frontend/mixerclient.cpp:471 src/qml/RoutingPage.qml:164
 #, kde-format
 msgid "Capture: %1"
 msgstr "Aufnahme: %1"
@@ -381,7 +381,7 @@ msgstr "Anderem Mix folgen …"
 msgid "Follow %1"
 msgstr "%1 folgen"
 
-#: src/qml/ChannelHeader.qml:66
+#: src/qml/ChannelHeader.qml:70
 #, kde-format
 msgid ""
 "Hardware input feeding this channel — click the input line to change it. "
@@ -390,214 +390,214 @@ msgstr ""
 "Hardware-Eingang, der diesen Kanal speist — auf die Eingangszeile klicken, "
 "um ihn zu ändern. Anwendungen lassen sich unabhängig davon hierher routen."
 
-#: src/qml/ChannelHeader.qml:128 src/qml/MixHeader.qml:206
+#: src/qml/ChannelHeader.qml:150 src/qml/MixHeader.qml:206
 #, kde-format
 msgid "Change icon"
 msgstr "Symbol ändern"
 
-#: src/qml/ChannelHeader.qml:191
+#: src/qml/ChannelHeader.qml:213
 #, kde-format
 msgid "Group %1: these channels move together (trim and mute)"
 msgstr "Gruppe %1: diese Kanäle bewegen sich gemeinsam (Trim und Stumm)"
 
-#: src/qml/ChannelHeader.qml:195
+#: src/qml/ChannelHeader.qml:217
 #, kde-format
 msgid "in group %1"
 msgstr "in Gruppe %1"
 
-#: src/qml/ChannelHeader.qml:205
+#: src/qml/ChannelHeader.qml:227
 #, kde-format
 msgctxt "@info ducked by channel, with the reduction happening now"
 msgid "↓ %1 %2 dB"
 msgstr "↓ %1 %2 dB"
 
-#: src/qml/ChannelHeader.qml:206
+#: src/qml/ChannelHeader.qml:228
 #, kde-format
 msgctxt "@info ducked by this channel"
 msgid "↓ %1"
 msgstr "↓ %1"
 
-#: src/qml/ChannelHeader.qml:226
+#: src/qml/ChannelHeader.qml:248
 #, kde-format
 msgid "Ducked by %1 — turns down while that channel carries signal"
 msgstr "Wird von %1 abgesenkt — leiser, solange dieser Kanal Signal führt"
 
-#: src/qml/ChannelHeader.qml:231
+#: src/qml/ChannelHeader.qml:253
 #, kde-format
 msgid "ducked by %1"
 msgstr "von %1 abgesenkt"
 
-#: src/qml/ChannelHeader.qml:244
+#: src/qml/ChannelHeader.qml:266
 #, kde-format
 msgid "Effects and ducking are on — see ⋮"
 msgstr "Effekte und Absenken sind aktiv — siehe ⋮"
 
-#: src/qml/ChannelHeader.qml:245
+#: src/qml/ChannelHeader.qml:267
 #, kde-format
 msgid "Effects are on — see ⋮"
 msgstr "Effekte sind aktiv — siehe ⋮"
 
-#: src/qml/ChannelHeader.qml:245
+#: src/qml/ChannelHeader.qml:267
 #, kde-format
 msgid "Ducking is on — see ⋮"
 msgstr "Absenken ist aktiv — siehe ⋮"
 
-#: src/qml/ChannelHeader.qml:259
+#: src/qml/ChannelHeader.qml:281
 #, kde-format
 msgctxt "@label channel has no hardware input, apps only (short)"
 msgid "Apps"
 msgstr "Apps"
 
-#: src/qml/ChannelHeader.qml:259
+#: src/qml/ChannelHeader.qml:281
 #, kde-format
 msgctxt "@label channel has no hardware input, apps only"
 msgid "Apps only"
 msgstr "Nur Apps"
 
-#: src/qml/ChannelHeader.qml:261
+#: src/qml/ChannelHeader.qml:283
 #, kde-format
 msgctxt "@label %1 device name, device is unplugged"
 msgid "%1 (unplugged)"
 msgstr "%1 (nicht verbunden)"
 
-#: src/qml/ChannelHeader.qml:276
+#: src/qml/ChannelHeader.qml:298
 #, kde-format
 msgid "Unmute channel"
 msgstr "Kanal hörbar"
 
-#: src/qml/ChannelHeader.qml:276
+#: src/qml/ChannelHeader.qml:298
 #, kde-format
 msgid "Mute channel"
 msgstr "Kanal stumm"
 
-#: src/qml/ChannelHeader.qml:290
+#: src/qml/ChannelHeader.qml:312
 #, kde-format
 msgctxt "@label trim dial of channel %1"
 msgid "Trim of %1"
 msgstr "Trim von %1"
 
-#: src/qml/ChannelHeader.qml:299
+#: src/qml/ChannelHeader.qml:321
 #, kde-format
 msgid "Trim — double-click for 0 dB"
 msgstr "Trim — Doppelklick für 0 dB"
 
-#: src/qml/ChannelHeader.qml:320
+#: src/qml/ChannelHeader.qml:342
 #, kde-format
 msgctxt "@label pan dial of channel %1"
 msgid "Pan of %1"
 msgstr "Pan von %1"
 
-#: src/qml/ChannelHeader.qml:329
+#: src/qml/ChannelHeader.qml:351
 #, kde-format
 msgid "Pan — double-click for centre"
 msgstr "Pan — Doppelklick für Mitte"
 
-#: src/qml/ChannelHeader.qml:338
+#: src/qml/ChannelHeader.qml:360
 #, kde-format
 msgctxt "@label pan centre"
 msgid "C"
 msgstr "M"
 
-#: src/qml/ChannelHeader.qml:338
+#: src/qml/ChannelHeader.qml:360
 #, kde-format
 msgctxt "@label pan left %1 percent"
 msgid "L%1"
 msgstr "L%1"
 
-#: src/qml/ChannelHeader.qml:338
+#: src/qml/ChannelHeader.qml:360
 #, kde-format
 msgctxt "@label pan right %1 percent"
 msgid "R%1"
 msgstr "R%1"
 
-#: src/qml/ChannelHeader.qml:353
+#: src/qml/ChannelHeader.qml:375
 #, kde-format
 msgid "Channel level (what every mix receives)"
 msgstr "Kanalpegel (was jeder Mix bekommt)"
 
-#: src/qml/ChannelHeader.qml:367
+#: src/qml/ChannelHeader.qml:389
 #, kde-format
 msgid "Listen to this channel"
 msgstr "Diesen Kanal anhören"
 
-#: src/qml/ChannelHeader.qml:382 src/qml/ChannelHeader.qml:445
+#: src/qml/ChannelHeader.qml:404 src/qml/ChannelHeader.qml:467
 #: src/qml/MixHeader.qml:307
 #, kde-format
 msgid "Effects (active)…"
 msgstr "Effekte (aktiv) …"
 
-#: src/qml/ChannelHeader.qml:382 src/qml/ChannelHeader.qml:445
+#: src/qml/ChannelHeader.qml:404 src/qml/ChannelHeader.qml:467
 #: src/qml/MixHeader.qml:307 src/qml/MixHeader.qml:332
 #, kde-format
 msgid "Effects…"
 msgstr "Effekte …"
 
-#: src/qml/ChannelHeader.qml:394 src/qml/ChannelHeader.qml:446
+#: src/qml/ChannelHeader.qml:416 src/qml/ChannelHeader.qml:468
 #, kde-format
 msgid "Ducking (active)…"
 msgstr "Absenken (aktiv)…"
 
-#: src/qml/ChannelHeader.qml:394 src/qml/ChannelHeader.qml:446
+#: src/qml/ChannelHeader.qml:416 src/qml/ChannelHeader.qml:468
 #, kde-format
 msgid "Ducking…"
 msgstr "Absenken…"
 
-#: src/qml/ChannelHeader.qml:404
+#: src/qml/ChannelHeader.qml:426
 #, kde-format
 msgid "Channel actions"
 msgstr "Kanalaktionen"
 
-#: src/qml/ChannelHeader.qml:413 src/qml/MixHeader.qml:317
+#: src/qml/ChannelHeader.qml:435 src/qml/MixHeader.qml:317
 #, kde-format
 msgid "Rename…"
 msgstr "Umbenennen …"
 
-#: src/qml/ChannelHeader.qml:414 src/qml/MixHeader.qml:318
+#: src/qml/ChannelHeader.qml:436 src/qml/MixHeader.qml:318
 #, kde-format
 msgid "Icon…"
 msgstr "Symbol …"
 
-#: src/qml/ChannelHeader.qml:417
+#: src/qml/ChannelHeader.qml:439
 #, kde-format
 msgid "Group"
 msgstr "Gruppe"
 
-#: src/qml/ChannelHeader.qml:431
+#: src/qml/ChannelHeader.qml:453
 #, kde-format
 msgid "New group…"
 msgstr "Neue Gruppe …"
 
-#: src/qml/ChannelHeader.qml:432
+#: src/qml/ChannelHeader.qml:454
 #, kde-format
 msgid "Leave group"
 msgstr "Gruppe verlassen"
 
-#: src/qml/ChannelHeader.qml:436
+#: src/qml/ChannelHeader.qml:458
 #, kde-format
 msgid "Move up"
 msgstr "Nach oben"
 
-#: src/qml/ChannelHeader.qml:441
+#: src/qml/ChannelHeader.qml:463
 #, kde-format
 msgid "Move down"
 msgstr "Nach unten"
 
-#: src/qml/ChannelHeader.qml:444
+#: src/qml/ChannelHeader.qml:466
 #, kde-format
 msgid "Hardware input…"
 msgstr "Hardware-Eingang …"
 
-#: src/qml/ChannelHeader.qml:449
+#: src/qml/ChannelHeader.qml:471
 #, kde-format
 msgid "Separate capture source"
 msgstr "Eigene Aufnahmequelle"
 
-#: src/qml/ChannelHeader.qml:455
+#: src/qml/ChannelHeader.qml:477
 #, kde-format
 msgid "Recorders and OBS see this channel alone as the input “%1”."
 msgstr "Aufnahmeprogramme und OBS sehen diesen Kanal allein als Eingang „%1“."
 
-#: src/qml/ChannelHeader.qml:456
+#: src/qml/ChannelHeader.qml:478
 #, kde-format
 msgid ""
 "Offer this channel alone as an input for OBS or a recorder, as a separate "
@@ -606,29 +606,58 @@ msgstr ""
 "Diesen Kanal allein als Eingang für OBS oder ein Aufnahmeprogramm anbieten, "
 "als eigene Spur."
 
-#: src/qml/ChannelHeader.qml:460
+#: src/qml/ChannelHeader.qml:483
+#, kde-format
+msgid "Accept playback"
+msgstr "Wiedergabe annehmen"
+
+#: src/qml/ChannelHeader.qml:489
+#, kde-format
+msgid "Playing now: %1"
+msgstr "Spielt gerade: %1"
+
+#: src/qml/ChannelHeader.qml:490
+#, kde-format
+msgid ""
+"Let programs play audio into this channel (text to speech, music), one track "
+"after the other."
+msgstr ""
+"Programme dürfen Audio in diesen Kanal abspielen (Sprachausgabe, Musik), ein "
+"Titel nach dem anderen."
+
+#: src/qml/ChannelHeader.qml:495
+#, kde-format
+msgid "Stop playback"
+msgstr "Wiedergabe stoppen"
+
+#: src/qml/ChannelHeader.qml:499
+#, kde-format
+msgid "Stops “%1” and drops every track waiting behind it."
+msgstr "Stoppt „%1“ und verwirft alle Titel, die dahinter warten."
+
+#: src/qml/ChannelHeader.qml:503
 #, kde-format
 msgid "New applications start here"
 msgstr "Neue Anwendungen starten hier"
 
-#: src/qml/ChannelHeader.qml:467
+#: src/qml/ChannelHeader.qml:510
 #, kde-format
 msgid "Remove channel"
 msgstr "Kanal entfernen"
 
-#: src/qml/ChannelHeader.qml:472
+#: src/qml/ChannelHeader.qml:515
 #, kde-format
 msgctxt "@item channel input"
 msgid "No hardware input"
 msgstr "Kein Hardware-Eingang"
 
-#: src/qml/ChannelHeader.qml:492
+#: src/qml/ChannelHeader.qml:535
 #, kde-format
 msgctxt "@item pick single ports of a multichannel input"
 msgid "%1 · ports…"
 msgstr "%1 · Ports …"
 
-#: src/qml/ChannelHeader.qml:506
+#: src/qml/ChannelHeader.qml:549
 #, kde-format
 msgctxt "@item unplugged device kept as selection"
 msgid "%1 (unplugged)"
@@ -1074,12 +1103,12 @@ msgstr ""
 msgid "e.g. Music & Game"
 msgstr "z. B. Musik & Game"
 
-#: src/qml/Main.qml:639
+#: src/qml/Main.qml:645
 #, kde-format
 msgid "The kmixdeck service (kmixdeckd) is not running."
 msgstr "Der kmixdeck-Dienst (kmixdeckd) läuft nicht."
 
-#: src/qml/Main.qml:640
+#: src/qml/Main.qml:646
 #, kde-format
 msgid "kmixdeckd has no connection to PipeWire."
 msgstr "kmixdeckd hat keine Verbindung zu PipeWire."

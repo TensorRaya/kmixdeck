@@ -16,7 +16,7 @@ root = pathlib.Path(__file__).resolve().parent.parent
 desc = tomllib.loads((root / "docs/dbus-descriptions.toml").read_text())
 ORDER = ["Mixer", "Channel", "Mix", "Cell", "App", "Levels"]
 SIG = {"s": "string", "b": "bool", "d": "double", "i": "int32", "u": "uint32", "o": "object path", "as": "string[]",
-       "ao": "object path[]", "a{ss}": "dict<string,string>", "a{sd}": "dict<string,double>", "a{sv}": "dict<string,variant>"}
+       "ao": "object path[]", "a{ss}": "dict<string,string>", "a{sd}": "dict<string,double>", "a{sv}": "dict<string,variant>", "h": "unix fd"}
 def ty(t): return SIG.get(t, f"`{t}`")
 
 out, missing, total = [], [], 0

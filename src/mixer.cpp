@@ -18,6 +18,7 @@
 #include <QJsonArray>
 #include <QSet>
 #include <cmath>
+#include <unistd.h>
 
 namespace kmixdeck {
 
@@ -48,6 +49,19 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
             if (!channel.isEmpty()) break;
         }
         Q_EMIT sampleStateChanged(channel, name, false);
+    });
+
+    // CT-10: the Player asks where a channel is entered when a track STARTS (a queued track must not inherit the
+    // entry of a chain that has been switched since), and reports every end exactly once.
+    m_player.setTargetResolver([this](const QString &slug) { return m_layout.channel(slug) ? fxTarget(slug) : QString(); });
+    connect(&m_player, &pw::Player::changed, this, [this](const QString &slug) { Q_EMIT channelChanged(slug); });
+    connect(&m_player, &pw::Player::ended, this, [this](const QString &slug, quint32 id, const QString &result) { Q_EMIT playbackEnded(slug, id, result); });
+    connect(&m_player, &pw::Player::started, this, [this](const QString &slug, quint32) {
+        // Started while a freshly switched-on chain was still loading: fxTarget() answered the plain sink. Move the
+        // stream onto the entry as soon as it exists, exactly like a chain switch during playback.
+        const auto *c = m_layout.channel(slug);
+        if (c && c->fx.isActive() && !m_graph.node(QStringLiteral("kmixdeck.fx.%1").arg(slug)))
+            movePlaybackWhenPresent(slug, QStringLiteral("kmixdeck.fx.%1").arg(slug), 0, 80);
     });
 
     QObject::connect(&m_graph, &pw::Graph::nodeAdded,   this, &Mixer::onNode);
@@ -240,6 +254,7 @@ void Mixer::watchLayoutFile() {
         for (const auto &m : m_layout.mixes)    { bool f = false; for (const auto &mx : m_mixes)    if (mx.slug == m.slug) f = true; if (!f) m_mixes.push_back({m.slug, m.name, m.icon, true}); }
         m_layoutGeschrieben = jetzt;      // this state is now ours too — no reload on the next save
         reconcile();                      // create/remove the PipeWire objects the new layout asks for
+        dropUnwantedPlayback();           // CT-10: same rule as Import
         Q_EMIT layoutChanged();           // every frontend redraws: window, tray, web, Stream Deck
     });
 
@@ -679,12 +694,15 @@ void Mixer::applyFx(const QString &slug) {
             if ((e && sink == e->id) || (p && sink == p->id)) streams << n.id;
         }
     }
+    // CT-10: the entry node that is about to go — the playback stream must land on its SUCCESSOR, not on it
+    const uint32_t oldEntryId = [&] { const auto e = m_graph.node(entry); return e ? e->id : 0u; }();
     // drop the old chain: everything with this entry prefix (never the plain sink, cells or edges)
     destroyOurNodes([&](const QString &n) { return n == entry || n.startsWith(entry + QLatin1Char('.')) || n.startsWith(entry); });
 
     if (!chain.isActive()) {   // bypass / cleared → plain sink again; move streams back
         if (!m_graph.node(plainName)) m_graph.createNullSink(plainName, desc, !slug.isEmpty());
         for (uint32_t id : streams) m_graph.moveStream(id, plainName);
+        if (!isMix && m_player.count(slug) > 0) movePlaybackWhenPresent(slug, plainName, 0, 80);   // CT-10
         return;
     }
     if (!m_graph.node(plainName)) m_graph.createNullSink(plainName, desc, true);   // tail for the chain
@@ -708,6 +726,24 @@ void Mixer::applyFx(const QString &slug) {
     // when the chain is switched would keep bypassing it (measured 2026-09-22: a gate that must silence it moved
     // the level from -24.12 to -24.18 dB, i.e. not at all). Restart those voices against the new entry node.
     restartSoundingSamples(slug);
+    // CT-10: a playback stream is NOT restarted — a song must not jump back to its beginning because somebody
+    // touched the EQ. It is created without node.dont-reconnect (unlike a sampler voice) and with node.linger, so
+    // WirePlumber keeps it waiting while the old entry is gone and honours a new target.object: move it there.
+    // applyFx's stream collection above skips every kmixdeck.* node, which is why this needs its own call.
+    if (m_player.count(slug) > 0) movePlaybackWhenPresent(slug, entry, oldEntryId, 80);
+}
+// CT-10: wait until `target` exists as a node other than `oldId` (the chain we just destroyed may still be in the
+// registry for a moment) and the playback stream of `slug` is registered, then point the stream at it. Gives up
+// after triesLeft × 50 ms with a warning — the track then keeps whatever WirePlumber linked it to.
+void Mixer::movePlaybackWhenPresent(const QString &slug, const QString &target, uint32_t oldId, int triesLeft) {
+    if (m_player.count(slug) == 0) return;
+    const auto t = m_graph.node(target);
+    if (t && t->id != oldId && m_player.moveTo(slug, target)) {
+        qCInfo(lcMixer) << "playback: moved the stream of" << slug << "onto" << target;
+        return;
+    }
+    if (triesLeft <= 0) { qCWarning(lcMixer) << "playback: could not move the stream of" << slug << "onto" << target; return; }
+    QTimer::singleShot(50, this, [this, slug, target, oldId, triesLeft] { movePlaybackWhenPresent(slug, target, oldId, triesLeft - 1); });
 }
 // Poll (registry events are what fill m_graph) until `entry` exists, then move the streams onto it.
 // FX-6: an output edge captures Layout::mixExit(), so turning a mix chain on or off changes its source.
@@ -889,6 +925,43 @@ bool Mixer::channelCapture(const QString &slug) const { const auto *c = m_layout
 QString Mixer::channelCaptureSource(const QString &slug) const {   // CT-6
     const QString src = EdgeNames::channelSourceNode(slug);
     return channelCapture(slug) && m_graph.node(src) ? src : QString();
+}
+// ---- CT-10 playback into a channel ---------------------------------------------------------------------------------
+bool Mixer::channelPlayback(const QString &slug) const { const auto *c = m_layout.channel(slug); return c && c->playback; }
+bool Mixer::setChannelPlayback(const QString &slug, bool on) {
+    auto *c = m_layout.channel(slug); if (!c) return false;
+    if (c->playback == on) return true;
+    c->playback = on; saveLayout();
+    if (!on) m_player.stop(slug, 0);   // off means off: nothing keeps sounding, nothing waits
+    Q_EMIT channelChanged(slug);
+    return true;
+}
+quint32 Mixer::play(const QString &slug, int fd, const QString &title, QString *error, QString *errorKind) {
+    auto fail = [&](const QString &kind, const QString &why) -> quint32 {
+        if (fd >= 0) ::close(fd);
+        if (error) *error = why;
+        if (errorKind) *errorKind = kind;
+        return 0;
+    };
+    const auto *c = m_layout.channel(slug);
+    if (!c) return fail(QStringLiteral("not-found"), QStringLiteral("no channel '%1'").arg(slug));
+    if (!c->playback)
+        return fail(QStringLiteral("off"), QStringLiteral("playback is off for channel '%1' — turn it on with `kmixdeck channel playback %1 on`").arg(slug));
+    if (m_player.count(slug) >= pw::Player::kQueueLimit)
+        return fail(QStringLiteral("queue-full"), QStringLiteral("queue full: channel '%1' already holds %2 tracks").arg(slug).arg(pw::Player::kQueueLimit));
+    QString why;
+    const quint32 id = m_player.enqueue(slug, fd, title, &why);   // owns fd from here on
+    fd = -1;
+    if (!id) return fail(QStringLiteral("failed"), why);
+    return id;
+}
+int Mixer::stopPlayback(const QString &slug, quint32 id) {
+    if (!m_layout.channel(slug)) return -1;
+    return m_player.stop(slug, id);
+}
+void Mixer::dropUnwantedPlayback() {
+    for (const QString &slug : m_player.channels())
+        if (!channelPlayback(slug)) m_player.stop(slug, 0);
 }
 bool Mixer::setChannelCapture(const QString &slug, bool on) {   // CT-6
     auto *c = m_layout.channel(slug); if (!c) return false;
@@ -1997,7 +2070,7 @@ void Mixer::snapshotForUndo(const QString &kind, const QString &slug) {
         for (const auto &i : m_layout.inputs) if (i.channel == slug || i.slug == slug)
             inputs.append(QJsonObject{{QStringLiteral("slug"), i.slug}, {QStringLiteral("name"), i.name}, {QStringLiteral("device"), i.device.toJson()}, {QStringLiteral("channel"), i.channel}});
         if (auto *c = m_layout.channel(slug)) u.insert(QStringLiteral("layout"), QJsonObject{{QStringLiteral("slug"), c->slug}, {QStringLiteral("name"), c->name}, {QStringLiteral("icon"), c->icon},
-                                                                                  {QStringLiteral("capture"), c->capture}});   // CT-6
+                                                                                  {QStringLiteral("capture"), c->capture}, {QStringLiteral("playback"), c->playback}});   // CT-6, CT-10
         u.insert(QStringLiteral("wasDefault"), m_layout.defaultChannel == slug);
         // channel trim/mute live on the channel sink
         if (auto s = m_sinks.constFind(Names::channelNode(slug)); s != m_sinks.constEnd()) { u.insert(QStringLiteral("trim"), s->volume); u.insert(QStringLiteral("muted"), s->mute); }
@@ -2030,6 +2103,7 @@ bool Mixer::undo() {
     if (isCh) {
         m_layout.channels.push_back(LayoutChannel::make(slug, lay.value(QStringLiteral("name")).toString(), lay.value(QStringLiteral("icon")).toString()));
         m_layout.channels.back().capture = lay.value(QStringLiteral("capture")).toBool(false);   // CT-6
+        m_layout.channels.back().playback = lay.value(QStringLiteral("playback")).toBool(false);   // CT-10
     }
     else {
         LayoutMix m; m.slug = slug; m.name = lay.value(QStringLiteral("name")).toString(); m.icon = lay.value(QStringLiteral("icon")).toString();
@@ -2084,6 +2158,7 @@ bool Mixer::importSettings(const QJsonObject &doc, QString *error) {
         if (node.startsWith(QLatin1String("kmixdeck."))) m_pendingCellState.insert(node, {static_cast<float>(j.value(QStringLiteral("volume")).toDouble(1.0)), j.value(QStringLiteral("mute")).toBool()});
     }
     saveLayout(); reconcile(); restorePendingCellStates();
+    dropUnwantedPlayback();   // CT-10: a channel the import removed or switched off keeps nothing sounding
     // a node that already exists keeps its old level unless we touch it — pending only fires for NEW nodes, so apply
     // to the live ones right here (restorePendingCellStates() did exactly that for those present)
     Q_EMIT layoutChanged(); Q_EMIT defaultChannelChanged(); Q_EMIT listeningDeviceChanged(); Q_EMIT inputsChanged();
@@ -2116,6 +2191,7 @@ void Mixer::restorePendingCellStates() {
 }
 void Mixer::removeChannel(const QString &slug) {
     if (!m_layout.channel(slug)) return;
+    m_player.stop(slug, 0);   // CT-10: first, while the channel object still exists to announce PlaybackEnded
     snapshotForUndo(QStringLiteral("channel"), slug);
     m_layout.channels.removeIf([&](const LayoutChannel &c) { return c.slug == slug; });
     m_layout.inputs.removeIf([&](const LayoutInput &i) { return i.channel == slug || i.slug == slug; });   // no orphan inputs

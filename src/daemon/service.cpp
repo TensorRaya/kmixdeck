@@ -11,6 +11,8 @@
 #include <QDebug>
 #include <QFile>
 #include <cmath>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace kmixdeck::daemon {
 
@@ -72,6 +74,34 @@ void ChannelObject::setPan(double v) { if (v < -1 || v > 1) { rejectProperty(QSt
 bool ChannelObject::capture() const { return m_mixer->channelCapture(m_slug); }   // CT-6
 void ChannelObject::setCapture(bool on) { if (!m_mixer->setChannelCapture(m_slug, on)) rejectProperty(QStringLiteral("Capture"), QStringLiteral("no such channel")); }
 QString ChannelObject::captureSource() const { return m_mixer->channelCaptureSource(m_slug); }
+bool ChannelObject::playback() const { return m_mixer->channelPlayback(m_slug); }   // CT-10
+void ChannelObject::setPlayback(bool on) { if (!m_mixer->setChannelPlayback(m_slug, on)) rejectProperty(QStringLiteral("Playback"), QStringLiteral("no such channel")); }
+QString ChannelObject::nowPlaying() const { return m_mixer->nowPlaying(m_slug); }
+QStringList ChannelObject::playQueue() const { return m_mixer->playQueue(m_slug); }
+uint ChannelObject::Play(const QDBusUnixFileDescriptor &audio, const QString &title) {
+    if (calledFromDBus() && !(connection().connectionCapabilities() & QDBusConnection::UnixFileDescriptorPassing)) {
+        sendErrorReply(QStringLiteral("org.kmixdeck1.Error.NoFdPassing"), QStringLiteral("this bus connection cannot pass file descriptors (unix socket transport required)"));
+        return 0;
+    }
+    if (!audio.isValid()) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("bad file descriptor")); return 0; }
+    // QtDBus closes its copy when the message goes away; the Player needs one of its own for the whole track.
+    const int fd = ::fcntl(audio.fileDescriptor(), F_DUPFD_CLOEXEC, 0);
+    if (fd < 0) { sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("bad file descriptor (dup failed)")); return 0; }
+    QString why, kind;
+    const quint32 id = m_mixer->play(m_slug, fd, title, &why, &kind);   // owns fd in every case
+    if (!id) {
+        const QString name = kind == QLatin1String("off") ? QStringLiteral("org.kmixdeck1.Error.PlaybackOff")
+                           : kind == QLatin1String("queue-full") ? QStringLiteral("org.kmixdeck1.Error.QueueFull")
+                           : kind == QLatin1String("not-found") ? QStringLiteral("org.kmixdeck1.Error.NotFound")
+                           : QStringLiteral("org.kmixdeck1.Error.Rejected");
+        sendErrorReply(name, why);
+        return 0;
+    }
+    return id;
+}
+void ChannelObject::StopPlayback(uint id) {
+    if (m_mixer->stopPlayback(m_slug, id) < 0) sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("no such channel"));
+}
 void ChannelObject::setTrim(double v) { if (v < 0 || v > 1) { rejectProperty(QStringLiteral("Trim"), QStringLiteral("must be 0..1")); return; } m_mixer->setChannelTrim(m_slug, v); }
 bool ChannelObject::muted() const { return m_mixer->channelMuted(m_slug); }
 void ChannelObject::setMuted(bool m) { m_mixer->setChannelMuted(m_slug, m); }
@@ -124,6 +154,7 @@ QVariantMap ChannelObject::properties() const {
             // `undefined` while the bus had the value all along (measured 2026-09-21).
             {QStringLiteral("Ducking"), duckingJson()}, {QStringLiteral("DuckReduction"), duckReduction()},
             {QStringLiteral("Capture"), capture()}, {QStringLiteral("CaptureSource"), captureSource()},   // CT-6
+            {QStringLiteral("Playback"), playback()}, {QStringLiteral("NowPlaying"), nowPlaying()}, {QStringLiteral("PlayQueue"), playQueue()},   // CT-10
             {QStringLiteral("Kind"), kind()}};   // CT-8: same lesson as Ducking above — a UI that filters on
                                                  // Kind sees nothing if it is missing from THIS map.
 }
@@ -622,6 +653,15 @@ Service::Service(QObject *parent) : QObject(parent) {
     });
     connect(&m_mixer, &Mixer::channelChanged, this, [this](const QString &slug) {
         if (auto *o = m_objects.value(channelPath(slug))) emitPropertiesChanged(o->path(), o->interfaceName(), o->properties());
+    });
+    connect(&m_mixer, &Mixer::playbackEnded, this, [this](const QString &slug, quint32 id, const QString &result) {   // CT-10
+        if (auto *o = qobject_cast<ChannelObject *>(m_objects.value(channelPath(slug)))) Q_EMIT o->PlaybackEnded(id, result);
+        else {
+            // The channel object is already gone (removal raced the end). The id still ends exactly once on the bus.
+            QDBusMessage m = QDBusMessage::createSignal(channelPath(slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("PlaybackEnded"));
+            m << uint(id) << result;
+            QDBusConnection::sessionBus().send(m);
+        }
     });
     connect(&m_mixer, &Mixer::outputDevicesChanged, this, [this] {
         emitPropertiesChanged(QLatin1String(kRootPath), QStringLiteral("org.kmixdeck1.Mixer"), {{QStringLiteral("OutputDevices"), QVariant::fromValue(m_mixerAdaptor ? m_mixerAdaptor->outputDevices() : StringMap{})},

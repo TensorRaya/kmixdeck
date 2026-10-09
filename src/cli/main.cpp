@@ -24,10 +24,16 @@
 #include <QProcess>       // CL-2: $PAGER am TTY
 #include <unistd.h>       // isatty()
 #include <QTimer>
+#include <QEventLoop>
+#include <QHash>
+#include <cerrno>
+#include <cstring>
 #include <QMap>
 #include <cmath>
 #include <cstdio>
 #include <QDBusMessage>
+#include <QDBusUnixFileDescriptor>
+#include <fcntl.h>
 
 using InterfaceMap = QMap<QString, QVariantMap>;
 using ManagedObjects = QMap<QDBusObjectPath, InterfaceMap>;
@@ -826,6 +832,22 @@ public Q_SLOTS:
 /// One CLI invocation: parsed arguments, the daemon's object tree, and one handler per command.
 /// (CC-1, review: this was a single 500-line `main()`. The handlers are the former `if (cmd == …)` blocks
 /// verbatim; behaviour is pinned by tests/integration/test_service_cli.py and the other suites.)
+/// CT-10 `channel play --wait`: collects PlaybackEnded of one channel. Subscribed BEFORE Play is called, and it keeps
+/// every result it sees, so a clip shorter than the round trip of the Play reply cannot end unseen.
+class PlaybackWaiter : public QObject {
+    Q_OBJECT
+public:
+    QHash<uint, QString> ended;
+    bool daemonGone = false;
+Q_SIGNALS:
+    void changed();
+public Q_SLOTS:
+    void onEnded(uint id, const QString &result) { ended.insert(id, result); Q_EMIT changed(); }
+    void onOwner(const QString &name, const QString &, const QString &newOwner) {
+        if (name == QLatin1String(BUS) && newOwner.isEmpty()) { daemonGone = true; Q_EMIT changed(); }
+    }
+};
+
 struct Cli {
     QCoreApplication &app;
     QCommandLineParser &p;
@@ -1178,6 +1200,80 @@ struct Cli {
             else out << (on ? node : QStringLiteral("off")) << "\n";
             out.flush();
             return Ok;
+        }
+        if (sub == "playback" && ch) {   // CT-10: channel playback <slug> [on|off]
+            if (!need(3)) return Usage;
+            if (!objs.contains(pathOf(a[2]))) return fail(NotFound, QStringLiteral("no channel '%1'").arg(a[2]));
+            if (a.size() >= 4) {
+                const QString w = a[3].toLower();
+                if (w != QLatin1String("on") && w != QLatin1String("off")) return fail(Usage, QStringLiteral("expected 'on' or 'off', got '%1'").arg(a[3]));
+                if (!setProp(pathOf(a[2]), iface, "Playback", w == QLatin1String("on"), &e)) return fail(Rejected, e);
+            }
+            QDBusInterface chObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
+            const bool on = chObj.property("Playback").toBool();
+            if (g_json) out << QJsonDocument(QJsonObject{{QStringLiteral("playback"), on}, {QStringLiteral("nowPlaying"), chObj.property("NowPlaying").toString()},
+                                                         {QStringLiteral("queue"), QJsonArray::fromStringList(chObj.property("PlayQueue").toStringList())}}).toJson(QJsonDocument::Compact) << "\n";
+            else out << (on ? "on" : "off") << "\n";
+            out.flush();
+            return Ok;
+        }
+        if (sub == "play" && ch) {   // CT-10: channel play <slug> <file|-> [--title <t>] [--wait]
+            QStringList rest = a.mid(2);
+            const bool wait = rest.removeAll(QStringLiteral("--wait")) > 0;
+            QString title;
+            if (const int at = rest.indexOf(QStringLiteral("--title")); at >= 0) {
+                if (at + 1 >= rest.size()) return fail(Usage, "--title needs a value");
+                title = rest.at(at + 1); rest.remove(at, 2);
+            }
+            if (rest.size() != 2) return fail(Usage, "channel play <slug> <file|-> [--title <t>] [--wait]");
+            const QString slug = rest[0], file = rest[1];
+            if (!objs.contains(pathOf(slug))) return fail(NotFound, QStringLiteral("no channel '%1'").arg(slug));
+            int fd = 0;   // `-` = stdin: the music/pipe case (ffmpeg … -f wav - | kmixdeck channel play music -)
+            if (file != QLatin1String("-")) {
+                fd = ::open(QFile::encodeName(file).constData(), O_RDONLY | O_CLOEXEC);
+                if (fd < 0) return fail(NotFound, QStringLiteral("cannot open '%1': %2").arg(file, QString::fromLocal8Bit(strerror(errno))));
+            }
+            if (title.isEmpty()) title = file == QLatin1String("-") ? QStringLiteral("stdin") : QFileInfo(file).fileName();
+            auto bus = QDBusConnection::sessionBus();
+            if (!(bus.connectionCapabilities() & QDBusConnection::UnixFileDescriptorPassing)) {
+                if (fd > 0) ::close(fd);
+                return fail(Rejected, "this session bus cannot pass file descriptors");
+            }
+            PlaybackWaiter w;
+            if (wait) {
+                bus.connect(BUS, pathOf(slug), iface, "PlaybackEnded", &w, SLOT(onEnded(uint,QString)));
+                bus.connect("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameOwnerChanged", &w, SLOT(onOwner(QString,QString,QString)));
+            }
+            QDBusMessage m = QDBusMessage::createMethodCall(BUS, pathOf(slug), iface, "Play");
+            m << QVariant::fromValue(QDBusUnixFileDescriptor(fd)) << title;   // the descriptor is dup'ed into the message
+            const QDBusMessage r = bus.call(m, QDBus::Block, 30000);
+            if (fd > 0) ::close(fd);
+            if (r.type() == QDBusMessage::ErrorMessage) return fail(Rejected, r.errorMessage());
+            const uint id = r.arguments().value(0).toUInt();
+            if (!wait) {
+                if (g_json) out << QJsonDocument(QJsonObject{{QStringLiteral("id"), qint64(id)}}).toJson(QJsonDocument::Compact) << "\n";
+                else out << id << "\n";
+                out.flush();
+                return Ok;
+            }
+            if (!g_json) { out << id << "\n"; out.flush(); }
+            QEventLoop loop;
+            QObject::connect(&w, &PlaybackWaiter::changed, &loop, [&] { if (w.ended.contains(id) || w.daemonGone) loop.quit(); });
+            if (!w.ended.contains(id) && !w.daemonGone) loop.exec();
+            if (!w.ended.contains(id)) return fail(NoService, QStringLiteral("the daemon left the bus before track %1 ended").arg(id));
+            const QString result = w.ended.value(id);
+            if (g_json) { out << QJsonDocument(QJsonObject{{QStringLiteral("id"), qint64(id)}, {QStringLiteral("result"), result}}).toJson(QJsonDocument::Compact) << "\n"; out.flush(); }
+            else if (result == QLatin1String("played")) { out << result << "\n"; out.flush(); }
+            return result == QLatin1String("played") ? Ok : fail(Rejected, QStringLiteral("track %1: %2").arg(id).arg(result));
+        }
+        if (sub == "stop" && ch) {   // CT-10: channel stop <slug> [<id>]
+            if (!need(3)) return Usage;
+            if (!objs.contains(pathOf(a[2]))) return fail(NotFound, QStringLiteral("no channel '%1'").arg(a[2]));
+            uint id = 0;
+            if (a.size() >= 4) { bool ok = false; id = a[3].toUInt(&ok); if (!ok) return fail(Usage, QStringLiteral("bad track id '%1'").arg(a[3])); }
+            QDBusInterface chObj(BUS, pathOf(a[2]), iface, QDBusConnection::sessionBus());
+            const QDBusMessage r = chObj.call("StopPlayback", id);
+            return r.type() == QDBusMessage::ErrorMessage ? fail(Rejected, r.errorMessage()) : Ok;
         }
         if (sub == "input" && ch) {   // channel input <slug> [<node[:POS,POS]>|none] — ADR 0009 refs
             if (a.size() < 4) { const QString ref = unwrap(objs.value(pathOf(a[2])).value("InputDevice")).toString(); if (g_json) out << QJsonDocument(QJsonObject{{"InputDevice", ref}}).toJson(); else out << (ref.isEmpty() ? QStringLiteral("none") : ref) << "\n"; return Ok; }

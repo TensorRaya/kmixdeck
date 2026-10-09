@@ -192,6 +192,13 @@ void MixerClient::setChannelPan(const QString &slug, double pan) {   // DV-22
 void MixerClient::setChannelCapture(const QString &slug, bool on) {   // CT-6
     setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Capture"), on);
 }
+void MixerClient::setChannelPlayback(const QString &slug, bool on) {   // CT-10
+    setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Playback"), on);
+}
+void MixerClient::stopChannelPlayback(const QString &slug) {   // CT-10: id 0 = the sounding track and the queue
+    QDBusInterface(BUS, QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QDBusConnection::sessionBus())
+        .asyncCall(QStringLiteral("StopPlayback"), QVariant::fromValue(uint(0)));
+}
 void MixerClient::setChannelTrim(const QString &slug, double cubic) {   // CH-7
     const double c = std::clamp(cubic, 0.0, 1.0);
     setProperty(QStringLiteral("%1/channel/%2").arg(ROOT, slug), QStringLiteral("org.kmixdeck1.Channel"), QStringLiteral("Trim"), c * c * c);

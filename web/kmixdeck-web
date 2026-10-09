@@ -22,8 +22,18 @@ A feature added to the daemon shows up here with no bridge work at all.
 
 Only org.kmixdeck1.* interfaces are reachable, and only their writable properties and declared methods: there is no
 "call anything on the bus" endpoint (ADR 0011 §2). The allowlist is read from the daemon's own introspection.
+Methods that take a file descriptor (`h`, Channel.Play) are not in it: an fd cannot travel over a WebSocket.
+
+CT-10, opt-in `--play HOST:PORT`: a SECOND listener, plain HTTP, with its own token (`play-token`, never the web-UI
+token), that can do exactly one thing — play an uploaded audio file into a channel whose Playback switch is on
+(ADR 0016). It cannot move a fader, read state beyond that, or reach any other method:
+  POST /channel/<slug>/play[?title=…]   Authorization: Bearer <play token>, Content-Length required, body = the file
+       → blocks until the track ended: 200 played · 410 stopped · 422 error: … (JSON {"ok","id","result"})
+  GET  /healthz                         no auth: 200 {"ok":true} while the daemon is on the bus, else 503
 """
-import argparse, asyncio, json, os, secrets, signal, sys, threading, xml.etree.ElementTree as ET
+import argparse, asyncio, json, os, re, secrets, select, signal, socket, sys, threading, time, xml.etree.ElementTree as ET
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 from http import HTTPStatus
 from pathlib import Path
 
@@ -87,6 +97,14 @@ class Daemon:
         # {slug: [M, S, I, TP]} without help, unlike Qt — no manual demarshalling needed on this side.
         self.bus.signal_subscribe(BUS_NAME, "org.kmixdeck1.Levels", "Loudness", ROOT, None,
                                   Gio.DBusSignalFlags.NONE, self._on_loudness)
+        # CT-10 play endpoint: every PlaybackEnded, subscribed once. Waiters register per track id; results that arrive
+        # before their waiter (a clip shorter than the Play round trip) wait in `recent` for a while.
+        self.bus.signal_subscribe(BUS_NAME, "org.kmixdeck1.Channel", "PlaybackEnded", None, None,
+                                  Gio.DBusSignalFlags.NONE, self._on_playback_ended)
+        self.play_lock = threading.Lock()
+        self.waiters = {}                     # track id → threading.Event-like dict {"event", "result"}
+        self.recent = {}                      # track id → (result, monotonic time) of ends nobody waited for yet
+        self.on_bus = False
         Gio.bus_watch_name_on_connection(self.bus, BUS_NAME, Gio.BusNameWatcherFlags.NONE,
                                          self._on_daemon_up, self._on_daemon_down)
 
@@ -106,6 +124,9 @@ class Daemon:
             props = {p.get("name"): (p.get("type"), p.get("access") == "readwrite") for p in iface.iter("property")}
             methods = {m.get("name"): [a.get("type") for a in m.iter("arg") if a.get("direction", "in") == "in"]
                        for m in iface.iter("method")}
+            # CT-10: a method that takes a unix fd (Channel.Play) cannot be called over a WebSocket — a browser has no
+            # fd to send, and a number in a JSON frame is not one. Keep it out of the allowlist entirely.
+            methods = {n: sigs for n, sigs in methods.items() if not any("h" in (t or "") for t in sigs)}
             self.allow[name] = {"props": props, "methods": methods}
 
     def _on_daemon_up(self, _bus, _name, _owner):
@@ -122,12 +143,61 @@ class Daemon:
         self.state = {"root": root, "objects": objects, "connected": True}
         self._call(ROOT, "org.kmixdeck1.Levels", "Subscribe")
         self.settled = True
+        self.on_bus = True
         self.emit({"op": "snapshot", "state": self.state})
 
     def _on_daemon_down(self, _bus, _name):
         self.state = {"root": {}, "objects": {}, "connected": False}
         self.settled = True
+        self.on_bus = False
+        # CT-10: the daemon took every track with it — no PlaybackEnded will come. Fail the waiters now.
+        with self.play_lock:
+            waiters, self.waiters = self.waiters, {}
+            self.recent.clear()
+        for w in waiters.values():
+            w["result"] = None; w["event"].set()
         self.emit({"op": "snapshot", "state": self.state})
+
+    # ---- CT-10 play endpoint (any thread; Gio's sync calls are thread-safe)
+    def _on_playback_ended(self, _bus, _sender, _path, _iface, _sig, params):
+        tid, result = unwrap(params)
+        now = time.monotonic()
+        with self.play_lock:
+            w = self.waiters.pop(tid, None)
+            if w is None:
+                self.recent[tid] = (result, now)
+                for k in [k for k, (_r, t) in self.recent.items() if now - t > 60]: del self.recent[k]
+        if w is not None:
+            w["result"] = result; w["event"].set()
+
+    def channel(self, slug):
+        """The cached Channel object of `slug` (from the view model), or None."""
+        o = self.state["objects"].get(f"{ROOT}/channel/{slug}")
+        return o if o and o.get("interface") == "org.kmixdeck1.Channel" else None
+
+    def play(self, slug, fd, title):
+        """Channel.Play with the fd attached. Returns (id, waiter) — the waiter is registered under the lock BEFORE a
+        PlaybackEnded for that id can be looked up, and a result that already came is handed over at once."""
+        fds = Gio.UnixFDList.new()
+        idx = fds.append(fd)
+        reply, _out = self.bus.call_with_unix_fd_list_sync(
+            BUS_NAME, f"{ROOT}/channel/{slug}", "org.kmixdeck1.Channel", "Play", GLib.Variant("(hs)", (idx, title)),
+            GLib.VariantType("(u)"), Gio.DBusCallFlags.NONE, 10000, fds, None)
+        tid = reply.unpack()[0]
+        w = {"event": threading.Event(), "result": None}
+        with self.play_lock:
+            if tid in self.recent:
+                w["result"] = self.recent.pop(tid)[0]; w["event"].set()
+            else:
+                self.waiters[tid] = w
+        return tid, w
+
+    def forget(self, tid):
+        with self.play_lock: self.waiters.pop(tid, None)
+
+    def stop_playback(self, slug, tid):
+        self.bus.call_sync(BUS_NAME, f"{ROOT}/channel/{slug}", "org.kmixdeck1.Channel", "StopPlayback", GLib.Variant("(u)", (tid,)),
+                           None, Gio.DBusCallFlags.NONE, 5000, None)
 
     def _on_props_changed(self, _bus, _sender, path, _iface, _sig, params):
         iface, changed, invalidated = unwrap(params)
@@ -262,7 +332,7 @@ class Bridge:
         headers = Headers([("Content-Type", ctype), ("Content-Length", str(len(body))), ("Cache-Control", "no-cache")])
         return Response(HTTPStatus.OK.value, HTTPStatus.OK.phrase, headers, body)
 
-    async def serve(self, host, port, ready=None):
+    async def serve(self, host, port, ready=None, play=None):
         self.aloop = asyncio.get_running_loop()
         threading.Thread(target=self.daemon.run, daemon=True, name="gio-bus").start()
         # do not accept browsers before the first look at the bus is done — a tab that connects in that window would
@@ -270,6 +340,7 @@ class Bridge:
         for _ in range(100):
             if self.daemon.settled: break
             await asyncio.sleep(0.05)
+        if play: start_play_server(play[0], self.daemon, play[1], play[2])   # CT-10, after the first look at the bus
         async with serve(self.handle, host, port, process_request=self.http, max_size=1 << 20) as server:
             actual = server.sockets[0].getsockname()[1]
             print(f"kmixdeck-web: http://{host}:{actual}/" + (f"#token={self.token}" if self.token else ""), flush=True)
@@ -279,11 +350,158 @@ class Bridge:
             await stop
 
 
-def load_or_make_token():
+def load_or_make_token(name="web-token"):
     d = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "kmixdeck"; d.mkdir(parents=True, exist_ok=True)
-    f = d / "web-token"
+    f = d / name
     if f.exists(): return f.read_text().strip()
-    tok = secrets.token_urlsafe(24); f.write_text(tok + "\n"); f.chmod(0o600); return tok
+    # created 0600 from the first byte on (no window in which another user could read it)
+    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    tok = secrets.token_urlsafe(24)
+    with os.fdopen(fd, "w") as fh: fh.write(tok + "\n")
+    return tok
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# CT-10 play endpoint (ADR 0016). Plain stdlib HTTP in its own threads: the websockets server above only does GET.
+SLUG_RE = re.compile(r"^/channel/([A-Za-z0-9_-]{1,64})/play$")
+# D-Bus error name of a refused Channel.Play → HTTP status. Anything else is a bad request (400).
+PLAY_ERROR_STATUS = {
+    "org.kmixdeck1.Error.PlaybackOff": 409,
+    "org.kmixdeck1.Error.NotFound": 404,
+    "org.kmixdeck1.Error.QueueFull": 503,
+    "org.freedesktop.DBus.Error.ServiceUnknown": 503,
+    "org.freedesktop.DBus.Error.NameHasNoOwner": 503,
+    "org.freedesktop.DBus.Error.NoReply": 503,
+}
+# Uploads held in RAM at once, over all channels (memory bound: this × --play-max-bytes). The queue limit per channel
+# is the daemon's alone (Player::kQueueLimit, answered as QueueFull → 503); the bridge does not keep a copy of it.
+MAX_CONCURRENT_PLAYS = 8
+
+
+class PlayServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, addr, daemon, token, max_bytes):
+        super().__init__(addr, PlayHandler)
+        self.kd, self.token, self.max_bytes = daemon, token, max_bytes
+        self.slots = threading.BoundedSemaphore(MAX_CONCURRENT_PLAYS)
+
+
+class PlayHandler(BaseHTTPRequestHandler):
+    server_version = "kmixdeck-play"
+    protocol_version = "HTTP/1.1"
+    timeout = 30                    # a client that stops sending the body mid-way does not hold a thread forever
+
+    def log_message(self, fmt, *args):   # one line per request on stderr = the journal; no body, no token
+        sys.stderr.write("kmixdeck-web play: %s %s\n" % (self.address_string(), fmt % args))
+
+    def _json(self, code, obj):
+        body = (json.dumps(obj, separators=(",", ":")) + "\n").encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True
+
+    def _err(self, code, msg): self._json(code, {"ok": False, "error": msg})
+
+    def do_GET(self):
+        if urlsplit(self.path).path == "/healthz":
+            return self._json(200, {"ok": True}) if self.server.kd.on_bus else self._err(503, "the kmixdeck daemon is not on the bus")
+        self._err(404, "not found")
+
+    def do_POST(self):
+        url = urlsplit(self.path)
+        m = SLUG_RE.match(url.path)
+        # Everything below is decided from the request line and the headers. The body is read only when the
+        # request will be played — a wrong token, an unknown channel or a full queue never costs an upload.
+        auth = self.headers.get("Authorization", "")
+        given = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+        if not secrets.compare_digest(given.encode(), self.server.token.encode()):
+            return self._err(401, "bad or missing play token")
+        if not m: return self._err(404, "not found: POST /channel/<slug>/play")
+        kd = self.server.kd
+        if not kd.on_bus: return self._err(503, "the kmixdeck daemon is not on the bus")
+        slug = m.group(1)
+        ch = kd.channel(slug)
+        if ch is None: return self._err(404, f"no channel '{slug}'")
+        if not ch.get("Playback"):
+            return self._err(409, f"playback is off for channel '{slug}' — turn it on with `kmixdeck channel playback {slug} on`")
+        if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+            return self._err(411, "chunked bodies are not accepted; send Content-Length")
+        cl = self.headers.get("Content-Length")
+        if cl is None: return self._err(411, "Content-Length required")
+        try: length = int(cl)
+        except ValueError: return self._err(400, "bad Content-Length")
+        if length <= 0: return self._err(400, "empty body")
+        if length > self.server.max_bytes: return self._err(413, f"body too large: {length} > {self.server.max_bytes} bytes")
+        if not self.server.slots.acquire(blocking=False):
+            return self._err(503, "too many play requests in flight")
+        try:
+            self._play(slug, length, parse_qs(url.query).get("title", [""])[0] or f"web: {slug}")   # parse_qs decodes already
+        finally:
+            self.server.slots.release()
+
+    def _play(self, slug, length, title):
+        kd = self.server.kd
+        # RAM only: the clip never touches a disk (ADR 0016, and the host's disk-wear rule).
+        fd = os.memfd_create("kmixdeck-play", os.MFD_CLOEXEC)
+        try:
+            left = length
+            while left > 0:
+                chunk = self.rfile.read(min(left, 1 << 16))
+                if not chunk: return self._err(400, f"body ended after {length - left} of {length} bytes")
+                os.write(fd, chunk); left -= len(chunk)
+            os.lseek(fd, 0, os.SEEK_SET)
+            try:
+                tid, w = kd.play(slug, fd, title[:200])
+            except GLib.Error as e:
+                name = Gio.DBusError.get_remote_error(e) or ""
+                Gio.DBusError.strip_remote_error(e)
+                code = PLAY_ERROR_STATUS.get(name, 400)
+                return self._err(code, "the kmixdeck daemon is not on the bus" if code == 503 and name.startswith("org.freedesktop") else e.message)
+        finally:
+            os.close(fd)   # the daemon holds its own dup now
+        # Block until the track ended. Meanwhile watch the client: a client that gave up (timeout, Ctrl-C) must not
+        # have its clip played late — stop it, queued or sounding.
+        sock = self.connection
+        while not w["event"].wait(0.2):
+            if self._client_gone(sock):
+                kd.forget(tid)
+                try: kd.stop_playback(slug, tid)
+                except GLib.Error: pass
+                self.close_connection = True
+                return
+        result = w["result"]
+        if result is None: return self._err(503, "the kmixdeck daemon left the bus before the track ended")
+        code = 200 if result == "played" else 410 if result == "stopped" else 422
+        self._json(code, {"ok": result == "played", "id": tid, "result": result})
+
+    @staticmethod
+    def _client_gone(sock):
+        """True once the peer closed (EOF) or reset. A client sends nothing after its body, so readable = gone."""
+        try:
+            r, _w, x = select.select([sock], [], [sock], 0)
+            if x: return True
+            if not r: return False
+            return sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT) == b""
+        except (BlockingIOError, InterruptedError):
+            return False
+        except OSError:
+            return True
+
+
+def start_play_server(spec, daemon, token, max_bytes):
+    host, _, port = spec.rpartition(":")
+    if not host or not port.isdigit(): sys.exit(f"kmixdeck-web: --play wants HOST:PORT, got {spec!r}")
+    srv = PlayServer((host.strip("[]"), int(port)), daemon, token, max_bytes)
+    threading.Thread(target=srv.serve_forever, daemon=True, name="play-http").start()
+    h, p = srv.server_address[:2]
+    print(f"kmixdeck-web: play endpoint http://{h}:{p}/channel/<slug>/play", flush=True)
+    return srv
 
 
 def main(argv=None):
@@ -291,11 +509,19 @@ def main(argv=None):
     ap.add_argument("--lan", action="store_true", help="bind every interface (requires the token; default: localhost only)")
     ap.add_argument("--port", type=int, default=int(os.environ.get("KMIXDECK_WEB_PORT", "7420")), help="0 = pick a free port")
     ap.add_argument("--token", help="override the stored token (testing)")
+    ap.add_argument("--play", metavar="HOST:PORT", help="CT-10: also listen for POST /channel/<slug>/play (own token, opt-in)")
+    ap.add_argument("--play-token", help="override the stored play token (testing)")
+    ap.add_argument("--play-max-bytes", type=int, default=64 << 20, help="largest accepted upload (default 64 MiB)")
     a = ap.parse_args(argv)
     host = "0.0.0.0" if a.lan else "127.0.0.1"
     token = a.token if a.token is not None else (load_or_make_token() if a.lan else "")
     if a.lan: print("kmixdeck-web: listening on the LAN — anyone with the token controls your audio; keep it private.", file=sys.stderr, flush=True)
-    asyncio.run(Bridge(token).serve(host, a.port))
+    play = None
+    if a.play:
+        ptok = a.play_token if a.play_token is not None else load_or_make_token("play-token")
+        if not ptok: sys.exit("kmixdeck-web: the play endpoint needs a token")
+        play = (a.play, ptok, a.play_max_bytes)
+    asyncio.run(Bridge(token).serve(host, a.port, play=play))
 
 
 if __name__ == "__main__":

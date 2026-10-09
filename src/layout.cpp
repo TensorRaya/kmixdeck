@@ -110,6 +110,7 @@ QJsonObject Layout::toJson() const {
         if (!c.kind.isEmpty()) o.insert(QStringLiteral("kind"), c.kind);
         if (!c.samples.isEmpty()) { QJsonArray sa; for (const auto &s : c.samples) sa.append(s.toJson()); o.insert(QStringLiteral("samples"), sa); }
         if (c.capture) o.insert(QStringLiteral("capture"), true);   // CT-6: off writes nothing
+        if (c.playback) o.insert(QStringLiteral("playback"), true);   // CT-10: off writes nothing
         ch.append(o);
     }
     for (const auto &m : mixes) {
@@ -172,7 +173,8 @@ Layout Layout::fromJson(const QJsonObject &o) {
                                         // channel instead of creating something the daemon cannot reconcile.
                                         c.value(QStringLiteral("kind")).toString() == QLatin1String("soundboard") ? QStringLiteral("soundboard") : QString(),
                                         readSamples(c),
-                                        c.value(QStringLiteral("capture")).toBool(false)}); }   // CT-6
+                                        c.value(QStringLiteral("capture")).toBool(false),   // CT-6
+                                        c.value(QStringLiteral("playback")).toBool(false)}); }   // CT-10
     for (const auto &v : o.value(QStringLiteral("mixes")).toArray()) {
         const auto m = v.toObject(); LayoutMix lm;
         lm.slug = m.value(QStringLiteral("slug")).toString(); lm.name = m.value(QStringLiteral("name")).toString(); lm.icon = m.value(QStringLiteral("icon")).toString();

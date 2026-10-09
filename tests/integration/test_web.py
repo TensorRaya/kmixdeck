@@ -124,6 +124,8 @@ def test_ar8_bridge_refuses_what_the_allowlist_does_not_name(stack):
                 # field missing: answered, connection lives on. A hand-written latency probe sent "prop" instead of
                 # "property" and took the whole handler down (2026-09-18) — a stale tab must never kill the bridge.
                 ({"op": "set", "path": game, "prop": "Trim", "value": 0.5, "id": 7}, "malformed"),
+                # CT-10: a method that takes a unix fd cannot travel over a WebSocket — not in the allowlist at all
+                ({"op": "call", "path": game, "method": "Play", "args": [0, "x"], "id": 8}, "Play"),
             ]
             for msg, needle in cases:
                 await ws.send(json.dumps(msg))
@@ -131,8 +133,11 @@ def test_ar8_bridge_refuses_what_the_allowlist_does_not_name(stack):
                 assert res["op"] == "error", f"{msg} must be refused, got {res}"
                 assert needle in res["message"], (msg, res)
             # the bridge is still alive and still correct after all of that
-            await ws.send(json.dumps({"op": "set", "path": game, "property": "Trim", "value": 1.0, "id": 7}))
-            assert (await recv_until(ws, lambda m: m.get("id") == 7))["op"] == "result"
+            await ws.send(json.dumps({"op": "set", "path": game, "property": "Trim", "value": 1.0, "id": 9}))
+            assert (await recv_until(ws, lambda m: m.get("id") == 9))["op"] == "result"
+            # …and StopPlayback (no fd) IS reachable, so the web channel menu can stop a track
+            await ws.send(json.dumps({"op": "call", "path": game, "method": "StopPlayback", "args": [0], "id": 10}))
+            assert (await recv_until(ws, lambda m: m.get("id") == 10))["op"] == "result"
             await ws.close()
         asyncio.run(go())
     finally:

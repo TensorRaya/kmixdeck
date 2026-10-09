@@ -17,6 +17,7 @@
 #include "pipewire/graph.h"
 #include "pipewire/meters.h"
 #include "pipewire/sampler.h"
+#include "pipewire/player.h"
 #include "layout.h"
 
 namespace kmixdeck {
@@ -201,6 +202,17 @@ public:
     bool    channelCapture(const QString &slug) const;
     bool    setChannelCapture(const QString &slug, bool on);
     QString channelCaptureSource(const QString &slug) const;
+    // CT-10: playback into a channel. Opt-in per channel (channelPlayback); play() takes ownership of `fd` in every
+    // case and answers a track id, or 0 with *error and *errorKind ("off", "queue-full", "not-found", "failed").
+    // Every id ends exactly once in playbackEnded() with "played", "stopped" or "error: <reason>".
+    bool    channelPlayback(const QString &slug) const;
+    bool    setChannelPlayback(const QString &slug, bool on);
+    quint32 play(const QString &slug, int fd, const QString &title, QString *error = nullptr, QString *errorKind = nullptr);
+    /// id 0 = the sounding track and every waiting one. Returns how many tracks ended; -1 = no such channel.
+    int     stopPlayback(const QString &slug, quint32 id);
+    QString nowPlaying(const QString &slug) const { return m_player.nowPlaying(slug); }
+    QStringList playQueue(const QString &slug) const { return m_player.queue(slug); }
+    int     playbackCount(const QString &slug) const { return m_player.count(slug); }
     QStringList channelInputs(const QString &channel) const;
     QString     addChannelInput(const QString &channel, const QString &ref);      // returns the wire's input slug, "" on refusal
     bool        removeChannelInput(const QString &channel, const QString &ref);
@@ -348,6 +360,8 @@ Q_SIGNALS:
     /// CT-8: a sample started or stopped sounding. Carries the channel so a UI can refresh one board instead
     /// of everything, and `sounding` so it does not have to ask back on every event.
     void sampleStateChanged(const QString &channel, const QString &name, bool sounding);
+    /// CT-10: a track ended (exactly once per id); NowPlaying/PlayQueue also changed → channelChanged follows.
+    void playbackEnded(const QString &channel, quint32 id, const QString &result);
     void mixChanged(const QString &slug);
     void appAdded(uint32_t id);
     void appChanged(uint32_t id);
@@ -375,6 +389,9 @@ private:
     pw::Graph m_graph;
     pw::Meters m_meters{&m_graph};
     pw::Sampler m_sampler{&m_graph};   // CT-8: sample playback inside the daemon
+    pw::Player m_player{&m_graph};     // CT-10: client streams played into a channel, one at a time per channel
+    void movePlaybackWhenPresent(const QString &slug, const QString &target, uint32_t oldId, int triesLeft);
+    void dropUnwantedPlayback();       // CT-10: a channel that is gone or switched off keeps nothing sounding
     bool m_connected = false;
     QVector<Channel> m_channels;
     QVector<Mix> m_mixes;

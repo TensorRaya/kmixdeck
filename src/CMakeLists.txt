@@ -8,6 +8,7 @@ add_library(kmixdeck_core STATIC
     pipewire/filterchain.cpp pipewire/filterchain.h
     pipewire/meters.cpp pipewire/meters.h
     pipewire/sampler.cpp pipewire/sampler.h
+    pipewire/player.cpp pipewire/player.h
 )
 target_include_directories(kmixdeck_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(kmixdeck_core SYSTEM PRIVATE ${LADSPA_INCLUDE_DIR})

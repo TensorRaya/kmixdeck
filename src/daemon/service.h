@@ -10,6 +10,7 @@
 #include <QSet>
 #include <QTimer>
 #include <QDBusContext>
+#include <QDBusUnixFileDescriptor>
 #include <QDebug>
 #include <QHash>
 #include <memory>
@@ -109,6 +110,11 @@ class ChannelObject : public ExportedObject {
     // node name while it is in the graph, "" otherwise.
     Q_PROPERTY(bool Capture READ capture WRITE setCapture)
     Q_PROPERTY(QString CaptureSource READ captureSource)
+    // CT-10: playback into this channel. Playback is the opt-in switch; NowPlaying the title of the sounding track
+    // ("" when idle), PlayQueue the titles waiting behind it. Both are announced with PropertiesChanged on every change.
+    Q_PROPERTY(bool Playback READ playback WRITE setPlayback)
+    Q_PROPERTY(QString NowPlaying READ nowPlaying)
+    Q_PROPERTY(QStringList PlayQueue READ playQueue)
 public:
     ChannelObject(Mixer *mixer, const QString &slug, QObject *parent);
     QString interfaceName() const override { return QStringLiteral("org.kmixdeck1.Channel"); }
@@ -123,6 +129,9 @@ public:
     double pan() const; void setPan(double);
     bool capture() const; void setCapture(bool);   // CT-6
     QString captureSource() const;
+    bool playback() const; void setPlayback(bool);   // CT-10
+    QString nowPlaying() const;
+    QStringList playQueue() const;
     bool muted() const; void setMuted(bool);
     QString nodeName() const { return Names::channelNode(m_slug); }
     QString duckingJson() const;
@@ -143,6 +152,15 @@ public Q_SLOTS:
     /// reason instead of only the daemon log (a property setter has no QDBusContext — see rejectProperty).
     bool SetDucking(const QString &json);
     bool SetFxControl(const QString &control, double value);   // FX-3 live
+    /// CT-10: play the audio behind `audio` (a file, a memfd or a pipe) into this channel; the daemon dups the fd.
+    /// Returns the track id; refusals are D-Bus errors with a reason (off, queue full, bad fd).
+    uint Play(const QDBusUnixFileDescriptor &audio, const QString &title);
+    /// CT-10: stop one track (sounding or waiting) with result "stopped"; 0 = the sounding one and the whole queue.
+    void StopPlayback(uint id);
+Q_SIGNALS:
+    /// CT-10: exactly once per track id: "played", "stopped" or "error: <reason>". A real Qt signal so that
+    /// introspection lists it like the XML does (same lesson as SceneRecalled).
+    void PlaybackEnded(uint id, const QString &result);
 private:
     Mixer *m_mixer; QString m_slug;
 };

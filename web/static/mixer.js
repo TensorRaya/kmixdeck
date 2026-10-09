@@ -62,6 +62,11 @@ function channelHeader(ch) {
       ducked(ch)
         ? el("span", { class: "badge badge-duck", probe: `channelDuckBadge/${ch.Slug}`, title: duckTooltip(ch), "data-short": "↓" },
              duckBadge(ch))
+        : null,
+      // CT-10: the title of the track this channel is playing right now (NowPlaying arrives as a patch, no polling)
+      ch.NowPlaying
+        ? el("span", { class: "badge badge-playing", probe: `channelNowPlaying/${slug}`, title: `Playing now: ${ch.NowPlaying}` +
+               (ch.PlayQueue?.length ? ` (${ch.PlayQueue.length} waiting)` : ""), "data-short": "▶" }, "▶ " + ch.NowPlaying)
         : null),
     el("button", { class: "source", probe: `channelSource/${slug}`, title: "Hardware input feeding this channel — click to change. Applications can be routed here regardless.", onclick: () => inputPicker(ch) }, ch.Inputs?.length ? ch.Inputs.map((r) => C.state.root.InputDevices?.[r.split(":")[0]] || r).join(", ") : "Apps", ch.InputPresent === false ? el("span", { class: "gone", title: "input device is not connected" }, " ⚠") : null)));
   const row = el("div", { class: "hrow" });
@@ -82,6 +87,9 @@ function channelHeader(ch) {
     ["Group…", async () => { const g = prompt2("Group", ch.Group); if (g !== null) await C.set(ch.path, "Group", g).catch(err); }],
     // CT-6: same switch as the window's "Separate capture source"; the label shows the state like a checkable item
     [(ch.Capture ? "✓ " : "") + "Separate capture source", () => C.set(ch.path, "Capture", !ch.Capture).catch(err), "", `channelCapture/${slug}`],
+    // CT-10: same two entries as the window — the opt-in switch, and stop (sounding track + queue) while something plays
+    [(ch.Playback ? "✓ " : "") + "Accept playback", () => C.set(ch.path, "Playback", !ch.Playback).catch(err), "", `channelPlayback/${slug}`],
+    ...(ch.NowPlaying ? [[`Stop playback (${ch.NowPlaying})`, () => C.call(ch.path, "StopPlayback", 0).catch(err), "", `channelStopPlayback/${slug}`]] : []),
     ["Move up", () => C.call(C.ROOT, "MoveChannel", ch.path, Math.max(0, C.channels().findIndex((c) => c.path === ch.path) - 1)).catch(err)],
     ["Move down", () => C.call(C.ROOT, "MoveChannel", ch.path, C.channels().findIndex((c) => c.path === ch.path) + 1).catch(err)],
     ["Remove channel", () => confirm(`Remove channel “${ch.Name}”?`) && C.call(C.ROOT, "RemoveChannel", ch.path).catch(err), "danger"],

@@ -97,6 +97,9 @@ struct LayoutChannel {
     // CT-6: an extra capture source for this channel alone (one stem per channel for multi-track recording). Off by
     // default (opt-in rule): a layout without the key renders the same graph as before. Last field, see above.
     bool capture = false;
+    // CT-10: this channel accepts audio streams from clients (Channel.Play, `kmixdeck channel play`, the web bridge's
+    // play endpoint). Off by default (opt-in rule): Play is refused until the user turns it on. Last field, see above.
+    bool playback = false;
     bool isSoundboard() const { return kind == QLatin1String("soundboard"); }
     static LayoutChannel make(const QString &slug, const QString &name, const QString &icon = {}) { LayoutChannel c; c.slug = slug; c.name = name; c.icon = icon; return c; }
 };

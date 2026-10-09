@@ -222,6 +222,26 @@ documents it cannot parse and keeps the current layout.
   or `off`.
 > kmixdeck channel capture voice on     # OBS now lists "kmixdeck Voice Channel"
 
+`channel playback <slug> [on|off]`
+: Lets programs play audio into this channel (CT-10): text to speech, music, `channel play`, the web bridge's
+  play endpoint. Off by default; while it is off every play is refused. Turning it off stops the sounding track
+  and drops every waiting one. Prints `on` or `off` (`--json`: `playback`, `nowPlaying`, `queue`).
+> kmixdeck channel playback music on
+
+`channel play <slug> <file|-> [--title <t>] [--wait]`
+: Plays a file into the channel, or with `-` whatever arrives on stdin (a pipe from another program; it plays
+  while it arrives). Tracks queue up and play one after the other, at most 8 per channel; the audio goes through
+  the channel's effects and cells like any source. Prints the track id. With `--wait` it also waits for the end:
+  exit 0 when the track was `played`, 4 (Rejected) when it was `stopped` or ended with `error: …` (on stderr).
+  Formats: wav, flac, ogg, mp3, aac, m4a, mka/webm.
+> kmixdeck channel play music song.flac --title "Opening" --wait
+> ffmpeg -v error -i stream.m3u8 -f ogg - | kmixdeck channel play music - --title "Radio"
+
+`channel stop <slug> [<id>]`
+: Stops one track of the channel, sounding or waiting (`stopped`); without an id the sounding one and the
+  whole queue. A stopped waiting track never sounds.
+> kmixdeck channel stop music 12
+
 `channel default [<slug>|none]`
 : Where never-seen applications land (CH-5).
 
