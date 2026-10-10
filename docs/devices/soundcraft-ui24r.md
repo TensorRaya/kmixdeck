@@ -81,5 +81,27 @@ Only the standard USB Audio Class controls: `Mic Capture Switch/Volume` (×2), `
 
 - Which USB slot maps to which physical input on OUR desk (the routing is configurable on the Ui24R) — read
   from the desk's web UI, then pin the names in the layout.
-- Playback side: host → Ui24R opened fine (32 ch); which desk channels those land on is again the desk's USB
-  routing.
+
+## Playback side: one deployment (aether, measured 2026-10-08 / 2026-10-10)
+
+Host → Ui24R playback port `AUX<n>` arrives on the desk as source `ub.<n>`, shown as **DAW-<n+1>** in the
+input source picker. The desk input chooses it; nothing on the desk's USB routing page is involved.
+
+| kmixdeck | playback ports | desk source | desk input |
+|---|---|---|---|
+| mix `speaker_bot` (channel `tts_voice`) | `AUX2,AUX3` | `ub.2/3` (DAW-3/4) | 21/22 `SPK BOT` |
+| mix `media_out` (channel `media`) | `AUX4,AUX5` | `ub.4/5` (DAW-5/6) | 23/24 `MEDIA` |
+
+`AUX0,AUX1` (DAW-1/2) stay unused there: the raw Ui24 sink is the host's default sink, so any stream without a
+target lands on those two ports.
+
+Measured on the desk's own input meter (VU2), 1 kHz sine at −20 dBFS into the channel, cell at −18 dB:
+**−38.3 dBFS** on both inputs, desk idle at −80 dBFS. The −0.3 dB is the desk meter's 1/3 dB step.
+
+Ducking (FX-9) on the same deployment: `media` ducked by `tts_voice`, depth −18 dB, threshold −40 dBFS,
+attack 10 ms, release 300 ms. Media at −44.3 dBFS dropped to **−62.3 dBFS** (−18.0 dB) within one desk meter
+frame (~0.1 s) of a real TTS clip starting. It comes back about 1.6 s after the trigger stops, not after the
+300 ms release: the ducker reads the published peaks, which carry the UX-16 ballistics (hold 320 ms, then
+fall 20 dB/s). Prediction for a −20 dBFS trigger: 0.32 s + 20 dB / (20 dB/s) = 1.32 s until the peak crosses
+−40 dBFS, plus the 300 ms release = 1.62 s. Measured with a −20 dBFS tone into `tts_voice`: media starts
+rising 1.29 s and is back at full level 1.56 s after the tone ended (desk meter, ~0.1 s frames).
