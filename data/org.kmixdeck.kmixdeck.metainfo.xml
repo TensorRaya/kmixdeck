@@ -16,6 +16,14 @@
     <name>kmixdeck</name>
   </developer>
   <releases>
+    <release version="0.4.0" date="2026-10-12">
+      <description>
+        <p>Playback into a channel: the daemon plays a file or a streamed body into any channel, from the CLI, the window, the web UI or an HTTP play endpoint that starts playing while the body still arrives. An opt-in capture source per channel gives OBS one clean stem per channel.</p>
+        <p>Cells are gains of one filter chain per channel on a shared bus, so large desks cost a fraction of the nodes they did. The layout file is re-read while running, and two writers no longer overwrite each other. An absent input device no longer stalls every capture source.</p>
+        <p>Global shortcuts through the GlobalShortcuts portal, the tray popover as a layer-shell surface on Wayland, and a soundboard that plays in the daemon. EBU R128 loudness shows in all four frontends, is published without a meter subscriber, and stays bounded in memory however long the daemon runs.</p>
+        <p>Meters and loudness analysers are built only against nodes that exist, so a mix created under load is measured instead of silently unlinked; an edge that arrives late clears the error it caused, and its retry no longer leaves a second copy behind. Levels.Peaks is a{sd} on the wire, as documented.</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-09-21">
       <description>
         <p>Named scenes: store a full mix state and recall it from any frontend. EBU R128 loudness measurement per mix, and a broadcast limiter that lands on the summed signal instead of the individual channels.</p>

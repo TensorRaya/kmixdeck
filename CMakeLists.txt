@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(kmixdeck VERSION 0.3.0 LANGUAGES CXX)
+project(kmixdeck VERSION 0.4.0 LANGUAGES CXX)
 
 set(QT_MIN_VERSION 6.6.0)
 set(KF_MIN_VERSION 6.8.0)   # KLocalizedQmlContext (KI18nQml) appeared in 6.8
