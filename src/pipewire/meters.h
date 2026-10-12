@@ -47,6 +47,10 @@ private:
     void publish();
     /// The tick carries the peaks AND the R128 readings, so it runs while either has a target.
     void updateTick();
+    /// UX-18: create the analysers in wantedLoud whose node exists (ops-c44tb: never one for a node not there yet).
+    void buildWantedLoudness();
+    /// The same for the peak meters asked for with setTargets().
+    void buildWantedPeaks();
     struct Impl;
     std::unique_ptr<Impl> d;
     QTimer m_tick;

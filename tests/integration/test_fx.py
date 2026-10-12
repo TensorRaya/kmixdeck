@@ -359,6 +359,38 @@ def _loudness_signals(stack, seconds):
     return mon.communicate(timeout=5)[0].count("Member=Loudness")
 
 
+def test_ux18_an_analyser_asked_for_before_its_mix_sink_exists_still_measures_that_mix(stack):
+    """ops-c44tb (2026-10-12): the analyser is built against a node the graph KNOWS, never on a guess.
+
+    `mix add X; mix loudness X on` back to back. Under load the mix sink had not registered when the queued
+    setLoudnessTargets ran: createLoud() found no node, so no stream.capture.sink, the stream looked for a SOURCE
+    called kmixdeck.mix.x, WirePlumber logged "defined target not found", and node.dont-reconnect kept it unlinked
+    for the rest of the daemon's life: X read -70 on every value while Stream measured (CI: the ux18 floor row red
+    3 times, the parity row once since 10-07; never on an idle box). A frozen PipeWire makes the gap certain
+    instead of likely: the analyser must be linked to X's monitor within seconds of the thaw, and the daemon must
+    not have asked PipeWire for a target that did not exist. Before the fix: 0 of 3 linked; after: 3 of 3.
+    The same rule now holds for the peak meters (setTargets), which read the media class the same way."""
+    import os
+    import signal
+    from waiting import wait_for
+    pw, st = stack
+    pwpid = next(p.pid for p in pw.procs if "wireplumber" not in str(p.args))
+    os.kill(pwpid, signal.SIGSTOP)
+    try:
+        st.cli("mix", "add", "Early")
+        st.cli("mix", "loudness", "early", "on")
+        time.sleep(1.0)      # the daemon's queued analyser setup runs now, against a PipeWire that cannot answer
+    finally:
+        os.kill(pwpid, signal.SIGCONT)
+    try:
+        wait_for(lambda: "kmixdeck.loudness" in pw.linked_into("kmixdeck.mix.early"), timeout=15,
+                 what="the R128 analyser reads kmixdeck.mix.early after PipeWire comes back")
+        log = open(st.daemon_log_path, errors="replace").read()
+        assert "target not found" not in log, "an analyser or meter was built against a node that did not exist yet"
+    finally:
+        st.cli("mix", "remove", "early", check=False)
+
+
 def test_ux18_loudness_is_published_without_any_levels_subscriber(stack):
     """UX-18: the R128 analyser of an enabled mix runs with nobody subscribed (it needs seconds of continuous audio,
     see LevelsAdaptor::syncTargets), so its readings must reach the bus with nobody subscribed too. A Waybar module

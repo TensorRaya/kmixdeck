@@ -59,6 +59,7 @@ struct Meters::Impl {
     QHash<QString, MeterStream *> streams;
     QHash<QString, LoudnessStream *> loud;   // UX-18
     QStringList wantedLoud;                  // UX-18: what SHOULD run, survives a core restart
+    QStringList wantedPeaks;                 // ops-c44tb: peak meters asked for; built once their node exists
 
     static void onLoudProcess(void *ud) {
         auto *l = static_cast<LoudnessStream *>(ud);
@@ -197,9 +198,21 @@ struct Meters::Impl {
     }
 };
 
-Meters::Meters(Graph *graph, QObject *parent) : QObject(parent), d(new Impl{graph, {}, {}, {}, {}}) {
+Meters::Meters(Graph *graph, QObject *parent) : QObject(parent), d(new Impl{graph, {}, {}, {}, {}, {}}) {
     m_tick.setInterval(1000 / kRateHz);
     connect(&m_tick, &QTimer::timeout, this, &Meters::publish);
+    // ops-c44tb: an analyser that was wished for before its mix sink registered is built when the sink arrives.
+    // Queued: nodeAdded comes from the registry replay too, and creating streams inside it is what CH-4 forbids.
+    connect(graph, &Graph::nodeAdded, this, [this](const NodeInfo &n) {
+        bool loud, peak;
+        {
+            QMutexLocker l(&d->mutex);
+            loud = d->wantedLoud.contains(n.name) && !d->loud.contains(n.name);
+            peak = d->wantedPeaks.contains(n.name) && !d->streams.contains(n.name);
+        }
+        if (loud) QTimer::singleShot(0, this, [this] { buildWantedLoudness(); });
+        if (peak) QTimer::singleShot(0, this, [this] { buildWantedPeaks(); });
+    }, Qt::QueuedConnection);
     connect(graph, &Graph::disconnected, this, [this] {
         // CH-4 SIGSEGV (root cause, measured 2026-09-19): this handler used to `delete` the stream objects
         // WITHOUT spa_hook_remove() + pw_stream_destroy(). "pw objects are gone with the core" is wrong about
@@ -235,15 +248,24 @@ Meters::Meters(Graph *graph, QObject *parent) : QObject(parent), d(new Impl{grap
 Meters::~Meters() { setLoudnessTargets({}); setTargets({}); }
 
 void Meters::setTargets(const QStringList &nodeNames) {
+    { QMutexLocker lock(&d->mutex); d->wantedPeaks = nodeNames; }
+    buildWantedPeaks();
+}
+
+void Meters::buildWantedPeaks() {
     if (!d->graph->isConnected()) return;
+    QStringList nodeNames;
+    { QMutexLocker lock(&d->mutex); nodeNames = d->wantedPeaks; }
     pw_thread_loop_lock(d->graph->threadLoop());
     {
         QMutexLocker l(&d->mutex);
         for (auto it = d->streams.begin(); it != d->streams.end();) {
             if (!nodeNames.contains(it.key())) { d->destroy(it.value()); it = d->streams.erase(it); } else ++it;
         }
+        // Same rule as the analysers (buildWantedLoudness, ops-c44tb): a meter is built against a node the graph
+        // knows, or it guesses the wrong side of a sink and stays unlinked (node.dont-reconnect). The rest waits.
         for (const auto &n : nodeNames)
-            if (!d->streams.contains(n)) d->streams.insert(n, d->create(n));
+            if (!d->streams.contains(n) && d->graph->node(n)) d->streams.insert(n, d->create(n));
     }
     pw_thread_loop_unlock(d->graph->threadLoop());
     updateTick();
@@ -292,14 +314,29 @@ void Meters::setLoudnessTargets(const QStringList &nodeNames) {
         QStringList want = nodeNames; want.sort();
         if (have == want) return;
     }
+    buildWantedLoudness();
+}
+
+// The part of setLoudnessTargets that touches PipeWire. Also called when a node arrives that an analyser waits for.
+void Meters::buildWantedLoudness() {
+    if (!d->graph->isConnected()) return;
+    QStringList nodeNames;
+    { QMutexLocker lock(&d->mutex); nodeNames = d->wantedLoud; }
     pw_thread_loop_lock(d->graph->threadLoop());
     {
         QMutexLocker l(&d->mutex);
         for (auto it = d->loud.begin(); it != d->loud.end();) {
             if (!nodeNames.contains(it.key())) { d->destroyLoud(it.value()); it = d->loud.erase(it); } else ++it;
         }
+        // 🔴 Only for a node the graph already knows (ops-c44tb, 2026-10-12). createLoud() reads the node's media
+        // class to decide stream.capture.sink; for a mix whose sink has not registered yet it left that out, the
+        // stream looked for a SOURCE of that name, WirePlumber answered "defined target not found", and
+        // node.dont-reconnect kept it unlinked for good: the mix's LUFS read -70 forever while the Stream mix next
+        // to it measured. Reproduced 3 of 3 by freezing PipeWire between `mix add` and `mix loudness on`; in CI it
+        // was the suite's load (ux18 floor red 3 times, parity once since 10-07). The wish stays in wantedLoud and
+        // the analyser is created when the node arrives (Graph::nodeAdded, below).
         for (const auto &n : nodeNames)
-            if (!d->loud.contains(n)) d->loud.insert(n, d->createLoud(n));
+            if (!d->loud.contains(n) && d->graph->node(n)) d->loud.insert(n, d->createLoud(n));
     }
     pw_thread_loop_unlock(d->graph->threadLoop());
     updateTick();
