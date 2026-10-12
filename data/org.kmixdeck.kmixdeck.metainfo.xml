@@ -16,6 +16,11 @@
     <name>kmixdeck</name>
   </developer>
   <releases>
+    <release version="0.4.1" date="2026-10-12">
+      <description>
+        <p>Removing a node no longer risks removing another one. PipeWire reuses the id of a removed object for the next one, and the daemon could ask to remove a node that was already gone; that request then took down whatever had inherited the id, such as a mix sink or another program's connection. The daemon now removes only the node it means, checked by name and serial.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-10-12">
       <description>
         <p>Playback into a channel: the daemon plays a file or a streamed body into any channel, from the CLI, the window, the web UI or an HTTP play endpoint that starts playing while the body still arrives. An opt-in capture source per channel gives OBS one clean stem per channel.</p>
