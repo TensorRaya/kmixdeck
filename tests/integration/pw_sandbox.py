@@ -58,6 +58,23 @@ class PwDaemon:
                 return o
         return None
 
+    def linked_into(self, sink: str) -> set[str]:
+        """Names of the nodes that READ from `sink` (a link from its monitor ports to them), from ONE pw-dump.
+        Used to wait for a path that exists in the graph rather than for a CLI call that returned (ops-c44tb)."""
+        dump = self.dump()
+        names = {o["id"]: o.get("info", {}).get("props", {}).get("node.name") for o in dump if o.get("type", "").endswith("Node")}
+        sid = next((i for i, n in names.items() if n == sink), None)
+        return {names.get(o["info"].get("input-node-id")) for o in dump
+                if sid is not None and o.get("type", "").endswith("Link") and o["info"].get("output-node-id") == sid}
+
+    def linked_from(self, sink: str) -> set[str]:
+        """Names of the nodes that PLAY into `sink`, from ONE pw-dump."""
+        dump = self.dump()
+        names = {o["id"]: o.get("info", {}).get("props", {}).get("node.name") for o in dump if o.get("type", "").endswith("Node")}
+        sid = next((i for i, n in names.items() if n == sink), None)
+        return {names.get(o["info"].get("output-node-id")) for o in dump
+                if sid is not None and o.get("type", "").endswith("Link") and o["info"].get("input-node-id") == sid}
+
     def node_names(self) -> set[str]:
         """ONE pw-dump for a whole set of names. Polling node() per name scales with (names × graph size): with 32
         channels the loop itself took 25 s and was read as \"PipeWire needs 0.7 s per loopback\" (2026-09-17). The
@@ -402,18 +419,18 @@ class PwDaemon:
         out = self.runtime_dir / f"rec-{sink}-{time.time_ns()}.wav"
         return self._record(out, 2, [(f"{sink}:monitor_{ch}", f"pw-record:input_{ch}") for ch in ("FL", "FR")], seconds, sink)
 
-    def tone_at_known_loudness(self, target_lufs: float = -20.0) -> tuple[Path, float]:
-        """A 12 s tone whose EBU R128 loudness is MEASURED, not assumed, plus that measurement.
+    def tone_at_known_loudness(self, target_lufs: float = -20.0, seconds: int = 12) -> tuple[Path, float]:
+        """A tone (12 s unless asked) whose EBU R128 loudness is MEASURED, not assumed, plus that measurement.
 
         UX-18 tests need a reference: ffmpeg's `sine` does not produce 0 dBFS (it lands near -21 dBFS) and its
         crest factor is not the textbook sine one, so computing the expected LUFS on paper gives the wrong
         number. The file is normalised towards `target_lufs` with ffmpeg's loudnorm, then ffmpeg's own ebur128
         filter reports what it actually became — and that reading is what the test compares against.
         """
-        raw = self.runtime_dir / "lufs-raw.wav"
-        out = self.runtime_dir / "lufs-ref.wav"
+        raw = self.runtime_dir / f"lufs-raw-{seconds}s.wav"
+        out = self.runtime_dir / f"lufs-ref-{seconds}s.wav"
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
-                        "-i", "sine=frequency=1000:sample_rate=48000:duration=12", "-ac", "2", "-ar", "48000", str(raw)], check=True)
+                        "-i", f"sine=frequency=1000:sample_rate=48000:duration={seconds}", "-ac", "2", "-ar", "48000", str(raw)], check=True)
         # one-pass loudnorm gets close enough; the second measurement below is what the test trusts
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(raw),
                         "-af", f"loudnorm=I={target_lufs}:TP=-2:LRA=1", "-ar", "48000", str(out)], check=True)

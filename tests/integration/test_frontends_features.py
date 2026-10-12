@@ -313,6 +313,22 @@ def test_ct8_soundboard_is_the_same_in_all_three_frontends(stack):
         stack.cli("sample", "remove", slug, "solo", check=False)
 
 
+def _wait_for_the_path_from_voice_into_the_analyser(stack, mix):
+    """🔴 Play into a path that EXISTS (ops-c44tb, 2026-10-12). `mix add` returns before PipeWire has built what
+    carries the voice channel into the new mix: the voice chain is rebuilt with one more cell and the mix gets its
+    bus tap. Measured in the CI image on 2 CPUs: idle 0.5-0.9 s (cell) / 0.9-1.4 s (tap), with the suite's own load
+    2.2-3.8 s / 3.5-6.5 s. A tone played at once went into the half-built graph: the analyser got the rest of it or
+    nothing, and "floor" read -70 on every value while the Stream mix next to it read I -20.36 (CI run 37629207867;
+    the floor row red 3 times since 10-07, never locally on an idle box). A person hears nothing either until the
+    path is there, so the test waits for exactly that: the cell carries 1.0, the tap plays into the mix and the
+    analyser reads it."""
+    stack.pw.wait_cell("voice", mix, gain=1.0)
+    wait_for(lambda: f"kmixdeck.tap.{mix}" in stack.pw.linked_from(f"kmixdeck.mix.{mix}"), timeout=30,
+             what=f"the bus tap plays into kmixdeck.mix.{mix}")
+    wait_for(lambda: "kmixdeck.loudness" in stack.pw.linked_into(f"kmixdeck.mix.{mix}"), timeout=30,
+             what=f"the R128 analyser reads kmixdeck.mix.{mix}")
+
+
 def test_ux18_loudness_is_visible_in_every_frontend(stack):
     """UX-18: the R128 numbers and the target are readable in all four frontends, not just over the bus.
 
@@ -330,8 +346,12 @@ def test_ux18_loudness_is_visible_in_every_frontend(stack):
         stack.cli("mix", "loudness", "r128", "-16")
         # route the tone: a mix with no cell fed from a channel measures silence forever
         stack.cli("cell", "set", "voice", "r128", "1.0", check=False)
-
-        tone, want = stack.pw.tone_at_known_loudness()
+        _wait_for_the_path_from_voice_into_the_analyser(stack, "r128")
+        # The tone must outlast the reads (ops-c44tb, 2026-10-12): M is a 400 ms window, so the moment the tone
+        # ends the window shows a dash. Four frontends start one after the other below; with the suite's load the
+        # KDE window alone took long enough that the 12 s tone had ended before it read ("KDE shows M=–", 2 of 3
+        # runs on 2 CPUs with load, the bus at the same moment still had I). The finally below stops it.
+        tone, want = stack.pw.tone_at_known_loudness(seconds=90)
         play = subprocess.Popen(["pw-play", "-P", '{ application.name = "Ux18Parity" node.name = "ux18-parity" '
                                  'target.object = "kmixdeck.channel.voice" }', str(tone)],
                                 env=stack.pw.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -423,6 +443,7 @@ def test_ux18_silence_after_a_tone_reads_as_the_floor_not_as_minus_2432_db(stack
     try:
         stack.cli("mix", "loudness", "floor", "on")
         stack.cli("cell", "set", "voice", "floor", "1.0", check=False)
+        _wait_for_the_path_from_voice_into_the_analyser(stack, "floor")
         tone, _ = stack.pw.tone_at_known_loudness()
         subprocess.run(["pw-play", "-P", '{ application.name = "Ux18Floor" node.name = "ux18-floor" '
                         'target.object = "kmixdeck.channel.voice" }', str(tone)],

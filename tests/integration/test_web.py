@@ -348,6 +348,12 @@ def test_ux14_web_mix_end_to_end_from_the_browser_alone(stack):
             assert wait_for(lambda: _cell(stack, "game", slug)["Muted"] is True, 8), "cell mute"
             _click(ch, "cellLink/system/" + slug); _menu_click(ch, "Stream$")
             assert wait_for(lambda: _cell(stack, "system", slug)["Follows"].endswith("/stream"), 8), "link via the cell menu"
+            # 🔴 Wait for the PAGE, not only the daemon (ops-c44tb, 2026-10-12). The link button decides at click time
+            # from what it was rendered with: pressed → unlink, not pressed → open the "Follow …" menu. The CLI sees
+            # the new Follows before the bridge's PropertiesChanged patch has re-rendered the cell, so a click in that
+            # gap opened the menu and nothing unlinked (red in 5 of 18 CI runs since 10-07, never locally on an idle
+            # box). A person clicks what they see; the test now does the same.
+            ch.wait(_q("cellLink/system/" + slug) + ".getAttribute('aria-pressed') === 'true'", 8)
             _click(ch, "cellLink/system/" + slug)                                        # linked → one click unlinks
             assert wait_for(lambda: _cell(stack, "system", slug)["Follows"] in ("", "/"), 8), "unlink via the same button"
             # CH-9: removing a mix is undoable — from the ⋮ menu, then the toolbar's undo button brings it back
