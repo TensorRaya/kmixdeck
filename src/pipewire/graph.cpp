@@ -10,6 +10,7 @@
 #include <pipewire/extensions/metadata.h>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <spa/param/props.h>
 #include <spa/pod/builder.h>
 #include <spa/pod/parser.h>
@@ -61,6 +62,17 @@ struct Graph::Impl {
     QHash<uint32_t, uint32_t> routes;             // guarded by snapshotMutex: stream node → sink node
     mutable std::mutex snapshotMutex;
     QHash<uint32_t, NodeInfo> snapshot;           // guarded by snapshotMutex, read from Qt thread
+    // ops-c44tb: every module loadLoopback() loaded, by the playback node name its args give, until the module is
+    // destroyed (by itself on a core error, by unloadLoopback, or with the context). Loop thread only.
+    struct LoadedModule { Impl *impl = nullptr; pw_impl_module *module = nullptr; QStringList nodes; spa_hook listener{}; };
+    QList<LoadedModule *> modules;   // a few hundred on a 32x32 desk; looked up only by the edge watcher's retry
+    static void onModuleDestroy(void *data) {
+        auto *lm = static_cast<LoadedModule *>(data);
+        spa_hook_remove(&lm->listener);
+        lm->impl->modules.removeOne(lm);
+        delete lm;
+    }
+    static const pw_impl_module_events moduleEvents;
 
     // --- helpers
     static QString prop(const spa_dict *d, const char *key) {
@@ -284,6 +296,7 @@ struct Graph::Impl {
     static const pw_core_events coreEvents;
 };
 
+const pw_impl_module_events Graph::Impl::moduleEvents = { .version = PW_VERSION_IMPL_MODULE_EVENTS, .destroy = &Graph::Impl::onModuleDestroy, .free = nullptr, .initialized = nullptr, .registered = nullptr };  // NOLINT
 const pw_node_events Graph::Impl::nodeEvents = { .version = PW_VERSION_NODE_EVENTS, .info = &Graph::Impl::onNodeInfo, .param = &Graph::Impl::onNodeParam };  // NOLINT
 const pw_proxy_events Graph::Impl::proxyEvents = { .version = PW_VERSION_PROXY_EVENTS, .destroy = &Graph::Impl::onProxyDestroy, .bound = nullptr, .removed = &Graph::Impl::onProxyRemoved, .done = nullptr, .error = nullptr, .bound_props = nullptr };
 const pw_registry_events Graph::Impl::registryEvents = { .version = PW_VERSION_REGISTRY_EVENTS, .global = &Graph::Impl::onGlobal, .global_remove = &Graph::Impl::onGlobalRemove };
@@ -478,9 +491,25 @@ bool Graph::linkPorts(const QString &outNode, const QString &outPort, const QStr
     return true;
 }
 
+// The node names a loopback/filter-chain args string gives its two halves: `capture.props = { node.name = "<a>" …`
+// and `playback.props = { node.name = "<b>" …`. Every caller builds its args with the renderers in layout.cpp /
+// fx.cpp, which quote the name. The edge watcher keys some edges by the capture half (cell chains), most by the
+// playback half, so a module is found by either.
+static QStringList nodeNamesOf(const QString &args) {
+    static const QRegularExpression rx(QStringLiteral(R"rx((?:capture|playback)\.props\s*=\s*\{\s*node\.name\s*=\s*"((?:[^"\\]|\\.)*)")rx"));
+    QStringList out;
+    for (auto it = rx.globalMatch(args); it.hasNext();) out << it.next().captured(1);
+    return out;
+}
+
 void Graph::loadLoopback(const QString &args, const char *module) {
     pw_thread_loop_lock(d->loop);
     pw_impl_module *m = pw_context_load_module(d->context, module, args.toUtf8().constData(), nullptr);
+    if (m) {
+        auto *lm = new Impl::LoadedModule{d.get(), m, nodeNamesOf(args), {}};
+        pw_impl_module_add_listener(m, &lm->listener, &Impl::moduleEvents, lm);
+        d->modules.push_back(lm);
+    }
     pw_thread_loop_unlock(d->loop);
     if (!m) {
         // Seen 2026-09-18 on a 32x32 desk: EMFILE (fd soft limit) — PipeWire only logged "Protocol error" and the
@@ -490,6 +519,18 @@ void Graph::loadLoopback(const QString &args, const char *module) {
                                          << (e == EMFILE ? "(raise the open-files limit: systemd LimitNOFILE / ulimit -n)" : "") << "\n  args:" << args.left(200);
         QMetaObject::invokeMethod(this, [this, args] { Q_EMIT moduleLoadFailed(args); }, Qt::QueuedConnection);
     }
+}
+
+int Graph::unloadLoopback(const QString &node) {
+    if (!d->loop || node.isEmpty()) return 0;
+    pw_thread_loop_lock(d->loop);
+    QList<pw_impl_module *> doomed;
+    for (auto *lm : std::as_const(d->modules)) if (lm->nodes.contains(node)) doomed << lm->module;
+    // pw_impl_module_destroy emits destroy → onModuleDestroy drops the entry; the module's streams and their nodes
+    // go with it (module-loopback impl_destroy), so a node that was about to register never does.
+    for (auto *m : doomed) pw_impl_module_destroy(m);
+    pw_thread_loop_unlock(d->loop);
+    return int(doomed.size());
 }
 
 pw_thread_loop *Graph::threadLoop() const { return d->loop; }

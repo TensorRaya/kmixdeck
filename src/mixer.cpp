@@ -100,6 +100,7 @@ Mixer::Mixer(QObject *parent) : QObject(parent), m_layout(Layout::starter()) {
         static const QRegularExpression rx(QStringLiteral(R"rx(node\.description\s*=\s*"((?:[^"\\]|\\.)*)")rx"));
         const auto m = rx.match(args);
         m_lastError = QStringLiteral("edge could not be created: ") + (m.hasMatch() ? m.captured(1) : args.left(80)) + QStringLiteral(" (see journal)");
+        m_moduleLoadFailed = true;   // the module itself did not load: nothing will arrive late, the report stays
         qCCritical(lcMixer) << m_lastError;
         Q_EMIT lastErrorChanged();
         // the module never came up → its node will never register; forget the request so the next pass retries
@@ -412,21 +413,45 @@ void Mixer::expectEdge(const QString &playbackNode, const QString &description) 
 void Mixer::checkPendingEdges() {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     bool retry = false;
+    // A report is only true while its edge is still wanted and still missing (ops-c44tb, 2026-10-12). The retry
+    // below re-expects every reported edge that the layout still asks for, so a reported edge that is no longer
+    // pending was dropped with its mix/channel/capture and is not missing any more.
+    for (auto it = m_edgeFailed.begin(); it != m_edgeFailed.end();)
+        it = m_edgePending.contains(*it) ? std::next(it) : m_edgeFailed.erase(it);
     for (auto it = m_edgePending.begin(); it != m_edgePending.end();) {
-        if (m_graph.node(it.key())) { it = m_edgePending.erase(it); continue; }          // arrived
+        if (m_graph.node(it.key())) { m_edgeFailed.remove(it.key()); it = m_edgePending.erase(it); continue; }   // arrived
         if (now - it.value().second < 3000) { ++it; continue; }                           // still within grace
         m_lastError = QStringLiteral("edge could not be created: ") + it.value().first + QStringLiteral(" (see journal)");
         qCCritical(lcMixer).noquote() << m_lastError << "- node" << it.key() << "never appeared (the module's own PipeWire client failed; EMFILE shows as 'Protocol error' — check the open-files limit)";
         Q_EMIT lastErrorChanged();
+        m_edgeFailed.insert(it.key());
         // ...and ask again: the comment above onNodeRemoved promised this, the code never did it — one lost module
-        // under load left kmixdeck.cells.d13 missing for good (fail.L5, 2026-09-28). A late arrival of the first one
-        // is caught by the twin sweep in ensureCellGraph / onNode.
+        // under load left kmixdeck.cells.d13 missing for good (fail.L5, 2026-09-28).
+        // 🔴 Unload the first attempt BEFORE asking again (ops-c44tb, 2026-10-12). A module that is only late comes
+        // up next to its retry: measured with PipeWire frozen 5 s while a mix was added, every edge of that mix
+        // existed TWICE afterwards (out, source, tap — two kmixdeck.out.late playing the mix into the same output,
+        // 2 of 2 runs), and the twin sweep only knows cells and taps. Unloading the module also removes its
+        // half-built streams, so whichever attempt registers is the only one.
+        if (const int n = m_graph.unloadLoopback(it.key()))
+            qCInfo(lcMixer).noquote() << "unloaded" << n << "late module(s) for" << it.key() << "before the retry";
         m_nodeRequested.remove(it.key());
         retry = true;
         it = m_edgePending.erase(it);
     }
+    // A late arrival heals the report it caused. Under load a module can need more than the 3 s grace: the watcher
+    // reported it, asked again, the first one came up anyway, and LastError kept "edge could not be created: Mix: r1
+    // → output" for the rest of the daemon's life while kmixdeck.out.r1 ran in the graph (CI run 37946010907, pw-dump:
+    // one instance, state running; dv30c red twice since 10-07). LastError's contract is "a failure the daemon could
+    // not repair on its own"; this one it repaired. A module that did not load at all (moduleLoadFailed) stays.
+    if (!retry && m_edgeFailed.isEmpty() && m_edgeReported && !m_moduleLoadFailed) {
+        m_edgeReported = false;
+        qCInfo(lcMixer).noquote() << "every edge the watcher reported missing has arrived; LastError cleared";
+        m_lastError.clear();
+        Q_EMIT lastErrorChanged();
+    }
+    if (retry) m_edgeReported = true;
     if (retry) QTimer::singleShot(0, this, [this] { ensureCellGraph(); ensureEdgeLoopbacks(); });
-    if (m_edgePending.isEmpty()) m_edgeWatch.stop();
+    if (m_edgePending.isEmpty() && m_edgeFailed.isEmpty()) m_edgeWatch.stop();
 }
 void Mixer::requestNullNode(const QString &name, const std::function<void()> &create) {
     if (m_graph.node(name)) { m_nodeRequested.remove(name); return; }

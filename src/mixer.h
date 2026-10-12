@@ -230,6 +230,9 @@ private:
     /// missing after ~3 s is an edge that failed asynchronously (EMFILE shows as "Protocol error" on the module's own
     /// core, pw_context_load_module returns success) → LastError. Key: playback node name; value: description + ms.
     QHash<QString, QPair<QString, qint64>> m_edgePending;
+    QSet<QString> m_edgeFailed;      // edges the watcher reported missing and the layout still wants (ops-c44tb)
+    bool m_edgeReported = false;     // LastError came from the edge watcher: it clears once m_edgeFailed is empty
+    bool m_moduleLoadFailed = false; // LastError came from a module that did not load: it stays
     QTimer m_edgeWatch;
     void expectEdge(const QString &playbackNode, const QString &description);
     void checkPendingEdges();

@@ -9,6 +9,7 @@ The fake source is `Audio/Source/Virtual`: that null-sink variant has `input_<PO
 and `capture_<POS>` ports the daemon captures from — a plain `Audio/Source` null-sink has no inputs at all (and
 drops its first position, PipeWire 1.x quirk)."""
 import os
+import signal
 import tempfile
 import json
 import subprocess
@@ -939,6 +940,40 @@ def test_dv30b_fd_limit_lifted_and_a_failed_edge_is_reported_not_swallowed(stack
         stack.cli("devices", "virtual", "remove", "clamp", check=False)
         stack.restart_daemon()
     assert stack.cli("status", json_out=True)["lastError"] == ""
+
+
+def test_dv30d_an_edge_that_arrives_late_clears_the_report_it_caused(stack):
+    """DV-30, fourth finding (ops-c44tb, 2026-10-12): LastError is "a failure the daemon could not repair on its own".
+    The edge watcher gives a module 3 s, then reports it and asks again. Under load the first one often arrives
+    anyway, a little late, and the report stayed for the rest of the daemon's life: CI run 37946010907 failed dv30c
+    on "edge could not be created: Mix: r1 → output" while its own pw-dump showed kmixdeck.out.r1 running, once.
+
+    Load is not reproducible on demand, a frozen PipeWire is: SIGSTOP holds every module the mix needs past the
+    grace, SIGCONT lets them all arrive. The report must appear (the watcher still works) and must go once every
+    edge is there. The twin sweep is checked on the way: the retry must not leave two modules for one edge."""
+    pwpid = next(p.pid for p in stack.pw.procs if "wireplumber" not in str(p.args))
+    stack.restart_daemon()      # clean slate: LastError is per daemon (see dv30b)
+    assert stack.cli("status", json_out=True)["lastError"] == ""
+    os.kill(pwpid, signal.SIGSTOP)
+    try:
+        stack.cli("mix", "add", "Late")
+        reported = wait_for(lambda: stack.cli("status", json_out=True)["lastError"], timeout=10,
+                            what="the edge watcher reports the edges a frozen PipeWire cannot build")
+    finally:
+        os.kill(pwpid, signal.SIGCONT)
+    try:
+        assert "edge could not be created" in reported, reported
+        stack.pw.wait_nodes(["kmixdeck.mix.late", "kmixdeck.out.late", "kmixdeck.tap.late"], timeout=30)
+        wait_for(lambda: stack.cli("status", json_out=True)["lastError"] == "", timeout=10,
+                 what=f"LastError cleared once every edge arrived (was {reported!r})")
+        assert "!!" not in stack.cli("status").stdout
+        def instances():
+            names = [o.get("info", {}).get("props", {}).get("node.name") for o in stack.pw.dump() if o.get("type", "").endswith("Node")]
+            return {e: names.count(e) for e in ("kmixdeck.out.late", "kmixdeck.source.late", "kmixdeck.tap.late")}
+        # before the fix: 2 of each in 2 of 2 runs, the late first attempt next to its retry
+        wait_for(lambda: set(instances().values()) == {1}, timeout=10, what=f"one module per edge, no twin from the retry: {instances()}")
+    finally:
+        stack.cli("mix", "remove", "late", check=False)
 
 
 def test_dv30c_thirtytwo_by_thirtytwo_desk_never_loses_an_edge(stack):

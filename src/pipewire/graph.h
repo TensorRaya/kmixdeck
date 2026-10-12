@@ -87,6 +87,11 @@ public:
     /// graph is the generated pipewire.conf.d fragment (DV-1/DV-5).
     /// `module` lets an fx chain load libpipewire-module-filter-chain with the same plumbing.
     void loadLoopback(const QString &args, const char *module = "libpipewire-module-loopback");
+    /// Unload every module loadLoopback() started whose capture or playback half is called `node` and that is still
+    /// loaded (ops-c44tb). For the edge watcher's retry: a module that has not shown its node within the grace is
+    /// unloaded BEFORE the next one is loaded, so a late first attempt cannot come up next to the retry as a twin.
+    /// Returns how many were unloaded.
+    int unloadLoopback(const QString &node);
     /// Loopback for a mix output: capture from the mix, play to `device` (node.name) or stay unlinked ("").
     /// No dont-reconnect so it can be retargeted later; dont-fallback so it never hits the default sink.
     /// The hidden parking sink unrouted mix outputs play to (never default: priority.session 0, passive).
