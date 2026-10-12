@@ -455,7 +455,9 @@ def test_ct10_web_play_endpoint_refuses_before_reading_the_body(desk, bridge):
     assert head_only(f"/channel/{SLUG}/play", token="ui-token")[0] == 401
     assert head_only("/channel/nosuch/play")[0] == 404
     assert head_only(f"/channel/{SLUG}/play", length=None)[0] == 411
-    assert head_only(f"/channel/{SLUG}/play", length=None, extra=b"Transfer-Encoding: chunked\r\n")[0] == 411
+    # chunked is a streamed body (see the chunked test below); an encoding we do not speak is refused from the headers
+    assert head_only(f"/channel/{SLUG}/play", length=None, extra=b"Transfer-Encoding: gzip, chunked\r\n")[0] == 501
+    assert head_only(f"/channel/{SLUG}/play", extra=b"Transfer-Encoding: chunked\r\n")[0] == 400
     st, body = head_only(f"/channel/{SLUG}/play", length=(64 << 20) + 1)
     assert st == 413 and "too large" in body["error"], (st, body)
     stack.cli("channel", "playback", SLUG, "off")
@@ -467,6 +469,148 @@ def test_ct10_web_play_endpoint_refuses_before_reading_the_body(desk, bridge):
         stack.cli("channel", "playback", SLUG, "on")
     # the bridge is still serving after all of that
     assert bridge.request("GET", "/healthz", token=None)[0] == 200
+
+
+def chunked_post(port, path, pieces, gap_s, token=PLAY_TOKEN, finish=True):
+    """POST a chunked body piece by piece, `gap_s` apart (a TTS that is still rendering). Returns the socket and,
+    when `finish`, the time the last chunk went out. The answer is read by the caller (it comes after the clip)."""
+    s = socket.create_connection(("127.0.0.1", port), timeout=60)
+    s.sendall((f"POST {path} HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {token}\r\n"
+               f"Content-Type: audio/wav\r\nTransfer-Encoding: chunked\r\n\r\n").encode())
+    for i, piece in enumerate(pieces):
+        if i: time.sleep(gap_s)
+        s.sendall(f"{len(piece):x}\r\n".encode() + piece + b"\r\n")
+    sent_last = time.monotonic()
+    if finish: s.sendall(b"0\r\n\r\n")
+    return s, sent_last
+
+
+def read_answer(s):
+    data = b""
+    while b"\r\n\r\n" not in data or len(data.split(b"\r\n\r\n", 1)[1]) == 0 or not data.endswith(b"\n"):
+        chunk = s.recv(4096)
+        if not chunk: break
+        data += chunk
+    s.close()
+    return int(data.split(b" ", 2)[1]), json.loads(data.split(b"\r\n\r\n", 1)[1])
+
+
+def streaming_mka(parts) -> bytes:
+    """Tones one after the other as Matroska PCM s16 24 kHz mono, written to a pipe (as a streaming client does: no
+    seek back, unknown sizes) with 100 ms clusters."""
+    src = ";".join(f"sine=frequency={f}:duration={d}:sample_rate=24000[a{i}]" for i, (f, d) in enumerate(parts))
+    cat = "".join(f"[a{i}]" for i in range(len(parts))) + f"concat=n={len(parts)}:v=0:a=1"
+    r = subprocess.run(["ffmpeg", "-v", "error", "-filter_complex", f"{src};{cat}", "-ac", "1", "-c:a", "pcm_s16le",
+                        "-cluster_time_limit", "100", "-write_crc32", "0", "-f", "matroska", "-"], capture_output=True)
+    assert r.returncode == 0 and len(r.stdout) > 1000, r.stderr[-400:]
+    return r.stdout
+
+
+def mka_offset_after(data: bytes, seconds: float) -> int:
+    """Byte offset of the first Cluster (ID 1F 43 B6 75) whose Timecode (E7, ms) is >= seconds: cut there, the part
+    before is exactly the audio up to that time."""
+    want = int(seconds * 1000)
+    i = data.find(b"\x1f\x43\xb6\x75")
+    while i >= 0:
+        j = i + 4
+        n = 8 - (data[j]).bit_length() + 1            # length of the size vint
+        j += n
+        assert data[j] == 0xE7, "cluster without a leading Timecode"
+        ln = data[j + 1] & 0x7F                       # 1-byte size vint (timecode fits in <= 8 bytes)
+        tc = int.from_bytes(data[j + 2:j + 2 + ln], "big")
+        if tc >= want: return i
+        i = data.find(b"\x1f\x43\xb6\x75", i + 4)
+    raise AssertionError(f"no cluster at or after {seconds} s")
+
+
+def streaming_wav(path: Path) -> list:
+    """`path`'s audio as a stream-until-EOF WAV (sizes 0xFFFFFFFF), cut into 0.5 s pieces."""
+    with wave.open(str(path)) as w:
+        rate, ch, width, frames = w.getframerate(), w.getnchannels(), w.getsampwidth(), w.readframes(w.getnframes())
+    import struct
+    header = (b"RIFF" + struct.pack("<I", 0xFFFFFFFF) + b"WAVE" + b"fmt " +
+              struct.pack("<IHHIIHH", 16, 1, ch, rate, rate * ch * width, ch * width, width * 8) +
+              b"data" + struct.pack("<I", 0xFFFFFFFF))
+    step = int(rate * 0.5) * ch * width
+    return [header + frames[:step]] + [frames[i:i + step] for i in range(step, len(frames), step)]
+
+
+def test_ct10_web_chunked_body_plays_while_it_arrives_and_a_cut_off_stream_is_stopped(desk, bridge):
+    """The TTS case (stream-manager answers, ops-vagk8): voice-tts renders faster than real time but not at once, so
+    the client streams the audio as it is rendered. The first second must SOUND while the client is still sending
+    (measured on the channel, not inferred from a 200), the clip plays to its end, and the answer comes after it.
+    A client that breaks off mid-body has its track stopped: a cut-off clip does not keep sounding."""
+    stack, tmp = desk
+    stack.cli("channel", "playback", SLUG, "on")
+    node = f"kmixdeck.channel.{SLUG}"
+    # One second of 440 Hz, then NOTHING for 3 s (the renderer is slow), then 4 s of 1000 Hz. Recorded on the channel:
+    # the 440 Hz second must sound, then the channel goes quiet, then 1000 Hz follows. A player that waits for more
+    # input before it starts plays 440 straight into 1000 with no quiet stretch between.
+    # Matroska PCM, 24 kHz mono s16 like voice-tts. Not WAV: FFmpeg's WAV demuxer reads ~200 KB from a pipe before
+    # the first frame (spdif probe + stream info, measured 2026-10-12), ~4 s of this audio; see docs/web.md.
+    mka = streaming_mka([(440, 1.0), (1000, 4.0)])
+    cut = mka_offset_after(mka, 1.0)
+    first, rest = [mka[:cut]], [mka[i:i + 8192] for i in range(cut, len(mka), 8192)]
+    out = {}
+    def post():
+        s, _ = chunked_post(bridge.port, f"/channel/{SLUG}/play?title=streamed", first, gap_s=0.0, finish=False)
+        time.sleep(3.0)
+        for piece in rest:
+            s.sendall(f"{len(piece):x}\r\n".encode() + piece + b"\r\n")
+        s.sendall(b"0\r\n\r\n")
+        out["r"] = read_answer(s)
+    th_rec, res = record_in_background(stack, node, 11.0)
+    time.sleep(1.5)                                   # the recorder links its ports first
+    t0 = time.monotonic()
+    th = threading.Thread(target=post, daemon=True); th.start()
+    th.join(30)
+    took = time.monotonic() - t0
+    status, body = out["r"]
+    assert status == 200 and body == {"ok": True, "id": body["id"], "result": "played"}, (status, body)
+    # the stall runs from the moment the first second is sent (it plays meanwhile): 3 s + 4 s of the rest
+    assert took >= 6.8, f"200 after {took:.1f} s - before the 3 s stall + 4 s of the rest could have ended"
+    th_rec.join(15)
+    assert "wav" in res, f"recording failed: {res.get('error')}"
+    win = spectrogram(res["wav"], (440, 1000))
+    on, off = 0.01, 0.002
+    a440 = [i for i, w in enumerate(win) if w[440] > on]
+    a1000 = [i for i, w in enumerate(win) if w[1000] > on]
+    assert len(a440) >= 15 and len(a1000) >= 60, f"440 in {len(a440)}, 1000 in {len(a1000)} windows of 50 ms"
+    quiet = [i for i in range(max(a440) + 1, min(a1000)) if win[i][440] < off and win[i][1000] < off]
+    def runs(win):
+        out, last, n = [], None, 0
+        for w in win:
+            k = "A" if w[440] > on else "B" if w[1000] > on else "."
+            if k == last: n += 1
+            else:
+                if last: out.append(f"{last}{n}")
+                last, n = k, 1
+        out.append(f"{last}{n}")
+        return " ".join(out)
+    assert len(quiet) >= 30, (f"{runs(win)} only {len(quiet)} quiet windows of 50 ms between the first second and the rest: "
+                              "the first second did not play before the rest of the body arrived")
+
+    # cut off mid-body: the client vanishes after 1.5 s of a 6 s tone -> stopped, the channel falls silent
+    pieces = streaming_wav(tone(tmp / "cut440.wav", 440, 6))
+    s, _ = chunked_post(bridge.port, f"/channel/{SLUG}/play?title=cut", pieces[:3], gap_s=0.1, finish=False)
+    wait_for(lambda: props(stack)["NowPlaying"] == "cut", timeout=3.0, what="the cut-off clip to start")
+    s.close()
+    wait_for(lambda: props(stack)["NowPlaying"] == "", timeout=3.0, what="the bridge to stop the cut-off clip")
+    wait_level(lambda: stack.pw.level_at(node), lambda v: v < -60, what="silence after the cut-off clip")
+
+    # a full queue is refused before the body: 503 and nothing queued
+    long = tone(tmp / "full-chunked.wav", 440, 20)
+    try:
+        for i in range(8):
+            stack.cli("channel", "play", SLUG, str(long), "--title", f"q{i}")
+        s, _ = chunked_post(bridge.port, f"/channel/{SLUG}/play", streaming_wav(tone(tmp / "q9.wav", 1000, 1)), gap_s=0)
+        st, body = read_answer(s)
+        assert st == 503 and "queue full" in body["error"], (st, body)
+        assert len(props(stack)["PlayQueue"]) == 7
+    finally:
+        stack.cli("channel", "stop", SLUG)
+    wait_for(lambda: props(stack)["NowPlaying"] == "" and props(stack)["PlayQueue"] == [], timeout=5.0, what="queue empty after stop")
+    assert bridge.request("GET", "/healthz", token=None) == (200, {"ok": True})
 
 
 def test_ct10_web_play_endpoint_maps_results(desk, bridge):

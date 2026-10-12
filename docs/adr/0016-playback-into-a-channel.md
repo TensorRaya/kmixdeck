@@ -59,10 +59,18 @@ into a channel, through that channel's effects and cells like any other source, 
   exactly one thing: play audio into a channel whose `Playback` switch the user turned on. It cannot move a fader,
   change routing, read state, or reach any other method. A leaked play token means "someone can play sound into
   the channels you opened for that", nothing more.
-- **Refuse before reading.** Token, channel, switch, `Content-Length` (required, no chunked bodies), size limit
+- **Refuse before reading.** Token, channel, switch, `Content-Length` or chunked (2026-10-12, see below), size limit
   (`--play-max-bytes`, 64 MiB default) and queue room are checked from the headers. A refused request never costs
   an upload. At most 8 requests are in flight.
-- **RAM, not disk.** The body goes into a `memfd` and its fd to the daemon. Nothing is written to a disk.
+- **RAM, not disk.** A `Content-Length` body goes into a `memfd`, a chunked body into a pipe, and that fd to the
+  daemon. Nothing is written to a disk.
+- **Streamed bodies (2026-10-12).** A TTS client wants the first words to sound while the rest is still rendered
+  (stream-manager answers on SPK BOT, ops-vagk8: a whole-text render made the first sound wait up to 9 s). With
+  `Transfer-Encoding: chunked` the bridge queues the track first and hands the daemon the read end of a pipe; the
+  player already played pipes (music from another program). A stall plays as silence. A client that disconnects
+  or breaks the framing mid-body has its track stopped, so a cut-off clip does not keep sounding. The size limit
+  is checked while the body arrives. Container: FFmpeg needs about 200 KB of a streamed WAV before its first frame
+  (four seconds of 24 kHz speech); Matroska starts after its first cluster (docs/web.md).
 - **No nested opens.** The demuxer's `io_open` refuses every nested open and the allowed formats are plain audio
   containers (wav, w64, aiff, flac, mp3, ogg, aac, mov/mp4/m4a, matroska/webm). An hls/dash/concat playlist in the
   body cannot make the daemon fetch a URL or open a path.

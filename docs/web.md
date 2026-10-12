@@ -102,8 +102,9 @@ kmixdeck-web --play 0.0.0.0:7421                   # prints the endpoint; the to
 - **Own token, own scope.** `--play` uses `$XDG_CONFIG_HOME/kmixdeck/play-token` (created on first use, mode 0600; `--play-token`
   overrides it for tests), compared in constant time. It is not the web-UI token and the web-UI token does not open it. With it a
   client can only play audio into a channel whose **Accept playback** switch is on — no faders, no routing, no state.
-- `POST /channel/<slug>/play[?title=<urlencoded>]` with `Authorization: Bearer <token>` and a `Content-Length` (no chunked
-  bodies); the body is an audio file (WAV, FLAC, OGG, MP3, AAC/M4A, MKA/WebM). It is held in RAM (a memfd), never written to disk.
+- `POST /channel/<slug>/play[?title=<urlencoded>]` with `Authorization: Bearer <token>` and either a `Content-Length` or
+  `Transfer-Encoding: chunked`; the body is an audio file (WAV, FLAC, OGG, MP3, AAC/M4A, MKA/WebM). It is held in RAM, never
+  written to disk: a `Content-Length` body in a memfd, a chunked body in a pipe.
   The request **blocks until the clip ended** and then answers, as JSON:
 
   | Status | Body | When |
@@ -114,13 +115,22 @@ kmixdeck-web --play 0.0.0.0:7421                   # prints the endpoint; the to
   | 401 | `{"ok":false,"error":"…"}` | missing or wrong token |
   | 404 | | no such channel |
   | 409 | | the channel's playback switch is off (the message names the command that turns it on) |
-  | 400 / 411 | | bad or missing `Content-Length`, chunked body |
+  | 400 / 411 | | bad or missing `Content-Length` (411: neither it nor chunked), both together, bad chunk framing |
+  | 501 | | a `Transfer-Encoding` other than plain `chunked` |
   | 413 | | body larger than `--play-max-bytes` (default 64 MiB) |
   | 503 | | the channel's queue (8 tracks) is full, too many requests in flight, or the daemon is not on the bus |
 
   401 to 413, the playback switch, and "too many requests in flight" are decided from the headers, before a byte
   of the body is read. A full queue is the daemon's answer (`org.kmixdeck1.Error.QueueFull`): the bridge keeps no
-  copy of the limit, so that 503 comes after the upload.
+  copy of the limit, so that 503 comes after a `Content-Length` upload. A chunked body is queued first, so a full
+  queue is refused before any of it is read; its size limit is checked as it arrives.
+- **A chunked body plays while it arrives.** For text to speech that is still being rendered: the track is queued
+  at once and the daemon reads the pipe as the client sends, so the first words sound before the last are rendered.
+  A stall in the body plays as silence; the track ends after the terminating chunk. A client that disconnects or
+  breaks the framing mid-body has its track stopped. Send a container FFmpeg can start from a few KB: **Matroska**
+  (PCM or FLAC) starts after its header and first cluster. A streamed **WAV does not**: FFmpeg reads about 200 KB
+  from a pipe before the first frame (spdif probe, then stream info; measured 2026-10-12, FFmpeg 8 and 9), at 24 kHz
+  mono 16 bit that is four seconds of speech before the first sound. Raw FLAC and Ogg also wait for more input.
 - Clips queue up per channel and play one after the other. **A client that disconnects while waiting** (it timed out, it
   gave up) has its clip stopped: a queued clip is never played late.
 - `GET /healthz` (no token): `200 {"ok":true}` while the daemon is on the bus, otherwise `503`.

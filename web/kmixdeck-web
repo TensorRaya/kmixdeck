@@ -27,11 +27,12 @@ Methods that take a file descriptor (`h`, Channel.Play) are not in it: an fd can
 CT-10, opt-in `--play HOST:PORT`: a SECOND listener, plain HTTP, with its own token (`play-token`, never the web-UI
 token), that can do exactly one thing — play an uploaded audio file into a channel whose Playback switch is on
 (ADR 0016). It cannot move a fader, read state beyond that, or reach any other method:
-  POST /channel/<slug>/play[?title=…]   Authorization: Bearer <play token>, Content-Length required, body = the file
+  POST /channel/<slug>/play[?title=…]   Authorization: Bearer <play token>, body = the file with Content-Length,
+       or chunked (Transfer-Encoding: chunked): then it plays while the body still arrives (TTS being rendered)
        → blocks until the track ended: 200 played · 410 stopped · 422 error: … (JSON {"ok","id","result"})
   GET  /healthz                         no auth: 200 {"ok":true} while the daemon is on the bus, else 503
 """
-import argparse, asyncio, json, os, re, secrets, select, signal, socket, sys, threading, time, xml.etree.ElementTree as ET
+import argparse, asyncio, fcntl, json, os, re, secrets, select, signal, socket, sys, threading, time, xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 from http import HTTPStatus
@@ -376,6 +377,7 @@ PLAY_ERROR_STATUS = {
 # Uploads held in RAM at once, over all channels (memory bound: this × --play-max-bytes). The queue limit per channel
 # is the daemon's alone (Player::kQueueLimit, answered as QueueFull → 503); the bridge does not keep a copy of it.
 MAX_CONCURRENT_PLAYS = 8
+F_SETPIPE_SZ = getattr(fcntl, "F_SETPIPE_SZ", 1031)   # Linux; the constant is in fcntl from Python 3.10 on
 
 
 class PlayServer(ThreadingHTTPServer):
@@ -430,10 +432,21 @@ class PlayHandler(BaseHTTPRequestHandler):
         if ch is None: return self._err(404, f"no channel '{slug}'")
         if not ch.get("Playback"):
             return self._err(409, f"playback is off for channel '{slug}' — turn it on with `kmixdeck channel playback {slug} on`")
-        if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
-            return self._err(411, "chunked bodies are not accepted; send Content-Length")
+        title = parse_qs(url.query).get("title", [""])[0] or f"web: {slug}"   # parse_qs decodes already
+        te = [t.strip() for t in self.headers.get("Transfer-Encoding", "").lower().split(",") if t.strip()]
+        if te:
+            # A streamed body (TTS that is still being rendered): played while it arrives, see _play_stream.
+            if te != ["chunked"]: return self._err(501, f"unsupported Transfer-Encoding: {', '.join(te)}")
+            if self.headers.get("Content-Length") is not None: return self._err(400, "Content-Length and chunked together")
+            if not self.server.slots.acquire(blocking=False):
+                return self._err(503, "too many play requests in flight")
+            try:
+                self._play_stream(slug, title)
+            finally:
+                self.server.slots.release()
+            return
         cl = self.headers.get("Content-Length")
-        if cl is None: return self._err(411, "Content-Length required")
+        if cl is None: return self._err(411, "Content-Length or Transfer-Encoding: chunked required")
         try: length = int(cl)
         except ValueError: return self._err(400, "bad Content-Length")
         if length <= 0: return self._err(400, "empty body")
@@ -441,12 +454,11 @@ class PlayHandler(BaseHTTPRequestHandler):
         if not self.server.slots.acquire(blocking=False):
             return self._err(503, "too many play requests in flight")
         try:
-            self._play(slug, length, parse_qs(url.query).get("title", [""])[0] or f"web: {slug}")   # parse_qs decodes already
+            self._play(slug, length, title)
         finally:
             self.server.slots.release()
 
     def _play(self, slug, length, title):
-        kd = self.server.kd
         # RAM only: the clip never touches a disk (ADR 0016, and the host's disk-wear rule).
         fd = os.memfd_create("kmixdeck-play", os.MFD_CLOEXEC)
         try:
@@ -456,23 +468,119 @@ class PlayHandler(BaseHTTPRequestHandler):
                 if not chunk: return self._err(400, f"body ended after {length - left} of {length} bytes")
                 os.write(fd, chunk); left -= len(chunk)
             os.lseek(fd, 0, os.SEEK_SET)
-            try:
-                tid, w = kd.play(slug, fd, title[:200])
-            except GLib.Error as e:
-                name = Gio.DBusError.get_remote_error(e) or ""
-                Gio.DBusError.strip_remote_error(e)
-                code = PLAY_ERROR_STATUS.get(name, 400)
-                return self._err(code, "the kmixdeck daemon is not on the bus" if code == 503 and name.startswith("org.freedesktop") else e.message)
+            started = self._start(slug, fd, title)
+            if started is None: return
+            tid, w = started
         finally:
             os.close(fd)   # the daemon holds its own dup now
+        self._answer_when_ended(slug, tid, w)
+
+    def _start(self, slug, fd, title):
+        """Channel.Play; (id, waiter), or None after the refusal was answered."""
+        try:
+            return self.server.kd.play(slug, fd, title[:200])
+        except GLib.Error as e:
+            name = Gio.DBusError.get_remote_error(e) or ""
+            Gio.DBusError.strip_remote_error(e)
+            code = PLAY_ERROR_STATUS.get(name, 400)
+            self._err(code, "the kmixdeck daemon is not on the bus" if code == 503 and name.startswith("org.freedesktop") else e.message)
+            return None
+
+    def _stop(self, slug, tid):
+        kd = self.server.kd
+        kd.forget(tid)
+        try: kd.stop_playback(slug, tid)
+        except GLib.Error: pass
+
+    def _play_stream(self, slug, title):
+        """A chunked body: the daemon gets the read end of a pipe and plays while the client is still sending.
+
+        For text to speech that is still being rendered: the first words sound while the rest is on its way. The
+        track is queued at once, so a full queue is refused before any of the body is read. The body stays in RAM
+        (the pipe). The daemon pads a stall with silence; it ends the track at EOF of the pipe, which comes only after
+        the terminating chunk. A client that disconnects or breaks the framing mid-body has its track stopped: a
+        cut-off clip is not played to the point where the client gave up as if it were complete.
+        """
+        rfd, wfd = os.pipe2(os.O_CLOEXEC)
+        try:
+            try: fcntl.fcntl(wfd, F_SETPIPE_SZ, 1 << 20)   # ~10 s of 48 kHz stereo s16 in flight before back pressure
+            except OSError: pass
+            started = self._start(slug, rfd, title)
+        except BaseException:
+            os.close(wfd)
+            raise
+        finally:
+            os.close(rfd)   # the daemon holds its own dup now
+        if started is None:
+            os.close(wfd)
+            return
+        tid, w = started
+        try:
+            outcome = self._pump_chunked(wfd, w)
+        finally:
+            os.close(wfd)   # EOF for the daemon: the track drains and ends
+        if outcome == "gone":
+            self._stop(slug, tid)
+            self.close_connection = True
+            return
+        if outcome == "too large":
+            self._stop(slug, tid)
+            return self._err(413, f"body too large: more than {self.server.max_bytes} bytes")
+        if outcome == "bad framing":
+            self._stop(slug, tid)
+            return self._err(400, "bad chunked framing")
+        self._answer_when_ended(slug, tid, w)
+
+    def _pump_chunked(self, wfd, w):
+        """Copy a chunked body into the pipe. Returns "done", "ended" (the track ended first: stopped, switch off),
+        "gone" (client closed or stalled past the socket timeout), "too large" or "bad framing"."""
+        total = 0
+        rfile = self.rfile
+        try:
+            while True:
+                line = rfile.readline(1026)
+                if not line: return "gone"
+                if not line.endswith(b"\r\n"): return "bad framing"
+                try: size = int(line.split(b";", 1)[0].strip(), 16)
+                except ValueError: return "bad framing"
+                if size < 0: return "bad framing"
+                if size == 0:
+                    while True:   # trailers, up to the empty line
+                        t = rfile.readline(1026)
+                        if not t: return "gone"
+                        if t in (b"\r\n", b"\n"): return "done"
+                total += size
+                if total > self.server.max_bytes: return "too large"
+                left = size
+                while left > 0:
+                    data = rfile.read(min(left, 1 << 16))
+                    if not data: return "gone"
+                    left -= len(data)
+                    if not self._write_all(wfd, data, w): return "ended"
+                if rfile.read(2) != b"\r\n": return "bad framing"
+        except (TimeoutError, socket.timeout, ConnectionError):
+            return "gone"
+
+    @staticmethod
+    def _write_all(wfd, data, w):
+        """Write into the pipe; False once the track ended (the daemon closed its end or reported the end)."""
+        view = memoryview(data)
+        while view:
+            if w["event"].is_set(): return False
+            _r, ready, _x = select.select([], [wfd], [], 0.2)
+            if not ready: continue   # the daemon is not reading yet (queued behind another track)
+            try: n = os.write(wfd, view)
+            except BrokenPipeError: return False
+            view = view[n:]
+        return True
+
+    def _answer_when_ended(self, slug, tid, w):
         # Block until the track ended. Meanwhile watch the client: a client that gave up (timeout, Ctrl-C) must not
         # have its clip played late — stop it, queued or sounding.
         sock = self.connection
         while not w["event"].wait(0.2):
             if self._client_gone(sock):
-                kd.forget(tid)
-                try: kd.stop_playback(slug, tid)
-                except GLib.Error: pass
+                self._stop(slug, tid)
                 self.close_connection = True
                 return
         result = w["result"]
