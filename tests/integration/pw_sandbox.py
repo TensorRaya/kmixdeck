@@ -6,7 +6,7 @@ PIPEWIRE_REMOTE pointed at it) and plasma-pa's appium tests (spawn pipewire + wi
 test, never touch the user's session). No sound card needed — everything is null sinks.
 """
 from __future__ import annotations
-import json, os, re, shutil, subprocess, tempfile, time
+import json, os, re, shutil, subprocess, tempfile, time, warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,8 +49,37 @@ class PwDaemon:
 
     # ---- introspection
     def dump(self) -> list[dict]:
-        out = subprocess.run(["pw-dump"], env=self.env, capture_output=True, text=True, check=True).stdout
-        return json.loads(out)
+        """The graph as pw-dump prints it.
+
+        🔴 Exit 0 with no output is a real pw-dump answer, not JSON (ops-c44tb, 2026-10-12). pw-dump 1.6.2 quits its
+        loop on a core error with -EPIPE, i.e. when its connection to the server ends, and returns 0 without having
+        printed anything (src/tools/pw-dump.c, on_core_error). CI run 38271142494 hit it once in the teardown of
+        dv30d: the test itself had passed, json.loads('') failed, and both pw-dump's stderr and the server's log,
+        which say why the connection ended, were thrown away. Why the server let go is not known yet: one empty
+        answer in ~20 CI runs, none locally in 12 dv30d runs under load nor in 101 dumps against a churning graph.
+        Such an answer is asked again; the warning carries pw-dump's stderr and the server's last log lines, so the
+        cause shows in the CI log even when the retry succeeds. A server that is really gone still fails: three
+        empty answers raise, with the evidence."""
+        seen = []
+        for _ in range(3):
+            r = subprocess.run(["pw-dump"], env=self.env, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise subprocess.CalledProcessError(r.returncode, r.args, r.stdout, r.stderr)
+            if r.stdout.strip():
+                if seen:
+                    warnings.warn(f"pw-dump answered empty {len(seen) // 2}x before a full dump: {seen}", stacklevel=2)
+                return json.loads(r.stdout)
+            seen.append(r.stderr.strip()[-400:] or "(no stderr)")
+            seen.append("server: " + self._server_log_tail())
+            time.sleep(0.2)
+        raise RuntimeError(f"pw-dump answered empty 3 times (rc 0: its connection to the server ended); stderr: {seen}")
+
+    def _server_log_tail(self, lines: int = 8) -> str:
+        try:
+            with open(self.runtime_dir / "pipewire.stderr", errors="replace") as f:
+                return " | ".join(f.read().splitlines()[-lines:]) or "(empty)"
+        except OSError:
+            return "(no server log)"
 
     def node(self, name: str) -> dict | None:
         for o in self.dump():
@@ -451,8 +480,11 @@ class PwDaemon:
 
     # ---- lifecycle
     def _start_procs(self) -> None:
-        pw = subprocess.Popen(["pipewire"], env=self.env, stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL, preexec_fn=_stirb_mit_eltern)
+        # The server's own warnings and errors (log.level 2 by default) go to a file in the sandbox, so that a test
+        # which sees the server drop a client can show WHY (dump() below). Appending: a restart test starts it again.
+        with open(self.runtime_dir / "pipewire.stderr", "a") as log:
+            pw = subprocess.Popen(["pipewire"], env=self.env, stdout=subprocess.DEVNULL,
+                                  stderr=log, preexec_fn=_stirb_mit_eltern)
         time.sleep(0.8)
         wp = subprocess.Popen(["wireplumber"], env=self.env, stdout=subprocess.DEVNULL,
                               stderr=subprocess.DEVNULL, preexec_fn=_stirb_mit_eltern)
