@@ -353,14 +353,14 @@ void Mixer::ensureCellGraph() {
     for (int b = 0; b < buses; ++b)
         requestNullNode(ADR13::busNode(b), [&] {
             m_graph.createNullNode(ADR13::busNode(b), QStringLiteral("kmixdeck cell bus"), QStringLiteral("Audio/Sink"), ADR13::busPositions(ADR13::kMixesPerBus)); });
-    QList<uint32_t> stale;
+    QList<pw::NodeInfo> stale;   // the nodes themselves: destroyObject destroys an identity, not an id (ops-h3y5z)
     for (const auto &c : m_layout.channels)
         for (int b = 0; b < buses; ++b) {
             const int n = qMin(int(m_layout.mixes.size()) - b * ADR13::kMixesPerBus, ADR13::kMixesPerBus);
             if (n <= 0) continue;
             const QString name = ADR13::chainNode(c.slug, b);
             const QString want = QStringLiteral("cells ") + c.slug + QLatin1Char(' ') + ADR13::chainSignature(m_layout, b);
-            if (const auto node = m_graph.node(name)) { if (node->description != want) stale << node->id; continue; }
+            if (const auto node = m_graph.node(name)) { if (node->description != want) stale << *node; continue; }
             requestNullNode(name, [&] { m_graph.loadLoopback(ADR13::cellChainArgs(m_layout, c.slug, b, n), pw::filterChainModule()); });
             expectEdge(name, QStringLiteral("cells ") + c.name);
         }
@@ -369,41 +369,42 @@ void Mixer::ensureCellGraph() {
         const QString name = ADR13::tapNode(slug);
         const int k = i % ADR13::kMixesPerBus;
         const QString want = QStringLiteral("mix %1 AUX%2 AUX%3").arg(slug).arg(2 * k).arg(2 * k + 1);
-        if (const auto node = m_graph.node(name)) { if (node->description != want) stale << node->id; continue; }
+        if (const auto node = m_graph.node(name)) { if (node->description != want) stale << *node; continue; }
         requestNullNode(name, [&] { m_graph.loadLoopback(ADR13::mixTapArgs(slug, i, m_layout.mixEntry(slug))); });
         expectEdge(name, QStringLiteral("Mix: ") + m_layout.mixes[i].name + QStringLiteral(" (bus tap)"));
     }
     // leftovers of channels/mixes that are gone — and twins: two modules for one name (a retry whose first attempt
     // arrived late) keep the older node, the newer is surplus
-    QHash<QString, uint32_t> firstOf;
+    QHash<QString, pw::NodeInfo> firstOf;
     for (const auto &n : m_graph.nodes()) {
         if (!n.name.startsWith(QLatin1String("kmixdeck.cells.")) && !n.name.startsWith(QLatin1String("kmixdeck.tap."))) continue;
         auto f = firstOf.find(n.name);
-        if (f == firstOf.end()) { firstOf.insert(n.name, n.id); continue; }
-        stale << std::max(*f, n.id); *f = std::min(*f, n.id);
+        if (f == firstOf.end()) { firstOf.insert(n.name, n); continue; }
+        // the older module stays; "older" by serial, which only grows — an id says nothing about age once ids recycle
+        if (n.serial > f->serial) stale << n; else { stale << *f; *f = n; }
     }
     for (const auto &n : m_graph.nodes()) {
         if (n.name.startsWith(QLatin1String("kmixdeck.cells."))) {
             QString ch = n.name.mid(15); if (ch.endsWith(QLatin1String(".out"))) ch.chop(4); ch = ch.section(QLatin1Char('@'), 0, 0);
             const int b = n.name.contains(QLatin1Char('@')) ? n.name.section(QLatin1Char('@'), 1).section(QLatin1Char('.'), 0, 0).toInt() : 0;
-            if (!m_layout.channel(ch) || b >= buses) stale << n.id;
+            if (!m_layout.channel(ch) || b >= buses) stale << n;
         } else if (n.name.startsWith(QLatin1String("kmixdeck.tap."))) {
             QString mx = n.name.mid(13); if (mx.endsWith(QLatin1String(".in"))) mx.chop(3);
-            if (!m_layout.mix(mx)) stale << n.id;
+            if (!m_layout.mix(mx)) stale << n;
         } else if (n.name == QLatin1String("kmixdeck.bus") || n.name.startsWith(QLatin1String("kmixdeck.bus."))) {
             const int b = n.name == QLatin1String("kmixdeck.bus") ? 0 : n.name.mid(13).toInt();
-            if (b >= buses) stale << n.id;
+            if (b >= buses) stale << n;
         }
     }
     // One destroy per module (2026-09-28): destroying either stream of a filter-chain/loopback unloads the module and
     // takes its partner along, so destroying the partner too only earned "no global N" (157 in a 3-channel run).
-    QSet<QString> staleNames; for (uint32_t id : stale) staleNames.insert(m_idToName.value(id));
-    for (uint32_t id : stale) {
-        const QString nm = m_idToName.value(id);
+    QSet<QString> staleNames; for (const auto &n : stale) staleNames.insert(n.name);
+    for (const auto &n : stale) {
+        const QString &nm = n.name;
         if (!nm.isEmpty()) m_nodeRequested.remove(nm);
         if (nm.endsWith(QLatin1String(".out")) && staleNames.contains(nm.chopped(4))) continue;
         if (nm.endsWith(QLatin1String(".in"))  && staleNames.contains(nm.chopped(3))) continue;
-        m_graph.destroyObject(id);
+        m_graph.destroyObject(n);
     }
 }
 void Mixer::expectEdge(const QString &playbackNode, const QString &description) {
@@ -1176,7 +1177,7 @@ bool Mixer::setMixOutputs(const QString &slug, const QVector<DeviceRef> &outputs
         const QString after  = n < outputs.size()    ? outputs[n].ref().section(QLatin1Char(':'), 1)    : QString();
         if (before == after) continue;   // same ports AND same side → retarget only
         const QString out = EdgeNames::outputNode(slug, n);
-        if (auto node = m_graph.node(out)) { m_graph.destroyObject(node->id); m_edges.remove(out); }
+        if (auto node = m_graph.node(out)) { m_graph.destroyObject(*node); m_edges.remove(out); }
     }
     m->outputs = outputs;
     saveLayout();
@@ -1381,7 +1382,7 @@ QString Mixer::addInput(const QString &displayName, const DeviceRef &device, con
 void Mixer::removeInput(const QString &slug) {
     m_layout.inputs.removeIf([&](const LayoutInput &i) { return i.slug == slug; });
     saveLayout();
-    if (auto n = m_graph.node(EdgeNames::inputNode(slug))) m_graph.destroyObject(n->id);
+    if (auto n = m_graph.node(EdgeNames::inputNode(slug))) m_graph.destroyObject(*n);
     m_edges.remove(EdgeNames::inputNode(slug));
     Q_EMIT inputsChanged();
 }
@@ -1483,7 +1484,7 @@ bool Mixer::setChannelInputDevice(const QString &channel, const QString &refStr)
     if (auto *in = m_layout.input(channel)) {
         if (in->device == d) return true;
         const bool hadEdge = m_graph.node(EdgeNames::inputNode(channel)).has_value();
-        if (auto n = m_graph.node(EdgeNames::inputNode(channel))) m_graph.destroyObject(n->id);   // rebuild with the new target
+        if (auto n = m_graph.node(EdgeNames::inputNode(channel))) m_graph.destroyObject(*n);   // rebuild with the new target
         m_edges.remove(EdgeNames::inputNode(channel));
         if (refStr.isEmpty()) { removeInput(channel); Q_EMIT channelChanged(channel); return true; }
         in->device = d; saveLayout();
@@ -1728,8 +1729,8 @@ void Mixer::ensureAppRelays(const LayoutApp &a) {
         // monitor ports silent for downstream captures (test_ux12_* red after test_ch12_* in one session).
         if (const auto in = m_graph.node(node + QStringLiteral(".in")); in && (in->target == a.nodeName || in->configuredTarget == a.nodeName) && m_graph.node(node)) continue;
         // present but capturing the wrong node (older renderer captured the channel sink) → rebuild
-        if (const auto in = m_graph.node(node + QStringLiteral(".in"))) m_graph.destroyObject(in->id);
-        if (const auto out = m_graph.node(node)) m_graph.destroyObject(out->id);
+        if (const auto in = m_graph.node(node + QStringLiteral(".in"))) m_graph.destroyObject(*in);
+        if (const auto out = m_graph.node(node)) m_graph.destroyObject(*out);
         m_graph.loadLoopback(loopbackArgs(QStringLiteral("App: ") + a.key, node + QStringLiteral(".in"), a.nodeName, false, {}, true,
                                           node, m_layout.channelEntry(a.channels[n]), {}, false, true));
     }
@@ -1737,7 +1738,7 @@ void Mixer::ensureAppRelays(const LayoutApp &a) {
 void Mixer::removeAppRelays(const LayoutApp &a) {
     for (int n = 1; n < a.channels.size(); ++n) {
         const QString node = EdgeNames::relayNode(a.key, a.channels[n]);
-        if (const auto info = m_graph.node(node)) m_graph.destroyObject(info->id);
+        if (const auto info = m_graph.node(node)) m_graph.destroyObject(*info);
     }
 }
 // CH-5. Only apps we have NEVER routed are touched: for everything else WirePlumber's restore-target has the
@@ -1868,7 +1869,7 @@ bool Mixer::removeVirtualDevice(const QString &slug) {
     const QStringList nodes{EdgeNames::virtualPassNode(slug) + QStringLiteral(".in"), v->inputNode(), v->outputNode()};   // DV-29: capture half, source (= playback half), sink
     m_layout.virtualDevices.removeIf([&](const LayoutVirtualDevice &d) { return d.slug == slug; });
     saveLayout();   // layout first: a reconcile triggered by the removal below must not re-create them
-    for (const QString &n : nodes) { m_nodeRequested.remove(n); if (auto node = m_graph.node(n)) m_graph.destroyObject(node->id); }
+    for (const QString &n : nodes) { m_nodeRequested.remove(n); if (auto node = m_graph.node(n)) m_graph.destroyObject(*node); }
     Q_EMIT layoutChanged();
     return true;
 }
@@ -2251,15 +2252,14 @@ void Mixer::removeMix(const QString &slug) {
 // Destroying a loopback's playback node tears the whole module down (both streams); capture nodes are
 // listed too so nothing is missed when the graph is in a half state. Snapshot first: destroy mutates m_graph.
 void Mixer::destroyOurNodes(const std::function<bool(const QString &)> &match) {
-    QList<uint32_t> ids;
+    QList<pw::NodeInfo> doomed;
     QSet<QString> names;
-    for (const auto &n : m_graph.nodes()) if (n.name.startsWith(QLatin1String("kmixdeck.")) && match(n.name)) { ids << n.id; names.insert(n.name); m_nodeRequested.remove(n.name); }
+    for (const auto &n : m_graph.nodes()) if (n.name.startsWith(QLatin1String("kmixdeck.")) && match(n.name)) { doomed << n; names.insert(n.name); m_nodeRequested.remove(n.name); }
     // one destroy per module: the partner half goes with it, a second destroy only earns "no global N"
-    for (uint32_t id : ids) {
-        const QString nm = m_idToName.value(id);
-        if (nm.endsWith(QLatin1String(".out")) && names.contains(nm.chopped(4))) continue;
-        if (nm.endsWith(QLatin1String(".in"))  && names.contains(nm.chopped(3))) continue;
-        m_graph.destroyObject(id);
+    for (const auto &n : doomed) {
+        if (n.name.endsWith(QLatin1String(".out")) && names.contains(n.name.chopped(4))) continue;
+        if (n.name.endsWith(QLatin1String(".in"))  && names.contains(n.name.chopped(3))) continue;
+        m_graph.destroyObject(n);
     }
 }
 

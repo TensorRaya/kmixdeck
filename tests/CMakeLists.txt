@@ -163,6 +163,11 @@ if(PYTEST_EXECUTABLE AND PIPEWIRE_EXECUTABLE AND WIREPLUMBER_EXECUTABLE AND FFMP
                                              RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
                                              LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     endforeach()
+    # ops-h3y5z: a stale destroy must not hit the object that inherited the id (test_audio_graph.py). Built, never
+    # installed; links the same Graph the daemon uses, so it tests the daemon's code, not a copy of it.
+    add_executable(graph-identity-probe tools/graph-identity-probe.cpp)
+    target_link_libraries(graph-identity-probe PRIVATE kmixdeck_core)
+    set_target_properties(graph-identity-probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     foreach(suite service_cli audio_graph lifecycle routing fx presentation layout ports frontends_sync frontends_features soundboard playback streamdeck web pipewire_5202)
         add_test(NAME integration-${suite}
             COMMAND ${PYTEST_EXECUTABLE} -q -p no:cacheprovider ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_${suite}.py

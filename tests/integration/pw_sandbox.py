@@ -380,8 +380,9 @@ class PwDaemon:
         port absent → rc=255 → silence. That is what made dv28 flaky (2/5 red on HEAD, not caused by any change
         of mine) — same bug class as wait_ports/wait_props, and the same lesson as the swallowed-error helpers
         in CONTRIBUTING: an unchecked return value turns an infrastructure hiccup into a fake product bug."""
+        err = open(self.runtime_dir / f"pw-play-{time.time_ns()}.stderr", "w+")
         p = subprocess.Popen(["pw-play", "-P", "{ node.autoconnect = false }", str(self.tone())],
-                             env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                             env=self.env, stdout=subprocess.DEVNULL, stderr=err)
         quelle = "pw-play:output_FL"
         t0 = time.time()
         while time.time() - t0 < 10.0:
@@ -389,8 +390,13 @@ class PwDaemon:
                 break
             time.sleep(0.05)
         else:
-            p.kill(); p.wait()
-            raise AssertionError(f"pw-play never published {quelle} within 10s — no tone to link")
+            # Say whether pw-play is still waiting or already gone, and what it printed (ops-h3y5z, 2026-10-12): "never
+            # published" alone cannot tell a slow client from one whose connection the server ended.
+            rc = p.poll()
+            p.kill(); p.wait(); err.seek(0)
+            raise AssertionError(f"pw-play never published {quelle} within 10s — no tone to link "
+                                 f"(pw-play {'exited rc=' + str(rc) if rc is not None else 'still running'}, "
+                                 f"stderr: {err.read().strip()[-300:]!r}, server: {self._server_log_tail(5)})")
         r = subprocess.run(["pw-link", quelle, f"{node}:{port}"], env=self.env, capture_output=True, text=True)
         if r.returncode != 0:
             p.kill(); p.wait()

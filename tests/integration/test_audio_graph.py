@@ -6,6 +6,7 @@ Run: pytest -v tests/integration   (needs pipewire, wireplumber, pw-* tools, ffm
 """
 import subprocess, math, pytest
 from pw_sandbox import start_private_pipewire
+from test_service_cli import BIN
 
 CHANNELS = ["game", "system", "voice"]
 MIXES = ["monitor", "stream"]
@@ -292,3 +293,22 @@ def test_ct5_kmixdeck_and_the_pulse_world_show_one_truth():
             stack.cli("channel", "trim", "game", "0dB", check=False); stack.close()
     finally:
         pw.close()
+
+
+def test_h3y5z_a_stale_destroy_never_hits_the_object_that_inherited_the_id(pw):
+    """ops-h3y5z (2026-10-12): PipeWire gives a freed global id to the very next object (pw_map's free list is LIFO),
+    and a registry destroy names nothing but the id. Graph::destroyObject used to send it for nodes that were already
+    gone (12-162 "no global N" per 32x32 run), and each destroy that found something destroyed a stranger: dv30c lost
+    kmixdeck.mix.r1 while its edges stayed ("no mix 'r1'"), and pw-dump in a teardown printed nothing with rc 0 (its
+    client had the id). Measured with pw-cli in this sandbox before the fix: the successor died 5 of 5.
+
+    The probe drives the daemon's own Graph: sink A, destroy A, sink B (gets A's id), destroy A again. B must live.
+    Red on 4dde24b (no identity check), green with destroyObject(const NodeInfo &)."""
+    probe = BIN / "graph-identity-probe"
+    assert probe.exists(), "build the tests first (tests/CMakeLists.txt builds the probe)"
+    runs = [subprocess.run([str(probe)], env=pw.env, capture_output=True, text=True, timeout=30) for _ in range(3)]
+    lines = [(r.returncode, r.stdout.strip() or r.stderr.strip()) for r in runs]
+    assert all(rc != 2 for rc, _ in lines), f"probe setup failed: {lines}"
+    # the situation must really be the dangerous one, or a green result proves nothing
+    assert any("reused=1" in out for _, out in lines), f"the id was never reused, the probe tested nothing: {lines}"
+    assert all(rc == 0 and "b_alive=1" in out for rc, out in lines), f"a stale destroy took down its successor: {lines}"

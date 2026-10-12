@@ -580,16 +580,26 @@ bool Graph::moveStream(uint32_t streamId, const QString &sinkNodeName) {
     return true;
 }
 
-void Graph::destroyObject(uint32_t id) {
+bool Graph::destroyObject(const NodeInfo &n) {
+    if (!d->loop) return false;
     pw_thread_loop_lock(d->loop);
+    // 🔴 Identity, not id (ops-h3y5z, 2026-10-12). Until 0.4.0 this sent pw_registry_destroy(id) whenever it was asked,
+    // also for an id whose node was gone. PipeWire gives a freed id to the next object (LIFO), and refuses a destroy
+    // for it only while this client has not seen that object yet (ESTALE). Once the loop thread has seen it, the
+    // destroy succeeds — silently, on the wrong object. Measured with this Graph: the successor died 3 of 3. The log
+    // only shows the harmless outcomes: per 32x32 dv28 run up to ~40 registry "no global N" (id not reused yet) and a
+    // few "any more" (ESTALE, PipeWire caught it); the ones that hit something print nothing.
+    // The caller's snapshot can be a little behind the loop thread, so the check is made here, under the loop lock:
+    // if the loop thread still mirrors the node, it has not processed its removal, so it has not seen a successor
+    // either, and PipeWire's ESTALE covers the rest.
     // One destroy per mirrored node (2026-09-28, dv30c): the Qt side re-runs its reconcilers before the removal has
-    // come back and asked for every stale chain twice — the second request only earned "no global N" (72 in one run).
-    if (auto it = d->nodes.find(id); it != d->nodes.end()) {
-        if ((*it)->destroying) { pw_thread_loop_unlock(d->loop); return; }
-        (*it)->destroying = true;
-    }
-    pw_registry_destroy(d->registry, id);
+    // come back and asks for every stale chain twice — `destroying` keeps the second request off the wire.
+    const auto it = d->nodes.find(n.id);
+    const bool ours = it != d->nodes.end() && !(*it)->destroying && (n.serial == 0 || (*it)->info.serial == n.serial)
+                      && (*it)->info.name == n.name;
+    if (ours) { (*it)->destroying = true; pw_registry_destroy(d->registry, n.id); }
     pw_thread_loop_unlock(d->loop);
+    return ours;
 }
 
 } // namespace kmixdeck::pw

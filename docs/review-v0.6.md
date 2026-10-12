@@ -94,3 +94,33 @@ own load on top. The deterministic repros above (SIGSTOP) are the evidence for t
 
 - FACT: `ruff check .` 0, `tools/sot-audit.py` ok, `tools/dbus-doc.py` 130/130, `ninja` with
   `-DCMAKE_COMPILE_WARNING_AS_ERROR=ON` 0 warnings, `appstreamcli validate` ok.
+
+## v0.4.1 — a destroy names an id, and ids are recycled (ops-h3y5z)
+
+Found after the v0.4.0 tag, while checking why the local full suite was red where GitHub's run was green.
+
+- FACT: e78d7e7's CI run 38271142494 red once on an empty pw-dump (rc 0, no output) in dv30d's teardown. The local
+  full suite on 4dde24b red once in dv30c with `kmixdeck: no mix 'r1'` right after `mix add r1`; the leak report
+  listed r1's out/source/tap nodes but no `kmixdeck.mix.r1`. Its sink was gone, its edges were not.
+- FACT (code): `Graph::destroyObject(id)` sent `pw_registry_destroy(id)` whenever asked; the `destroying` flag only
+  covered ids the loop thread still mirrored. Callers pass ids from a Qt-side snapshot that can be behind.
+- FACT (logs, split by the erroring proxy): of the "no global N" lines in 4 rounds of dv28-dv30c, A side: 76
+  registry destroys with ENOENT, 4 with ESTALE ("any more"), 134 binds; with the fix: 47, 0, 68. ENOENT = the id was
+  not reused yet, ESTALE = reused by an object this client had not seen; both harmless. A destroy that meets a
+  reused id the client HAS seen succeeds and logs nothing, so the log cannot count the damage, only the near misses.
+  CORRECTION: an earlier draft of this entry called all 12-162 lines destroys; most are binds.
+- FACT (PipeWire 1.6.2 source): `pw_map_insert_new` reuses the most recently freed id first (LIFO free list).
+  `registry_destroy` rejects a reused id only with ESTALE for a client that has not seen the new global yet
+  (`recv_generation`); kmixdeckd's loop thread sees every global as it comes.
+- FACT (repro, private PipeWire, pw-cli): null sink A (id 333), destroy A, null sink B: B gets 333; destroy 333
+  again: B is gone, 5 of 5. With three pw-mon clients started after the removal: one of them disconnected, 3 of 3.
+  That is the empty pw-dump: its client was the object holding the recycled id.
+- FIX: `Graph::destroyObject(const NodeInfo &)` sends the destroy only while the loop thread still mirrors a node
+  with that id, that name and that `object.serial` (never reused), with no removal in flight. Mirrored = its removal
+  is not processed yet, so no successor has been seen either, and PipeWire's ESTALE covers that case. Every call site passes
+  the node it read from the snapshot; the twin sweep picks the older module by serial, not by id.
+- TEST: `test_audio_graph.py::test_h3y5z_a_stale_destroy_never_hits_the_object_that_inherited_the_id` drives the
+  daemon's own Graph through `tests/tools/graph-identity-probe`. The test also asserts the id WAS reused, so a green
+  run cannot be one where the dangerous case never happened. 4dde24b's Graph: red 3 of 3 (`reused=1
+  stale_destroy_sent=1 b_alive=0`). New Graph: green 3 of 3 (`stale_destroy_sent=0 b_alive=1`).
+- The pw-dump retry from 4dde24b stays as evidence, not as the fix: a retry that was needed still warns.

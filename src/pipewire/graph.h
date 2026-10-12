@@ -99,7 +99,14 @@ public:
     /// Set one LADSPA/builtin control on a filter-chain node by name ("gate:Threshold (dB)"), live.
     /// The name is exactly what the node's Props expose (measured: filter-chain puts controls there).
     void setControl(uint32_t nodeId, const QString &control, double value);
-    void destroyObject(uint32_t id);
+    /// Destroy the node `n` names — that node, not whatever holds its id now. PipeWire hands a freed global id to
+    /// the very next object (pw_map's free list is LIFO), and a registry destroy carries nothing but the id: sent
+    /// for a node that is already gone, it destroys its successor. Measured 2026-10-12 in a private PipeWire: a
+    /// destroy for a removed null sink's id took down the sink created after it, 5 of 5; with three clients started
+    /// after the removal, one of them was disconnected, 3 of 3. So the destroy is sent only while the loop thread
+    /// still mirrors a node with this id, name and serial (object.serial is never reused), no removal in flight.
+    /// Returns false when there was nothing of that identity left to destroy.
+    bool destroyObject(const NodeInfo &n);
     /// Current sink a stream's output ports are linked to (node id), or 0. Derived from Link globals.
     uint32_t streamSink(uint32_t streamId) const;
 
